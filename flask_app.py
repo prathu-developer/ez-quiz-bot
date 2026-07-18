@@ -12,7 +12,7 @@ from google.genai import types
 
 # --- DATABASE CONFIGURATION ---
 # We use environment variables so your password isn't exposed on GitHub
-DB_URL = os.environ.get("DATABASE_URL", "YOUR_SUPABASE_URL_HERE")
+DB_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:FlUVu8dA8xy02woL@db.wuhoozvbufnwjsfpkojp.supabase.co:5432/postgres")
 
 # High-speed connection pool to handle massive group traffic instantly
 db_pool = psycopg2.pool.SimpleConnectionPool(1, 20, DB_URL)
