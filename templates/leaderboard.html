@@ -1,0 +1,1406 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        /* --- CORE STYLES --- */
+        body { background-color: #f4f6f8; color: #1c1e21; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; overflow-x: hidden; }
+        .header { position: relative; background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); color: white; text-align: center; padding: 15px 15px; font-weight: bold; z-index: 10; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .header-title { font-size: 1.4em; }
+        .timer-sub-header { font-size: 0.7em; color: #bae6fd; margin-top: 6px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }
+
+        .active-count-pill { position: absolute; top: 15px; right: 15px; background: rgba(255, 255, 255, 0.15); font-size: 0.6em; padding: 4px 8px; border-radius: 12px; font-weight: 700; letter-spacing: 0.5px; display: flex; align-items: center; gap: 4px; border: 1px solid rgba(255, 255, 255, 0.2); color: #e0f2fe; }
+
+        .leaderboard-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px;
+            padding-bottom: 140px; /* Increased so the last student easily clears the floating footer */
+
+            /* NEW: Native momentum scrolling and fluid physics */
+            -webkit-overflow-scrolling: touch;
+            scroll-behavior: smooth;
+            overscroll-behavior-y: contain;
+        }
+
+        /* --- LIST STYLES --- */
+                @keyframes slideUpFade {
+            0% { opacity: 0; transform: translateY(25px); }
+            100% { opacity: 1; transform: translateY(0); }
+        }
+
+        .rank-row {
+            background: white;
+            border-radius: 12px;
+            padding: 12px 14px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+            border: 1px solid #edf1f5;
+            transition: transform 0.15s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.15s ease-out;
+            opacity: 0;
+            animation: slideUpFade 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+
+            /* NEW: GPU Acceleration for flawless gliding */
+            will-change: transform, opacity;
+            transform: translateZ(0);
+            -webkit-backface-visibility: hidden;
+            backface-visibility: hidden;
+        }
+        .rank-row:active {
+            transform: scale(0.96);
+            box-shadow: 0 0px 2px rgba(0,0,0,0.02);
+        }
+        .rank-left { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
+        .rank-number { font-size: 1.3em; font-weight: 900; color: #8c939d; width: 35px; text-align: center; flex-shrink: 0; }
+        .user-details { display: flex; flex-direction: column; flex: 1; min-width: 0; padding-right: 8px; }
+        .user-name { font-weight: bold; font-size: 1.05em; color: #1c1e21; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center;}
+        .user-sub-details { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+        .user-house { font-size: 1.15em; color: #64748b; white-space: nowrap; }
+        .user-score { font-weight: bold; color: #2a5298; background: #eef2f7; padding: 6px 12px; border-radius: 20px; font-size: 0.95em; display: flex; align-items: center; white-space: nowrap; flex-shrink: 0; }
+
+        .user-footer {
+            position: fixed;
+            bottom: 20px; /* Floats above the bottom */
+            left: 20px;
+            right: 20px;
+            width: auto;
+            border-radius: 24px; /* Fully rounded pill shape */
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            padding: 15px 20px;
+            box-sizing: border-box;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.12); /* Deep hover shadow */
+            z-index: 20;
+            cursor: pointer;
+            border: 1px solid rgba(255,255,255,0.6);
+            transition: transform 0.15s cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+        .user-footer:active {
+            transform: scale(0.95);
+        }
+
+        /* --- NEW: FLOATING SCROLL BUTTON STYLES --- */
+        .floating-scroll-btn {
+            position: fixed;
+            bottom: 110px; /* Sits perfectly above the footer */
+            right: 20px;
+            width: 42px; /* Slightly thicker for a better touch target */
+            height: 42px;
+            background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); /* Crisp, bright solid gradient */
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            /* Outer red glow + Inner white highlight for a 3D polished look */
+            box-shadow: 0 4px 12px rgba(220, 38, 38, 0.4), inset 0 2px 4px rgba(255, 255, 255, 0.3);
+            z-index: 25;
+            cursor: pointer;
+            font-size: 1.1em;
+            border: none; /* Removed the hard white border */
+            transition: transform 0.15s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.15s;
+        }
+        .floating-scroll-btn:active {
+            transform: scale(0.85);
+            box-shadow: 0 2px 6px rgba(220, 38, 38, 0.3), inset 0 1px 2px rgba(255, 255, 255, 0.2);
+        }
+
+        /* --- LEAGUE BADGES --- */
+        .league-badge { display: inline-flex; align-items: center; padding: 3px 6px; border-radius: 6px; font-size: 0.65em; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); color: white; white-space: nowrap; }
+
+        /* Base Leagues */
+        .bg-unranked {
+            background: #e2e8f0; /* Lighter, flat grey so it doesn't match Silver */
+            color: #64748b;
+        }
+        .bg-bronze { background: linear-gradient(135deg, #b45309, #d97706); }
+        .bg-silver {
+            background: linear-gradient(135deg, #94a3b8, #cbd5e1);
+            color: #0f172a;
+        }
+        .bg-gold { background: linear-gradient(135deg, #ca8a04, #fde047); color: #422006;}
+        .bg-plat {
+            background: linear-gradient(135deg, #0369a1, #38bdf8);
+            border: 1px solid #7dd3fc; /* Icy cyan edge */
+            box-shadow: 0 1px 4px rgba(56, 189, 248, 0.3); /* Subtle baseline glow */
+            color: white;
+        }
+        .bg-dia {
+            background: linear-gradient(135deg, #4338ca, #a855f7);
+            border: 1px solid #d8b4fe; /* Adds a sharp, crystalline edge */
+            box-shadow: 0 0 6px rgba(168, 85, 247, 0.5); /* Soft, premium outer glow */
+            color: white;
+        }
+        .bg-champ {
+            background: linear-gradient(135deg, #991b1b, #ef4444);
+            border: 1px solid #fca5a5; /* Changed from yellow to frosted ruby */
+            box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+            color: white;
+        }
+
+        /* Premium Expansion Leagues */
+        .bg-master { background: linear-gradient(135deg, #064e3b, #059669); border: 1px solid #34d399; box-shadow: 0 0 10px rgba(5, 150, 105, 0.8); }
+        .bg-elite { background: linear-gradient(135deg, #4c0519, #e11d48); border: 1px solid #fda4af; box-shadow: 0 0 12px rgba(225, 29, 72, 0.9); }
+        .bg-legend { background: linear-gradient(135deg, #0f172a, #7e22ce, #be185d); border: 1px solid #f472b6; box-shadow: 0 0 15px rgba(190, 24, 93, 0.95); text-shadow: 0 0 3px rgba(255, 255, 255, 0.6); }
+        .bg-mythic { background: linear-gradient(135deg, #083344, #0891b2, #2dd4bf); border: 1px solid #a5f3fc; box-shadow: 0 0 18px rgba(6, 182, 212, 1); }
+        .bg-prodigy {
+            background: linear-gradient(135deg, #4a044e, #c026d3, #a855f7);
+            border: 1px solid #f5d0fe;
+            box-shadow: 0 0 22px rgba(192, 38, 211, 0.85);
+            color: #ffffff;
+            text-shadow: 0 0 3px rgba(0, 0, 0, 0.6);
+        }
+        .bg-celestial { background: linear-gradient(135deg, #1e3a8a, #60a5fa, #e0f2fe); border: 1px solid #ffffff; box-shadow: 0 0 25px rgba(147, 197, 253, 1); color: #0f172a; }
+        .bg-zenith { background: linear-gradient(135deg, #000000, #18181b); border: 1px solid #fbbf24; box-shadow: 0 0 30px rgba(251, 191, 36, 1); color: #fde047; text-shadow: 0 0 4px rgba(253, 224, 71, 0.8); }
+        .bg-ascendant { background: linear-gradient(45deg, #ef4444, #f59e0b, #10b981, #3b82f6, #8b5cf6); border: 2px solid #ffffff; box-shadow: 0 0 15px #ef4444, 0 0 25px #3b82f6, 0 0 35px #8b5cf6; text-shadow: 0 0 5px rgba(255,255,255,0.9); }
+
+        /* --- LEAGUE TINT CLASSES --- */
+        .row-bg-unranked {
+            background: white;
+        }
+        .row-bg-bronze { background: #fff7ed !important; border-color: #ffedd5 !important; }
+        .row-bg-silver {
+            background: #f8fafc !important;
+            border-color: #f1f5f9 !important;
+        }
+        .row-bg-gold { background: #fefce8 !important; border-color: #fef08a !important; }
+        .row-bg-plat { background: #f0f9ff !important; border-color: #e0f2fe !important; }
+        .row-bg-dia { background: #faf5ff !important; border-color: #f3e8ff !important; }
+        .row-bg-champ { background: #fef2f2 !important; border-color: #fee2e2 !important; }
+
+        .row-bg-master { background: #f0fdf4 !important; border-color: #dcfce7 !important; }
+        .row-bg-elite { background: #fff1f2 !important; border-color: #ffe4e6 !important; }
+        .row-bg-legend { background: #fdf2f8 !important; border-color: #fbcfe8 !important; }
+        .row-bg-mythic { background: #ecfeff !important; border-color: #cffafe !important; }
+        .row-bg-prodigy {
+            background: #fdf4ff !important;
+            border-color: #fae8ff !important;
+        }
+        .row-bg-celestial { background: #eff6ff !important; border-color: #dbeafe !important; }
+        .row-bg-zenith { background: #fafafa !important; border-color: #f4f4f5 !important; }
+        .row-bg-ascendant { background: #f5f3ff !important; border-color: #ede9fe !important; }
+
+        .mod-bg-unranked { background: #f4f6f8 !important; }
+        .mod-bg-bronze { background: linear-gradient(180deg, #fff7ed 0%, #f4f6f8 220px) !important; }
+        .mod-bg-silver { background: linear-gradient(180deg, #f1f5f9 0%, #f4f6f8 220px) !important; }
+        .mod-bg-gold { background: linear-gradient(180deg, #fefce8 0%, #f4f6f8 220px) !important; }
+        .mod-bg-plat { background: linear-gradient(180deg, #f0f9ff 0%, #f4f6f8 220px) !important; }
+        .mod-bg-dia { background: linear-gradient(180deg, #faf5ff 0%, #f4f6f8 220px) !important; }
+        .mod-bg-champ { background: linear-gradient(180deg, #fef2f2 0%, #f4f6f8 220px) !important; }
+
+        .mod-bg-master { background: linear-gradient(180deg, #f0fdf4 0%, #f4f6f8 220px) !important; }
+        .mod-bg-elite { background: linear-gradient(180deg, #fff1f2 0%, #f4f6f8 220px) !important; }
+        .mod-bg-legend { background: linear-gradient(180deg, #fdf2f8 0%, #f4f6f8 220px) !important; }
+        .mod-bg-mythic { background: linear-gradient(180deg, #ecfeff 0%, #f4f6f8 220px) !important; }
+        .mod-bg-prodigy {
+            background: linear-gradient(180deg, #fdf4ff 0%, #f4f6f8 220px) !important;
+        }
+        .mod-bg-celestial { background: linear-gradient(180deg, #eff6ff 0%, #f4f6f8 220px) !important; }
+        .mod-bg-zenith { background: linear-gradient(180deg, #fafafa 0%, #f4f6f8 220px) !important; }
+        .mod-bg-ascendant { background: linear-gradient(180deg, #f5f3ff 0%, #f4f6f8 220px) !important; }
+
+        /* --- HOW IT WORKS MODAL UI --- */
+        .how-wrapper { margin-bottom: 15px; }
+        .how-btn { background: #e0f2fe; color: #0369a1; padding: 12px; text-align: center; border-radius: 12px; font-weight: 700; cursor: pointer; border: 1px solid #bae6fd; font-size: 0.95em; box-shadow: 0 2px 4px rgba(3, 105, 161, 0.1); transition: 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px;}
+        .how-btn:active { transform: scale(0.98); }
+        .how-box { max-height: 0; overflow: hidden; transition: max-height 0.5s ease-in-out, opacity 0.4s ease; opacity: 0; }
+        .how-box.active { max-height: 1000px; opacity: 1; margin-top: 10px; overflow-y: auto;}
+        .how-inner { background: white; padding: 15px; border-radius: 12px; border: 1px solid #edf1f5; box-shadow: 0 4px 10px rgba(0,0,0,0.03); }
+
+        .how-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 15px; }
+        .how-item { text-align: center; font-size: 0.8em; background: #f8fafc; padding: 12px 8px; border-radius: 10px; border: 1px solid #e2e8f0; color: #475569; display: flex; flex-direction: column; align-items: center; justify-content: center;}
+        .how-item strong { font-size: 1.5em; color: #0f172a; display: block; margin-top: 5px; }
+
+        .info-card { background: #f8fafc; border: 1px solid #edf1f5; border-radius: 10px; padding: 15px; margin-bottom: 12px; }
+        .info-card h4 { margin: 0 0 8px 0; color: #1e3c72; font-size: 0.95em; display: flex; align-items: center; gap: 6px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;}
+        .info-card p { margin: 0; font-size: 0.85em; color: #475569; line-height: 1.6; }
+        .info-card b { color: #0f172a; }
+
+        .league-track { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 0.85em; margin: 10px 0; padding: 10px; background: white; border-radius: 8px; border: 1px dashed #cbd5e1; justify-content: center;}
+        .league-track .league-badge { font-size: 0.65em; }
+        .league-arrow { color: #94a3b8; font-size: 0.8em; font-weight: bold; }
+
+        .cut-off-alert { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; font-size: 0.85em; line-height: 1.5; color: #475569; background: white; padding: 10px; border-radius: 8px; border: 1px solid #e2e8f0;}
+
+        /* --- DASHBOARD MODAL STYLES --- */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(15, 23, 42, 0.35);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            z-index: 100;
+            flex-direction: column;
+            justify-content: flex-end;
+            opacity: 0;
+            /* FAST fade in for the background */
+            transition: opacity 0.25s ease-out;
+        }
+        .modal-overlay.active { display: flex; opacity: 1; }
+        .modal-content {
+            background: #f4f6f8;
+            width: 100%;
+            height: 90vh;
+            border-radius: 32px 32px 0 0;
+            padding: 24px 20px;
+            box-sizing: border-box;
+            overflow-y: auto;
+            transform: translateY(100%);
+            transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), background 0.3s ease;
+            box-shadow: 0 -10px 40px rgba(0,0,0,0.15);
+
+            /* NEW: Momentum scrolling + prevents background snagging */
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior-y: contain;
+        }
+        .modal-overlay.active .modal-content { transform: translateY(0); }
+        .close-indicator {
+            width: 48px;
+            height: 6px;
+            background: #cbd5e1;
+            border-radius: 10px;
+            margin: 0 auto 24px auto;
+            cursor: pointer;
+            transition: background 0.2s, transform 0.2s;
+        }
+        .close-indicator:active {
+            background: #94a3b8;
+            transform: scale(0.9);
+        }
+
+        /* --- DASHBOARD CARDS --- */
+        .dash-card { background: white; border-radius: 16px; padding: 20px; margin-bottom: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.03); border: 1px solid #edf1f5; }
+        .profile-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .profile-info h2 { margin: 0; font-size: 1.6em; color: #0f172a; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;}
+        .profile-info p { margin: 5px 0 0 0; color: #64748b; font-weight: 500; display: flex; align-items: center; gap: 8px;}
+
+        /* Top 4 Stats Grid */
+        .stats-grid-4 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 15px; }
+        .mini-stat {
+            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            border: 1px solid #e2e8f0;
+            border-radius: 16px;
+            padding: 15px;
+            text-align: center;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.03), inset 0 2px 4px rgba(255,255,255,1);
+            transition: transform 0.2s ease;
+        }
+        .mini-stat:active { transform: scale(0.96); }
+        .mini-stat-val {
+            font-size: 1.8em; font-weight: 900; margin-bottom: 5px;
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        .mini-stat-label { font-size: 0.7em; color: #64748b; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; }
+
+        /* Gradient text colours for the specific stats */
+        .val-blue   { background-image: linear-gradient(135deg, #2563eb, #60a5fa); }
+        .val-green  { background-image: linear-gradient(135deg, #059669, #34d399); }
+        .val-purple { background-image: linear-gradient(135deg, #7c3aed, #a78bfa); }
+        .val-amber  { background-image: linear-gradient(135deg, #d97706, #fbbf24); }
+
+        /* Charts Section */
+        .section-title { font-size: 1.1em; font-weight: 700; color: #334155; margin-bottom: 15px; display: flex; align-items: center; gap: 8px; justify-content: space-between;}
+        .chart-container { position: relative; height: 260px; width: 100%; margin-bottom: 15px; }
+        .chart-summary { background: #f8fafc; border-radius: 10px; padding: 12px; display: flex; justify-content: space-around; border: 1px solid #edf1f5; margin-top: 10px; }
+        .cs-item { text-align: center; }
+        .cs-val { font-weight: 800; color: #0f172a; font-size: 1.1em; }
+        .cs-label { font-size: 0.75em; color: #64748b; display: flex; align-items: center; gap: 4px; justify-content: center; }
+
+        /* Comparative Performance Table */
+        .doughnut-layout { display: flex; align-items: flex-start; justify-content: space-between; }
+        .doughnut-wrap { width: 110px; height: 110px; position: relative; flex-shrink: 0; }
+        .performance-table { flex: 1; margin-left: 15px; font-size: 0.85em; overflow-x: auto; }
+        .perf-table { width: 100%; border-collapse: collapse; text-align: center; }
+        .perf-table th { color: #64748b; font-weight: 600; padding-bottom: 10px; border-bottom: 1px solid #f1f5f9; }
+        .perf-table td { padding: 10px 0; border-bottom: 1px solid #f1f5f9; }
+        .perf-table tr:last-child td { border-bottom: none; }
+        .tbl-label { text-align: left; color: #475569; }
+
+        /* Golden Topper Banner */
+        .topper-banner {
+            background: linear-gradient(135deg, #fffbeb 0%, #fef08a 100%);
+            border: 1px solid #fde047;
+            border-radius: 16px;
+            padding: 14px 18px;
+            margin-top: 20px;
+            display: flex; justify-content: space-between; align-items: center;
+            font-size: 0.9em;
+            box-shadow: 0 4px 15px rgba(250, 204, 21, 0.25), inset 0 2px 5px rgba(255,255,255,0.8);
+        }
+        .topper-banner-title { display: flex; align-items: center; gap: 8px; font-weight: 900; color: #b45309; text-transform: uppercase; letter-spacing: 0.5px; }
+        .topper-banner-info { font-weight: 700; color: #92400e; }
+
+        /* Recent Activity Table */
+        .activity-row { display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #f1f5f9; font-size: 0.95em; font-weight: 500; color: #475569;}
+        .activity-row:last-child { border-bottom: none; }
+        .act-day { width: 60px; font-weight: 600; color: #0f172a;}
+        .act-stats { flex: 1; display: flex; gap: 15px; justify-content: center; }
+
+        .text-green { color: #10b981; } .text-red { color: #ef4444; } .text-blue { color: #3b82f6; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="active-count-pill">👥 <span id="activeCount">--</span></div>
+        <div class="header-title">🏆 The Great Hall</div>
+        <div class="timer-sub-header">SEASON <span id="weekNumber">--</span> • ENDS IN <span id="timeRemainingHead" style="color: #fff;">--</span></div>
+    </div>
+
+    <div class="leaderboard-container" id="list">
+        <div style="text-align: center; color: #8c939d; margin-top: 30px;">Fetching magical records...</div>
+    </div>
+
+    <!-- FLOATING SCROLL TO DEMOTION BUTTON -->
+    <div class="floating-scroll-btn" id="scrollBtn" onclick="scrollToDemotionZone()" title="Scroll to Demotion Zone">🔻</div>
+
+    <div class="user-footer" id="footer">Loading your rank...</div>
+
+    <div class="modal-overlay" id="analysisModal" onclick="closeModal(event)">
+        <div class="modal-content" id="modalContentBg" onclick="event.stopPropagation()">
+            <div class="close-indicator" onclick="closeModal(null, true)"></div>
+
+            <div class="profile-header" style="align-items: flex-start;">
+                <div class="profile-info" style="flex: 1;">
+                    <h2 id="modalStudentName" style="font-size: 1.3em;">Student Name</h2>
+                    <p id="modalStudentHouse" style="font-size: 0.9em; margin-top: 8px;">House</p>
+                </div>
+                <div style="text-align: right; flex-shrink: 0; padding-left: 10px;">
+                    <h2 id="modalStudentElo" style="margin: 0; font-size: 1.4em; color: #1e3a8a; font-weight: 900;">🧠 1000</h2>
+                    <p id="modalStudentTitle" style="margin: 5px 0 0 0; color: #64748b; font-size: 0.85em; font-weight: 700;">🎓 Scholar</p>
+                </div>
+            </div>
+
+            <div class="how-wrapper" style="display: flex; gap: 10px;">
+                <div class="how-btn" style="flex: 1; padding: 10px; font-size: 0.85em;" onclick="document.getElementById('howItWorksBox').classList.toggle('active')">
+                    📜 Guide: Quiz Cup ▾
+                </div>
+                <div class="how-btn" style="flex: 1; padding: 10px; font-size: 0.85em; background: #f0fdf4; color: #166534; border-color: #bbf7d0;" onclick="openEloLeaderboard()">
+                    🌍 View Global Elo ▾
+                </div>
+            </div>
+                <div class="how-box" id="howItWorksBox">
+                    <div class="how-inner">
+
+                        <div class="info-card">
+                            <h4>⚙️ Dynamic Scoring System</h4>
+                            <p>Points adjust based on global class accuracy. The harder the question is for the class, the higher the reward and the lower the penalty!</p>
+                            <table style="width:100%; text-align:center; font-size: 0.8em; margin-top:10px; border-collapse: collapse;">
+                                <tr style="background: #e2e8f0; color: #0f172a;">
+                                    <th style="padding: 6px; border-radius: 6px 0 0 0;">Tier</th>
+                                    <th style="padding: 6px;">Correct</th>
+                                    <th style="padding: 6px; border-radius: 0 6px 0 0;">Wrong</th>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 6px; font-weight:bold; color: #10b981;">T1 (Very Easy)</td>
+                                    <td style="padding: 6px;">+1.0</td>
+                                    <td style="padding: 6px; color:#ef4444;">-0.42</td>
+                                </tr>
+                                <tr style="background: #f8fafc;">
+                                    <td style="padding: 6px; font-weight:bold; color: #3b82f6;">T2 (Easy)</td>
+                                    <td style="padding: 6px;">+2.0</td>
+                                    <td style="padding: 6px; color:#ef4444;">-0.60</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 6px; font-weight:bold; color: #f59e0b;">T3 (Moderate)</td>
+                                    <td style="padding: 6px;">+3.0</td>
+                                    <td style="padding: 6px; color:#ef4444;">-0.75</td>
+                                </tr>
+                                <tr style="background: #f8fafc;">
+                                    <td style="padding: 6px; font-weight:bold; color: #f97316;">T4 (Hard)</td>
+                                    <td style="padding: 6px;">+4.0</td>
+                                    <td style="padding: 6px; color:#ef4444;">-0.60</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 6px; font-weight:bold; color: #ef4444; border-radius: 0 0 0 6px;">T5 (Very Hard)</td>
+                                    <td style="padding: 6px;">+5.0</td>
+                                    <td style="padding: 6px; color:#ef4444; border-radius: 0 0 6px 0;">-0.42</td>
+                                </tr>
+                            </table>
+                        </div>
+
+                        <div class="info-card">
+                            <h4>📅 The Weekly Season</h4>
+                            <p>New editorial vocabulary quizzes drop <b>Monday to Saturday</b>. You have until the ultimate deadline on <b>Sunday at 11:59 PM (IST)</b> to complete them before the season resets!</p>
+                        </div>
+
+                        <div class="info-card">
+                            <h4>🏅 The League Journey</h4>
+                            <p>Compete, climb the leaderboard, and unlock higher leagues. There are no speed advantages—only accuracy and consistency matter.</p>
+
+                            <div class="league-track">
+                                <span class="league-badge bg-unranked">🛡️ Unranked</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-bronze">🥉 Bronze</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-silver">🥈 Silver</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-gold">🥇 Gold</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-plat">💠 Plat</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-dia">💎 Dia</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-champ">👑 Champ</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-master">🎖️ Master</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-elite">⚡ Elite</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-legend">🌟 Legend</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-mythic">🔮 Mythic</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-prodigy">🎇 Prodigy</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-celestial">☄️ Celestial</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-zenith">🧿 Zenith</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-ascendant">🌌 Ascendant</span>
+                            </div>
+
+                            <div class="cut-off-alert">
+                                <div><b class="text-green">▲ PROMOTION:</b> Stay above the <b>Class Average</b> to be promoted by one league. Finish in the <b>Top 10</b> for a <b>Double Promotion</b>, or secure <b>1st Place</b> for a massive <b>Triple Promotion</b>!</div>
+                                <div style="height: 1px; background: #e2e8f0; width: 100%;"></div>
+                                <div><b class="text-red">▼ DEMOTION:</b> Dropping below the class average means your badge will be demoted. Keep grinding!</div>
+                            </div>
+                        </div>
+
+                        <div class="info-card" style="margin-bottom: 0;">
+                            <h4>💡 The Path to Champion</h4>
+                            <p>1. Read <b>Today's Editorials</b><br>
+                               2. Study the <b>Words 101</b> series<br>
+                               3. Attempt the Daily Quizzes<br>
+                               <i>* Consistency is rewarded more than occasional high scores. Never miss a quiz!</i>
+                            </p>
+                        </div>
+
+                    </div>
+                </div>
+
+            <div class="stats-grid-4">
+                <div class="mini-stat">
+                    <div class="mini-stat-val val-blue" id="statScore">0</div>
+                    <div class="mini-stat-label">Total Points</div>
+                </div>
+                <div class="mini-stat">
+                    <div class="mini-stat-val val-green" id="statAccuracy">0%</div>
+                    <div class="mini-stat-label">Weekly Accuracy</div>
+                </div>
+                <div class="mini-stat">
+                    <div class="mini-stat-val val-purple" id="statAttempts">0</div>
+                    <div class="mini-stat-label">Quizzes Attempted</div>
+                </div>
+                <div class="mini-stat">
+                    <div class="mini-stat-val val-amber" id="statStreak">0</div>
+                    <div class="mini-stat-label">Current Streak 🔥</div>
+                </div>
+            </div>
+
+            <!-- NEW: HISTORIC RANK ENTRIES SECTION -->
+            <div class="dash-card">
+                <div class="section-title">📜 Previous Rank History</div>
+                <div id="rankHistorySection">
+                    <div style="text-align:center; color:#94a3b8; padding: 10px; font-size: 0.85em;">No previous records available. Data will start appearing from next week! 🔮</div>
+                </div>
+            </div>
+
+            <div class="dash-card">
+                <div class="section-title">
+                    <div>📊 Weekly Progress <span style="font-size: 0.7em; color: #64748b; margin-left: 5px; font-weight:normal;">(Mon - Sun)</span></div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="dailyChart"></canvas>
+                </div>
+                <div class="chart-summary">
+                    <div class="cs-item"><div class="cs-label">Σ Total Points</div><div class="cs-val" id="csTotal">0</div></div>
+                    <div class="cs-item"><div class="cs-label">✅ Correct</div><div class="cs-val" id="csCorrect">0</div></div>
+                    <div class="cs-item"><div class="cs-label">❌ Wrong</div><div class="cs-val" id="csWrong">0</div></div>
+                    <div class="cs-item"><div class="cs-label">🎯 Accuracy</div><div class="cs-val" id="csAcc">0%</div></div>
+                </div>
+            </div>
+
+            <div class="dash-card">
+                <div class="section-title">🎯 Performance Overview</div>
+                <div class="doughnut-layout">
+                    <div class="doughnut-wrap">
+                        <canvas id="pieChart"></canvas>
+                    </div>
+                    <div class="performance-table">
+                        <table class="perf-table">
+                            <tr>
+                                <th></th>
+                                <th id="tblStudentHeader">Student</th>
+                                <th>Topper</th>
+                                <th>Class Avg.</th>
+                            </tr>
+                            <tr>
+                                <td class="tbl-label"><span class="text-green">●</span> Correct</td>
+                                <td id="tblYouCor" style="font-weight:bold;">0</td>
+                                <td id="tblTopCor" style="font-weight:bold;">0</td>
+                                <td id="tblAvgCor" style="font-weight:bold;">0</td>
+                            </tr>
+                            <tr>
+                                <td class="tbl-label"><span class="text-red">●</span> Wrong</td>
+                                <td id="tblYouWro" style="font-weight:bold;">0</td>
+                                <td id="tblTopWro" style="font-weight:bold;">0</td>
+                                <td id="tblAvgWro" style="font-weight:bold;">0</td>
+                            </tr>
+                            <tr>
+                                <td class="tbl-label" style="color: #64748b;">Total</td>
+                                <td id="tblYouAtt" style="font-weight:bold;">0</td>
+                                <td id="tblTopAtt" style="font-weight:bold;">0</td>
+                                <td id="tblAvgAtt" style="font-weight:bold;">0</td>
+                            </tr>
+                            <tr>
+                                <td class="tbl-label" style="color: #64748b;">Accuracy</td>
+                                <td id="tblYouAcc" style="font-weight:bold;">0%</td>
+                                <td id="tblTopAcc" style="font-weight:bold;">0%</td>
+                                <td id="tblAvgAcc" style="font-weight:bold;">0%</td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="topper-banner">
+                    <div class="topper-banner-title">
+                        🏆 Topper This Week
+                    </div>
+                    <div style="display:flex; align-items:center; gap: 8px;">
+                        <span id="bannerTopperName" style="font-weight: bold; color: #1c1e21;">Name (House)</span>
+                    </div>
+                    <div class="topper-banner-info" id="bannerTopperInfo">
+                        0 pts • 0% Accuracy
+                    </div>
+                </div>
+            </div>
+
+            <div class="dash-card">
+                <div class="section-title">🕒 Recent Activity</div>
+                <div id="activityList">
+                </div>
+            </div>
+
+        </div>
+    </div>
+    <div class="modal-overlay" id="historyModalOverlay" onclick="closeHistoryModal(event)" style="z-index: 200;">
+        <div class="modal-content" id="historyModalContent" onclick="event.stopPropagation()" style="height: auto; padding-bottom: 40px; background: #f8fafc;">
+            <div class="close-indicator" onclick="closeHistoryModal(null, true)"></div>
+
+            <div class="profile-header" style="justify-content: center; margin-bottom: 25px;">
+                <div class="profile-info" style="text-align: center;">
+                    <h2 style="justify-content: center; font-size: 1.4em;">📜 Season <span id="histWeek">--</span> Archive</h2>
+                    <p style="justify-content: center; color: #64748b; margin-top: 5px;">Final Locked Standings</p>
+                </div>
+            </div>
+
+            <div class="stats-grid-4">
+                <div class="mini-stat">
+                    <div class="mini-stat-val val-blue" id="histScore">0</div>
+                    <div class="mini-stat-label">Final Score</div>
+                </div>
+                <div class="mini-stat">
+                    <div class="mini-stat-val val-amber" id="histRank">#0</div>
+                    <div class="mini-stat-label">Final Rank</div>
+                </div>
+                <div class="mini-stat">
+                    <div class="mini-stat-val val-green" id="histCorrect">0</div>
+                    <div class="mini-stat-label">Total Correct</div>
+                </div>
+                <div class="mini-stat">
+                    <div class="mini-stat-val val-purple" id="histAcc">0%</div>
+                    <div class="mini-stat-label">Accuracy</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+        tg.setHeaderColor('#1e3c72');
+        tg.setBackgroundColor('#f4f6f8');
+
+        const userId = tg.initDataUnsafe?.user?.id || 0;
+        let globalData = [];
+        let dailyChartInstance = null;
+        let pieChartInstance = null;
+
+        function getLeagueBadgeHTML(tier) {
+            const leagues = [
+                { name: 'Unranked', class: 'bg-unranked', icon: '🛡️' }, // 0
+                { name: 'Bronze', class: 'bg-bronze', icon: '🥉' },      // 1
+                { name: 'Silver', class: 'bg-silver', icon: '🥈' },      // 2
+                { name: 'Gold', class: 'bg-gold', icon: '🥇' },          // 3
+                { name: 'Platinum', class: 'bg-plat', icon: '💠' },      // 4
+                { name: 'Diamond', class: 'bg-dia', icon: '💎' },        // 5
+                { name: 'Champion', class: 'bg-champ', icon: '👑' },     // 6
+                { name: 'Master', class: 'bg-master', icon: '🎖️' },      // 7
+                { name: 'Elite', class: 'bg-elite', icon: '⚡' },        // 8
+                { name: 'Legend', class: 'bg-legend', icon: '🌟' },      // 9
+                { name: 'Mythic', class: 'bg-mythic', icon: '🔮' },      // 10
+                { name: 'Prodigy', class: 'bg-prodigy', icon: '⚛️' },    // 11
+                { name: 'Celestial', class: 'bg-celestial', icon: '☄️' },// 12
+                { name: 'Zenith', class: 'bg-zenith', icon: '🧿' },      // 13
+                { name: 'Ascendant', class: 'bg-ascendant', icon: '🌌' } // 14
+            ];
+            let l = leagues[tier] || leagues[0];
+            return `<span class="league-badge ${l.class}">${l.icon} ${l.name}</span>`;
+        }
+
+        function getLeagueBgClass(tier, type='row') {
+            const classes = [
+                'unranked', 'bronze', 'silver', 'gold', 'plat', 'dia', 'champ',
+                'master', 'elite', 'legend', 'mythic', 'prodigy', 'celestial', 'zenith', 'ascendant'
+            ];
+            let base = classes[tier] || classes[0];
+            return type === 'row' ? `row-bg-${base}` : `mod-bg-${base}`;
+        }
+
+        function getLeagueFooterColor(tier) {
+            const colors = [
+                'rgba(255, 255, 255, 0.98)',   // Unranked
+                'rgba(255, 247, 237, 0.98)',   // Bronze
+                'rgba(248, 250, 252, 0.98)',   // Silver
+                'rgba(254, 252, 232, 0.98)',   // Gold
+                'rgba(240, 249, 255, 0.98)',   // Plat
+                'rgba(250, 245, 255, 0.98)',   // Dia
+                'rgba(254, 242, 242, 0.98)',   // Champ
+                'rgba(240, 253, 244, 0.98)',   // Master (Greenish)
+                'rgba(255, 241, 242, 0.98)',   // Elite (Reddish)
+                'rgba(253, 242, 248, 0.98)',   // Legend (Pinkish)
+                'rgba(236, 254, 255, 0.98)',   // Mythic (Cyan-ish)
+                'rgba(253, 244, 255, 0.98)',   // Prodigy (Fuchsia-ish)
+                'rgba(239, 246, 255, 0.98)',   // Celestial (Blueish)
+                'rgba(250, 250, 250, 0.98)',   // Zenith (Grayscale)
+                'rgba(245, 243, 255, 0.98)'    // Ascendant (Purple-ish)
+            ];
+            return colors[tier] || colors[0];
+        }
+
+        function getSingleHouseEmoji(houseStr) {
+            if (!houseStr) return '🏳️';
+            if (houseStr.includes('Gryffindor')) return '🦁';
+            if (houseStr.includes('Slytherin')) return '🐍';
+            if (houseStr.includes('Ravenclaw')) return '🦅';
+            if (houseStr.includes('Hufflepuff')) return '🦡';
+            return '🏳️';
+        }
+
+        function getAcademicTitle(elo) {
+            if (elo >= 2000) return '🎓 Valedictorian';
+            if (elo >= 1800) return '🏅 Laureate';
+            if (elo >= 1600) return '✒️ Philologist';
+            if (elo >= 1400) return '📖 Lexicologist';
+            if (elo >= 1200) return '🏛️ Grammarian';
+            if (elo >= 1000) return '🎓 Scholar';
+            if (elo >= 900) return '📝 Aspirant';
+            return '📘 Initiate';
+        }
+
+        // --- NEW: FLOATING SCROLL BEHAVIOR LOGIC ---
+        function scrollToDemotionZone() {
+            const demotionLine = document.getElementById('demotionZoneLine');
+            if (demotionLine) {
+                demotionLine.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            } else {
+                if (window.Telegram?.WebApp?.showAlert) {
+                    window.Telegram.WebApp.showAlert("No active members inside the Demotion Zone line yet!");
+                } else {
+                    alert("No active members inside the Demotion Zone line yet!");
+                }
+            }
+        }
+
+        // --- INSTANT CACHE & BACKGROUND SYNC LOGIC ---
+        function renderLeaderboardData(data) {
+            document.getElementById('weekNumber').innerText = data.current_week;
+            document.getElementById('activeCount').innerText = data.leaderboard.length;
+
+            window.topperHistory = data.topper_history;
+            window.classAvgHistory = data.class_avg_history;
+            window.currentUserData = data.current_user;
+
+            const listDiv = document.getElementById('list');
+            listDiv.innerHTML = '';
+            globalData = data.leaderboard;
+
+            let sumWeightedPoints = 0;
+            let sumWeights = 0;
+
+            globalData.forEach(u => {
+                if (u.attempts === 0) return;
+                let correct = u.history.correct;
+                let accuracy = u.attempts > 0 ? (correct / u.attempts) : 0;
+                let volumeWeight = u.attempts / (u.attempts + 10);
+                let finalWeight = volumeWeight * accuracy;
+                if (u.score < 0) { finalWeight = 0; }
+                sumWeightedPoints += (u.score * finalWeight);
+                sumWeights += finalWeight;
+            });
+
+            let targetAverage = sumWeights > 0 ? Math.round(sumWeightedPoints / sumWeights) : 0;
+            let insertedPromoDivider = false;
+            let insertedDemoDivider = false;
+
+            data.leaderboard.forEach((user, index) => {
+                let cascadeDelay = index * 0.04;
+
+                let rankDisplay = `#${user.rank}`;
+                if (user.rank === 1) rankDisplay = '🥇';
+                else if (user.rank === 2) rankDisplay = '🥈';
+                else if (user.rank === 3) rankDisplay = '🥉';
+
+                let captainTag = user.is_captain ? `<span style="font-size: 0.75em; color: #f59e0b; margin-left: 5px; font-weight: 700; font-style: italic;">Captain 🪄</span>` : '';
+                let userLeagueBadge = getLeagueBadgeHTML(user.league);
+                let singleHouseEmoji = getSingleHouseEmoji(user.house);
+
+                let trendIcon = user.score >= targetAverage
+                    ? `<span style="color: #10b981; font-size: 0.8em; margin-left: 6px;" title="Promotion Zone">▲</span>`
+                    : `<span style="color: #ef4444; font-size: 0.8em; margin-left: 6px;" title="Demotion Zone">▼</span>`;
+
+                if (!insertedPromoDivider && user.score >= targetAverage) {
+                    listDiv.innerHTML += `
+                        <div style="display: flex; align-items: center; margin: 0 0 15px 0; opacity: 0.95;">
+                            <div style="flex: 1; height: 1px; background: linear-gradient(90deg, transparent, #10b981);"></div>
+                            <div style="padding: 5px 14px; font-size: 0.7em; font-weight: 800; color: #10b981; background: #d1fae5; border-radius: 20px; text-transform: uppercase; letter-spacing: 1px; display: flex; align-items: center; gap: 5px; box-shadow: 0 2px 5px rgba(16, 185, 129, 0.15);">
+                                <span>▲</span> PROMOTION ZONE <span>▲</span>
+                            </div>
+                            <div style="flex: 1; height: 1px; background: linear-gradient(270deg, transparent, #10b981);"></div>
+                        </div>
+                    `;
+                    insertedPromoDivider = true;
+                }
+
+                if (!insertedDemoDivider && user.score < targetAverage) {
+                    listDiv.innerHTML += `
+                        <div id="demotionZoneLine" style="display: flex; align-items: center; margin: 20px 0 15px 0; opacity: 0.95;">
+                            <div style="flex: 1; height: 1px; background: linear-gradient(90deg, transparent, #ef4444);"></div>
+                            <div style="padding: 5px 14px; font-size: 0.7em; font-weight: 800; color: #ef4444; background: #fee2e2; border-radius: 20px; text-transform: uppercase; letter-spacing: 1px; display: flex; align-items: center; gap: 5px; box-shadow: 0 2px 5px rgba(239, 68, 68, 0.15);">
+                                <span>▼</span> DEMOTION ZONE <span>▼</span>
+                            </div>
+                            <div style="flex: 1; height: 1px; background: linear-gradient(270deg, transparent, #ef4444);"></div>
+                        </div>
+                    `;
+                    insertedDemoDivider = true;
+                }
+
+                let clickAction = `onclick="openProfile(${user.id})"`;
+                let cursorStyle = `cursor: pointer;`;
+                let rowBgClass = getLeagueBgClass(user.league, 'row');
+
+                listDiv.innerHTML += `
+                    <div class="rank-row ${rowBgClass}" ${clickAction} style="${cursorStyle} animation-delay: ${cascadeDelay}s;">
+                        <div class="rank-left">
+                            <div class="rank-number">${rankDisplay}</div>
+                            <div class="user-details">
+                                <div class="user-name">${user.name} ${captainTag}</div>
+                                <div class="user-sub-details">
+                                    <div class="user-house">${singleHouseEmoji}</div>
+                                    ${userLeagueBadge}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="user-score">${user.score % 1 !== 0 ? user.score.toFixed(2) : user.score} pts ${trendIcon}</div>
+                    </div>
+                `;
+            });
+
+            const footerDiv = document.getElementById('footer');
+            const me = window.currentUserData;
+
+            let myCaptainTag = me.is_captain ? `<span style="font-size: 0.75em; color: #f59e0b; margin-left: 5px; font-weight: 700; font-style: italic;">Captain 🪄</span>` : '';
+            let myLeagueBadge = getLeagueBadgeHTML(me.league);
+            let mySingleHouseEmoji = getSingleHouseEmoji(me.house);
+
+            let myTrendIcon = me.score >= targetAverage
+                ? `<span style="color: #10b981; font-size: 0.8em; margin-left: 6px;" title="Promotion Zone">▲</span>`
+                : `<span style="color: #ff6b6b; font-size: 0.8em; margin-left: 6px;" title="Demotion Zone">▼</span>`;
+
+            footerDiv.onclick = () => openProfile(me.id);
+            footerDiv.style.background = getLeagueFooterColor(me.league);
+
+            footerDiv.innerHTML = `
+                <div style="display:flex; flex-direction:column; width:100%;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <div class="rank-left">
+                            <div class="rank-number" style="color: #2a5298;">#${me.rank}</div>
+                            <div class="user-details">
+                                <div class="user-name">You ${myCaptainTag}</div>
+                                <div class="user-sub-details">
+                                    <div class="user-house" style="color: #1e3c72; font-size: 1.15em;">${mySingleHouseEmoji}</div>
+                                    ${myLeagueBadge}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="user-score" style="background: linear-gradient(135deg, #1e3c72, #2a5298); color: white; display: flex; align-items: center;">${me.score % 1 !== 0 ? me.score.toFixed(2) : me.score} pts ${myTrendIcon}</div>
+                    </div>
+                    <div style="text-align:center; font-size:0.75em; color:#64748b; margin-top:8px; font-weight: 600;">Tap here to view your dashboard 📊</div>
+                </div>
+            `;
+        }
+
+        // STEP 1: Check device memory for last known data and render instantly
+        const cacheKey = 'quizCupData_' + userId;
+        const cachedString = localStorage.getItem(cacheKey);
+        if (cachedString) {
+            try {
+                renderLeaderboardData(JSON.parse(cachedString));
+            } catch (e) { console.error("Cache read error", e); }
+        }
+
+        // STEP 2: Fetch fresh data in the background and seamlessly synchronise
+        fetch(`/api/leaderboard?user_id=${userId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.locked || data.error) {
+                    console.log("Server is syncing. Using cached data.");
+                    return;
+                }
+
+                // NEW: Build the current_user data on the client side to save server CPU!
+                let myPersonalData = {
+                    "rank": "N/A", "score": 0, "house": "🏳️ Unsorted", "name": "You", "is_captain": 0, "league": 0, "is_admin": false,
+                    "rank_history": [], "history": {"labels": [], "scores": [], "accuracy": 0, "correct": 0, "wrong": 0}
+                };
+
+                if (userId) {
+                    let matchedUser = data.leaderboard.find(student => student.id === userId);
+                    if (matchedUser) {
+                        const ADMIN_IDS = [716496729, 5103843488, 6251430317];
+                        myPersonalData = {
+                            "id": userId, "rank": matchedUser.rank, "score": matchedUser.score,
+                            "house": matchedUser.house, "name": matchedUser.name,
+                            "is_captain": matchedUser.is_captain, "league": matchedUser.league,
+                            "is_admin": ADMIN_IDS.includes(userId),
+                            "rank_history": matchedUser.rank_history, "history": matchedUser.history,
+                            "elo": matchedUser.elo
+                        };
+                    }
+                }
+                data.current_user = myPersonalData; // Inject it back into the payload so the rest of the code works normally
+
+                localStorage.setItem(cacheKey, JSON.stringify(data));
+                renderLeaderboardData(data);
+            })
+            .catch(err => {
+                if(!cachedString) {
+                    document.getElementById('list').innerHTML = '<div style="text-align: center; color: #ef4444; margin-top: 30px;">Network error. Cannot connect to the Great Hall.</div>';
+                }
+            });
+
+        // --- IST TIME CALCULATOR FOR MAX AVAILABLE QUESTIONS ---
+        function getMaxAvailableQuestions() {
+            let now = new Date();
+            // Convert local time to UTC, then add 5 hours and 30 minutes for IST
+            let utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+            let istTime = new Date(utc + (330 * 60000));
+
+            let day = istTime.getDay(); // 0 = Sun, 1 = Mon ... 6 = Sat
+            let hour = istTime.getHours();
+
+            let quizzesReleased = 0;
+            if (day === 0) {
+                quizzesReleased = 6; // On Sunday, all 6 quizzes (Mon-Sat) are out
+            } else {
+                // If it is 7 PM (19:00) or later, today's quiz is out. Otherwise, only up to yesterday.
+                quizzesReleased = (hour >= 19) ? day : (day - 1);
+            }
+
+            // 25 questions per quiz
+            return Math.max(0, quizzesReleased * 25);
+        }
+
+        function updateTimer() {
+            let now = new Date();
+            let target = new Date();
+            target.setDate(now.getDate() + (7 - now.getDay()) % 7);
+            target.setHours(23, 59, 59, 0);
+
+            let diff = target - now;
+            if (diff < 0) {
+                target.setDate(target.getDate() + 7);
+                diff = target - now;
+            }
+
+            let d = Math.floor(diff / (1000 * 60 * 60 * 24));
+            let h = Math.floor((diff / (1000 * 60 * 60)) % 24);
+            let m = Math.floor((diff / (1000 * 60)) % 60);
+
+            let timeText = d > 0 ? `${d}d ${h}h ${m}m` : `${h}h ${m}m`;
+            document.getElementById('timeRemainingHead').innerText = timeText;
+        }
+        setInterval(updateTimer, 60000);
+        updateTimer();
+
+        function calculateStats(score) {
+            let bestC = 0, bestW = 0;
+            if (score > 0) {
+                for(let c = 25; c >= 0; c--) {
+                    let w = (c * 4) - score;
+                    if(w >= 0 && (c + w) <= 25) {
+                        bestC = c;
+                        bestW = w;
+                        break;
+                    }
+                }
+            } else if (score < 0) {
+                bestW = Math.abs(score);
+            }
+
+            let attempts = bestC + bestW;
+            let accuracy = attempts > 0 ? Math.round((bestC / attempts) * 100) : 0;
+            return { correct: bestC, wrong: bestW, attempts: attempts, accuracy: accuracy, score: score };
+        }
+
+        // --- NEW: POPULATE EXPLICIT RANK HISTORY RECORDS ---
+        function renderRankHistory(targetUser) {
+            const container = document.getElementById('rankHistorySection');
+            container.innerHTML = '';
+
+            if (!targetUser.rank_history || targetUser.rank_history.length === 0) {
+                container.innerHTML = `<div style="text-align:center; color:#94a3b8; padding: 10px; font-size: 0.85em;">No previous week data recorded yet. Entry tracker will update from next week! 🔮</div>`;
+                return;
+            }
+
+            targetUser.rank_history.forEach((entry, idx) => {
+                let statusBadge = idx === 0 ? `<span class="league-badge bg-gold" style="font-size:0.6em; padding:2px 4px; margin-left:8px;">Previous Week</span>` : '';
+
+                let score = entry.score || 0;
+                let att = entry.attempts || 0;
+                let cor = entry.correct || 0;
+
+                let clickAction = `onclick="openHistoryDetail(${entry.week}, ${entry.rank}, ${entry.total}, ${score}, ${att}, ${cor})"`;
+
+                container.innerHTML += `
+                    <div class="activity-row" ${clickAction} style="align-items: center; cursor: pointer; padding: 12px 10px; border-radius: 8px; margin-bottom: 5px; background: white; border: 1px solid #f1f5f9; box-shadow: 0 1px 2px rgba(0,0,0,0.02); transition: transform 0.1s;">
+                        <div class="act-day" style="width: auto; font-weight: 600; color: #0f172a;">Week ${entry.week} ${statusBadge}</div>
+                        <div style="display:flex; align-items:center; gap: 12px;">
+                            <div class="text-blue" style="font-weight: 700; font-size: 1.05em;">
+                                #${entry.rank} <span style="font-size: 0.75em; color: #64748b; font-weight: normal;">/ ${entry.total}</span>
+                            </div>
+                            <div style="color: #cbd5e1; font-weight: bold; font-size: 1.2em;">➔</div>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+
+        function closeModal(event, force=false) {
+            // Closes the modal if you click the tiny bar (force) or click the dark background overlay
+            if (force || event.target.id === 'analysisModal') {
+                document.getElementById('analysisModal').classList.remove('active');
+            }
+        }
+
+        function openProfile(targetId) {
+            let isOwnProfile = (targetId === window.currentUserData.id);
+
+            // --- SECURITY CHECK: Restrict to Admins & Self ---
+            if (!isOwnProfile && !window.currentUserData.is_admin) {
+                if (window.Telegram?.WebApp?.showAlert) {
+                    window.Telegram.WebApp.showAlert("🔒 Only Admins can view other students' detailed analysis.");
+                } else {
+                    alert("🔒 Only Admins can view other students' detailed analysis.");
+                }
+                return; // Stop the profile from opening
+            }
+
+            let targetUser = isOwnProfile ? window.currentUserData : globalData.find(u => u.id === targetId);
+            if (!targetUser) return;
+
+            const modalContent = document.getElementById('modalContentBg');
+            modalContent.className = 'modal-content';
+            modalContent.classList.add(getLeagueBgClass(targetUser.league, 'mod'));
+
+            let modalCaptainTag = targetUser.is_captain ? `<span style="font-size: 0.6em; color: #f59e0b; margin-left: 5px;">Captain 🪄</span>` : '';
+            document.getElementById('modalStudentName').innerHTML = targetUser.name + modalCaptainTag;
+
+            let leagueBadge = getLeagueBadgeHTML(targetUser.league);
+            let singleHouseEmoji = getSingleHouseEmoji(targetUser.house);
+            document.getElementById('modalStudentHouse').innerHTML = `<span style="font-size: 1.15em;">${singleHouseEmoji}</span> <span style="margin-left: 8px;">${leagueBadge}</span>`;
+            document.getElementById('modalStudentElo').innerText = `🧠 ${targetUser.elo ? targetUser.elo.toFixed(1) : 1000}`;
+            document.getElementById('modalStudentTitle').innerText = getAcademicTitle(targetUser.elo || 1000);
+
+            document.getElementById('statScore').innerText = targetUser.score;
+            document.getElementById('statAccuracy').innerText = targetUser.history.accuracy + '%';
+
+            let totalAttempts = targetUser.history.correct + targetUser.history.wrong;
+            let maxAvailable = getMaxAvailableQuestions();
+            // Fallback: If a student somehow has more attempts than expected, prevent weird fractions (e.g. 30/25)
+            if (totalAttempts > maxAvailable) maxAvailable = totalAttempts;
+
+            document.getElementById('statAttempts').innerText = `${totalAttempts} / ${maxAvailable}`;
+
+            let streak = 0;
+            if (targetUser.history.scores.length > 0) {
+                for (let i = targetUser.history.scores.length - 1; i >= 0; i--) {
+                    if (targetUser.history.labels[i] === 'Sun') continue;
+                    if (targetUser.history.scores[i] > 0) streak++;
+                    else break;
+                }
+            } else if (targetUser.score > 0) {
+                streak = 1;
+            }
+            document.getElementById('statStreak').innerText = streak;
+
+            let topper = globalData.length > 0 ? globalData[0] : targetUser;
+
+            let topCor = topper.history.correct;
+            let topWro = topper.history.wrong;
+            let topStat = {
+                correct: topCor,
+                wrong: topWro,
+                attempts: topper.attempts,
+                accuracy: topper.attempts > 0 ? Math.round((topCor / topper.attempts) * 100) : 0,
+                score: topper.score
+            };
+
+            let totalClassCorrect = 0;
+            let totalClassWrong = 0;
+            let totalClassAttempts = 0;
+            let totalClassScore = 0;
+
+            globalData.forEach(u => {
+                totalClassCorrect += u.history.correct;
+                totalClassWrong += u.history.wrong;
+                totalClassAttempts += u.attempts;
+                totalClassScore += u.score;
+            });
+
+            let participants = globalData.length > 0 ? globalData.length : 1;
+
+            let avgStat = {
+                correct: Math.round(totalClassCorrect / participants),
+                wrong: Math.round(totalClassWrong / participants),
+                attempts: Math.round(totalClassAttempts / participants),
+                score: Math.round(totalClassScore / participants),
+                accuracy: totalClassAttempts > 0 ? Math.round((totalClassCorrect / totalClassAttempts) * 100) : 0
+            };
+
+            document.getElementById('tblStudentHeader').innerText = isOwnProfile ? 'You' : targetUser.name.split(' ')[0];
+
+            document.getElementById('tblYouCor').innerHTML = `${targetUser.history.correct} <span style="font-size:0.8em; color:#64748b;">(${targetUser.history.accuracy}%)</span>`;
+            document.getElementById('tblYouWro').innerHTML = `${targetUser.history.wrong} <span style="font-size:0.8em; color:#64748b;">(${totalAttempts > 0 ? 100 - targetUser.history.accuracy : 0}%)</span>`;
+            document.getElementById('tblYouAtt').innerText = totalAttempts;
+            document.getElementById('tblYouAcc').innerText = targetUser.history.accuracy + '%';
+
+            document.getElementById('tblTopCor').innerHTML = `${topStat.correct} <span style="font-size:0.8em; color:#64748b;">(${topStat.accuracy}%)</span>`;
+            document.getElementById('tblTopWro').innerHTML = `${topStat.wrong} <span style="font-size:0.8em; color:#64748b;">(${topStat.attempts > 0 ? 100 - topStat.accuracy : 0}%)</span>`;
+            document.getElementById('tblTopAtt').innerText = topStat.attempts;
+            document.getElementById('tblTopAcc').innerText = topStat.accuracy + '%';
+
+            document.getElementById('tblAvgCor').innerHTML = `${avgStat.correct} <span style="font-size:0.8em; color:#64748b;">(${avgStat.accuracy}%)</span>`;
+            document.getElementById('tblAvgWro').innerHTML = `${avgStat.wrong} <span style="font-size:0.8em; color:#64748b;">(${avgStat.attempts > 0 ? 100 - avgStat.accuracy : 0}%)</span>`;
+            document.getElementById('tblAvgAtt').innerText = avgStat.attempts;
+            document.getElementById('tblAvgAcc').innerText = avgStat.accuracy + '%';
+
+            let topperSingleEmoji = getSingleHouseEmoji(topper.house);
+            document.getElementById('bannerTopperName').innerHTML = `${topper.name} <span style="font-weight:normal; font-size:1.15em; margin-left: 6px;">${topperSingleEmoji}</span>`;
+            document.getElementById('bannerTopperInfo').innerText = `${topper.score} pts • ${topStat.accuracy}% Accuracy`;
+
+            document.getElementById('csTotal').innerText = targetUser.score;
+            document.getElementById('csCorrect').innerText = targetUser.history.correct;
+            document.getElementById('csWrong').innerText = targetUser.history.wrong;
+            document.getElementById('csAcc').innerText = targetUser.history.accuracy + '%';
+
+            // Trigger rank history and activity builds
+            renderRankHistory(targetUser);
+            populateRecentActivity(targetUser);
+            renderCharts(targetUser);
+
+            const modal = document.getElementById('analysisModal');
+            modal.classList.add('active');
+        }
+
+        function populateRecentActivity(targetUser) {
+            const actList = document.getElementById('activityList');
+            actList.innerHTML = '';
+
+            let labels = targetUser.history.labels;
+            let scores = targetUser.history.scores;
+            let dailyCorrect = targetUser.history.daily_correct || [];
+            let dailyAttempts = targetUser.history.daily_attempts || [];
+
+            if (!labels || labels.length === 0) {
+                actList.innerHTML = '<div style="text-align:center; color:#94a3b8; padding: 10px;">No quizzes attempted yet.</div>';
+                return;
+            }
+
+            const weekOrder = { 'Mon': 1, 'Tue': 2, 'Wed': 3, 'Thu': 4, 'Fri': 5, 'Sat': 6, 'Sun': 7 };
+            let activities = [];
+            for (let i = 0; i < labels.length; i++) {
+                activities.push({
+                    day: labels[i],
+                    score: scores[i],
+                    correct: dailyCorrect[i] || 0,
+                    wrong: Math.max(0, (dailyAttempts[i] || 0) - (dailyCorrect[i] || 0)),
+                    order: weekOrder[labels[i]] || 0
+                });
+            }
+            activities.sort((a, b) => b.order - a.order);
+
+            activities.forEach(act => {
+                if (act.score === 0 && act.correct === 0 && act.wrong === 0) return;
+
+                actList.innerHTML += `
+                    <div class="activity-row">
+                        <div class="act-day">${act.day}</div>
+                        <div class="act-stats">
+                            <span class="text-green">✅ ${act.correct}</span>
+                            <span class="text-red">❌ ${act.wrong}</span>
+                        </div>
+                        <div class="text-blue" style="font-weight:700;">${act.score > 0 ? '+' : ''}${act.score % 1 !== 0 ? act.score.toFixed(2) : act.score} pts</div>
+                    </div>
+                `;
+            });
+
+            if (actList.innerHTML === '') {
+                actList.innerHTML = '<div style="text-align:center; color:#94a3b8; padding: 10px;">No quizzes attempted yet.</div>';
+            }
+        }
+
+        function openHistoryDetail(week, rank, total, score, attempts, correct) {
+            let acc = attempts > 0 ? Math.round((correct / attempts) * 100) : 0;
+
+            document.getElementById('histWeek').innerText = week;
+            document.getElementById('histRank').innerText = `#${rank}`;
+
+            document.getElementById('histScore').innerText = (score % 1 !== 0 ? score.toFixed(2) : score);
+
+            document.getElementById('histAcc').innerText = acc + '%';
+            document.getElementById('histCorrect').innerText = correct;
+
+            document.getElementById('historyModalOverlay').classList.add('active');
+        }
+
+        function closeHistoryModal(event, force=false) {
+            if (force || event.target.id === 'historyModalOverlay') {
+                document.getElementById('historyModalOverlay').classList.remove('active');
+            }
+        }
+
+        function renderCharts(targetUser) {
+            const ctxDaily = document.getElementById('dailyChart').getContext('2d');
+            const ctxPie = document.getElementById('pieChart').getContext('2d');
+
+            if (dailyChartInstance) dailyChartInstance.destroy();
+            if (pieChartInstance) pieChartInstance.destroy();
+
+            const weekLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+            // Use 'null' instead of 0 so Chart.js leaves future days completely blank
+            let finalYou = [null, null, null, null, null, null, null];
+            let finalTop = [null, null, null, null, null, null, null];
+            let finalAvg = [null, null, null, null, null, null, null];
+
+            // 1. Calculate what day it is today in IST
+            let now = new Date();
+            let utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+            let istTime = new Date(utc + (330 * 60000));
+            let day = istTime.getDay();
+            let currentDayIndex = day === 0 ? 6 : day - 1; // Mon=0, Sun=6
+
+            // 2. Only populate data for today and previous days
+            for (let i = 0; i < targetUser.history.labels.length; i++) {
+                let dayIndex = weekLabels.indexOf(targetUser.history.labels[i]);
+                // Block any glitch data from future days
+                if (dayIndex !== -1 && dayIndex <= currentDayIndex) {
+                    finalYou[dayIndex] = targetUser.history.scores[i];
+                }
+            }
+
+            // 3. Fill past days with 0 (if missed) and leave future days as null
+            for (let i = 0; i <= currentDayIndex; i++) {
+                if (finalYou[i] === null) finalYou[i] = 0;
+                finalTop[i] = window.topperHistory[weekLabels[i]] || 0;
+                finalAvg[i] = window.classAvgHistory[weekLabels[i]] || 0;
+            }
+
+            let myLabel = targetUser.id === window.currentUserData.id ? 'You' : targetUser.name.split(' ')[0];
+
+            dailyChartInstance = new Chart(ctxDaily, {
+                type: 'bar',
+                data: {
+                    labels: weekLabels,
+                    datasets: [
+                        {
+                            label: myLabel,
+                            data: finalYou,
+                            backgroundColor: '#3b82f6',
+                            barPercentage: 1.0,
+                            categoryPercentage: 0.65,
+                            borderRadius: 6
+                        },
+                        {
+                            label: `Topper`,
+                            data: finalTop,
+                            backgroundColor: '#fbbf24',
+                            barPercentage: 1.0,
+                            categoryPercentage: 0.65,
+                            borderRadius: 6
+                        },
+                        {
+                            label: `Class Avg`,
+                            data: finalAvg,
+                            backgroundColor: '#10b981',
+                            barPercentage: 1.0,
+                            categoryPercentage: 0.65,
+                            borderRadius: 6
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: true, position: 'top', align: 'start',
+                            labels: { usePointStyle: true, boxWidth: 8, font: { family: 'Segoe UI', weight: '600', size: 11 }, color: '#64748b' }
+                        }
+                    },
+                    scales: {
+                        y: { beginAtZero: true, grid: { color: '#f1f5f9' }, border: {display: false} },
+                        x: { grid: { display: false }, border: {display: false} }
+                    }
+                }
+            });
+
+            let c = targetUser.history.correct;
+            let w = targetUser.history.wrong;
+            let pieData = [c, w];
+            let pieColors = ['#10b981', '#ef4444'];
+            if (c === 0 && w === 0) { pieData = [1]; pieColors = ['#e2e8f0']; }
+
+            pieChartInstance = new Chart(ctxPie, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Correct', 'Wrong'],
+                    datasets: [{
+                        data: pieData,
+                        backgroundColor: pieColors,
+                        borderWidth: 0,
+                        borderRadius: 8,
+                        spacing: 5
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false, cutout: '80%',
+                    plugins: { legend: { display: false }, tooltip: { enabled: false } }
+                },
+                plugins: [{
+                    id: 'textCenter',
+                    beforeDraw: function(chart) {
+                        var width = chart.width, height = chart.height, ctx = chart.ctx;
+                        ctx.restore();
+                        var fontSize = (height / 80).toFixed(2);
+                        ctx.font = "bold " + fontSize + "em sans-serif";
+                        ctx.textBaseline = "middle";
+                        ctx.fillStyle = "#0f172a";
+                        var text = targetUser.history.accuracy + "%",
+                            textX = Math.round((width - ctx.measureText(text).width) / 2),
+                            textY = height / 2;
+                        if(c>0 || w>0) ctx.fillText(text, textX, textY);
+
+                        ctx.font = "500 " + (fontSize * 0.4) + "em sans-serif";
+                        ctx.fillStyle = "#64748b";
+                        var subText = "Accuracy",
+                            subX = Math.round((width - ctx.measureText(subText).width) / 2),
+                            subY = height / 2 + 15;
+                        if(c>0 || w>0) ctx.fillText(subText, subX, subY);
+                        ctx.save();
+                    }
+                }]
+            });
+        }
+    </script>
+    <div class="modal-overlay" id="eloModalOverlay" onclick="closeEloModal(event)" style="z-index: 300;">
+        <div class="modal-content" id="eloModalContent" onclick="event.stopPropagation()" style="height: 80vh; background: #f8fafc; padding: 0; display: flex; flex-direction: column;">
+            <div style="padding: 20px; text-align: center; border-bottom: 1px solid #e2e8f0; background: white; border-radius: 32px 32px 0 0;">
+                <div class="close-indicator" onclick="closeEloModal(null, true)"></div>
+                <h2 style="margin: 0; color: #0f172a; font-size: 1.3em;">🌍 Global Intelligence</h2>
+                <p style="margin: 4px 0 0 0; font-size: 0.8em; color: #64748b;">Top 50 Lifetime Elo Ratings (Active Only)</p>
+            </div>
+
+            <div id="eloListContainer" style="flex: 1; overflow-y: auto; padding: 15px; padding-bottom: 100px;">
+                </div>
+
+            <div class="user-footer" id="eloFooter" style="bottom: 20px; background: rgba(15, 23, 42, 0.95); border: 1px solid #334155; color: white;">
+                Loading your Elo status...
+            </div>
+        </div>
+    </div>
+    <script>
+        // Attach the new global data to window for easy access
+        let globalEloData = [];
+
+        // Modify the fetch to catch the new elo data
+        const oldRender = renderLeaderboardData;
+        renderLeaderboardData = function(data) {
+            oldRender(data); // Run original
+
+            // Assign Elo to global profiles
+            globalData.forEach(u => {
+                let matched = data.leaderboard.find(x => x.id === u.id);
+                if (matched) u.elo = matched.elo;
+            });
+            window.currentUserData.elo = data.current_user.elo || 1000;
+            globalEloData = data.elo_ranking || [];
+        };
+
+        function openEloLeaderboard() {
+            const container = document.getElementById('eloListContainer');
+            container.innerHTML = '';
+
+            // Filter for ACTIVE users only, then render the Top 50
+            let top50Active = globalEloData.filter(eu => eu.is_active).slice(0, 50);
+
+            top50Active.forEach(eu => {
+                let isMe = eu.id === window.currentUserData.id;
+                let bg = isMe ? "background: #eff6ff; border: 1px solid #bfdbfe;" : "background: white; border: 1px solid #edf1f5;";
+
+                container.innerHTML += `
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 15px; margin-bottom: 8px; border-radius: 12px; ${bg} box-shadow: 0 1px 3px rgba(0,0,0,0.02);">
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <div style="font-weight: 900; color: #94a3b8; width: 25px;">#${eu.rank}</div>
+                            <div style="font-weight: bold; color: #1e293b;">${eu.name}</div>
+                        </div>
+                        <div style="font-weight: 800; color: #2563eb;">🧠 ${eu.elo.toFixed(1)}</div>
+                    </div>
+                `;
+            });
+
+            // Handle Footer Status (ALWAYS SHOW RANK)
+            const footer = document.getElementById('eloFooter');
+            let myEloEntry = globalEloData.find(eu => eu.id === window.currentUserData.id);
+            let myTitle = getAcademicTitle(window.currentUserData.elo);
+
+            // Formatting
+            let myRankDisplay = myEloEntry ? `#${myEloEntry.rank}` : 'N/A';
+            let myEloDisplay = myEloEntry ? myEloEntry.elo.toFixed(1) : window.currentUserData.elo.toFixed(1);
+
+            // Tiny warning tag if they are currently inactive
+            let inactivityWarning = myEloEntry && !myEloEntry.is_active
+                ? `<div style="font-size: 0.7em; color: #ef4444; margin-top: 2px;">Hidden from public board (Inactive)</div>`
+                : ``;
+
+            footer.innerHTML = `
+                <div style="display: flex; justify-content: space-between; width: 100%; align-items: center;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <div style="font-weight: 900; color: #cbd5e1;">${myRankDisplay}</div>
+                        <div>
+                            <div style="font-weight: bold;">You</div>
+                            <div style="font-size: 0.75em; color: #94a3b8;">${myTitle}</div>
+                            ${inactivityWarning}
+                        </div>
+                    </div>
+                    <div style="font-weight: 800; color: #60a5fa;">🧠 ${myEloDisplay}</div>
+                </div>
+            `;
+
+            document.getElementById('eloModalOverlay').classList.add('active');
+        }
+
+        function closeEloModal(event, force=false) {
+            if (force || event.target.id === 'eloModalOverlay') {
+                document.getElementById('eloModalOverlay').classList.remove('active');
+            }
+        }
+    </script>
+</body>
+</html>
