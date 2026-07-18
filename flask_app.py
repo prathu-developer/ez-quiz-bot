@@ -1346,6 +1346,42 @@ def relay_message(message_id, target_thread_id):
 def sync_message_edit(msg, target_msg_id):
     pass # Media sync identical to original...
 
+# ==========================================
+# RESTORED: ADMIN DRAFT VIEWER
+# ==========================================
+@app.route('/admin/view_drafts_0508')
+def view_drafts():
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT set_type, question_data FROM draft_quizzes")
+        drafts = c.fetchall()
+        c.close()
+        release_db(conn)
+
+        if not drafts:
+            return "No drafts found. The table is empty."
+
+        html = "<h2>Stored Drafts for Tonight</h2><div style='font-family: monospace;'>"
+        for d_type, data in drafts:
+            parsed_json = json.loads(data)
+            pretty_json = json.dumps(parsed_json, indent=4)
+            html += f"<h3 style='color: #2a5298;'>{d_type}</h3>"
+            html += f"<pre style='background: #f4f6f8; padding: 10px; border-radius: 5px;'>{pretty_json}</pre><hr>"
+
+        html += "</div>"
+        return html
+    except Exception as e:
+        return f"Error reading database: {e}"
+
+# ==========================================
+# RESTORED: DATABASE VACUUM CRON
+# ==========================================
+@app.route('/cron/vacuum_db_0508', methods=['GET', 'POST'])
+def cron_vacuum_db():
+    """PostgreSQL manages vacuuming automatically, but we keep this route so cron-job.org doesn't return 404 errors!"""
+    return "PostgreSQL Auto-Vacuum handles this automatically. Route kept alive for cron compatibility!", 200
+
 @app.route('/miniapp')
 def serve_mini_app():
     return render_template('leaderboard.html')
