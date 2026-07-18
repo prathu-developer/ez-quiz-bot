@@ -635,7 +635,42 @@ def run_weekly_reset_background():
     if week_row := c.fetchone():
         c.execute("UPDATE bot_settings SET value=%s WHERE key='current_week'", (str(int(week_row[0]) + 1),))
 
-    # --- THE ADMIN MASTERY FUNNEL RESTORED ---
+    # --- 1. GROUP ANNOUNCEMENT (TOP 10) ---
+    top_10 = all_weekly_players[:10]
+    medals = ["🥇 Rank 1", "🥈 Rank 2", "🥉 Rank 3", "4th", "5th", "6th", "7th", "8th", "9th", "10th"]
+
+    current_ist_time = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    end_date = current_ist_time - timedelta(days=1)
+    start_date = current_ist_time - timedelta(days=7)
+    date_range = f"{start_date.strftime('%d %B')} - {end_date.strftime('%d %B')}"
+
+    group_text = f"🌟 **WEEKLY EXAM RESULTS ARE IN!** 🌟\n📅 **{date_range}**\n\n"
+
+    for i, user in enumerate(top_10):
+        u_id, name, score, faction_val = user[0], user[1], user[2], str(user[4])
+        if "Gryffindor" in faction_val: faction_emoji = "🦁 "
+        elif "Slytherin" in faction_val: faction_emoji = "🐍 "
+        elif "Ravenclaw" in faction_val: faction_emoji = "🦅 "
+        elif "Hufflepuff" in faction_val: faction_emoji = "🦡 "
+        else: faction_emoji = ""
+        group_text += f"{medals[i]}: {faction_emoji}[{name}](tg://user?id={u_id}) ({score} pts)\n"
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    for attempt in range(5):
+        try:
+            res = requests.post(url, json={"chat_id": CHAT_ID, "text": group_text, "parse_mode": "Markdown", "message_thread_id": TELEGRAM_THREAD_ID}, timeout=10)
+            if res.json().get("ok"):
+                for _ in range(3):
+                    try:
+                        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False}, timeout=5)
+                        break
+                    except: time.sleep(2)
+                break
+            elif res.json().get("error_code") == 429: time.sleep(res.json().get("parameters", {}).get("retry_after", 3) + 1)
+            else: break
+        except: time.sleep(3 + attempt * 2)
+
+    # --- THE ADMIN MASTERY FUNNEL DEBRIEF ---
     try:
         c.execute("SELECT COUNT(*) FROM polls")
         total_quizzes = c.fetchone()[0]
@@ -744,10 +779,16 @@ def run_weekly_reset_background():
             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
         """, (str(int(target_average)),))
         
-        current_ist_time = datetime.utcnow() + timedelta(hours=5, minutes=30)
-        end_date = current_ist_time - timedelta(days=1)
-        start_date = current_ist_time - timedelta(days=7)
-        date_range = f"{start_date.strftime('%d %B')} - {end_date.strftime('%d %B')}"
+        c.execute("SELECT faction, SUM(weekly_score) FROM users WHERE faction IS NOT NULL GROUP BY faction")
+        team_scores = dict(c.fetchall())
+        finals = {'Gryffindor 🦁🔥': team_scores.get('Gryffindor 🦁🔥', 0), 'Slytherin 🐍💧': team_scores.get('Slytherin 🐍💧', 0), 'Ravenclaw 🦅💨': team_scores.get('Ravenclaw 🦅💨', 0), 'Hufflepuff 🦡🌍': team_scores.get('Hufflepuff 🦡🌍', 0)}
+        sorted_finals = sorted(finals.items(), key=lambda x: x[1], reverse=True)
+        winner_house, winner_score = sorted_finals[0]
+
+        house_text = ""
+        medals_house = ["🥇", "🥈", "🥉", "4️⃣"]
+        for i, (h_name, h_score) in enumerate(sorted_finals):
+            house_text += f"{medals_house[i]} {h_name.split()[0]}: `{h_score} pts`\n"
 
         admin_msg = f"🔐 **ADMIN DEBRIEF: WEEKLY CUP SEASON {current_week_num}**\n📅 `{date_range}`\n\n"
         admin_msg += f"👥 **1. COMMUNITY ENGAGEMENT**\n• Active Challengers: `{total_active_students}`\n• Total Volume: `{total_weekly_attempts}` attempts\n• Completion Rate: `{completion_rate}%`\n• Overall Accuracy: `{overall_accuracy}%`\n\n"
@@ -756,6 +797,7 @@ def run_weekly_reset_background():
         admin_msg += f"🧠 **4. CONTENT INSIGHTS**\n• Hardest (Boss): {hardest_snippet}\n  ↳ *`{lowest_acc}%` got it right. (Trap: `{trap_pct}%` chose {trap_text})*\n"
         admin_msg += f"• Easiest (Freebie): {easiest_snippet}\n  ↳ *`{highest_acc}%` got it right.*\n• Tiers: `T1: {t1} | T2: {t2} | T3: {t3} | T4: {t4} | T5: {t5}`\n• Overall Difficulty: `{diff_label} ({week_diff_score:.1f}/10)`\n\n"
         admin_msg += f"🎯 **THE MASTERY FUNNEL**\n• T1 Masters: `{masters['T1']}`\n• T2 Masters: `{masters['T2']}`\n• T3 Masters: `{masters['T3']}`\n• T4 Masters: `{masters['T4']}`\n• T5 Boss Slayers: `{masters['T5']}`\n\n"
+        admin_msg += f"🏰 **5. THE HOUSE WAR**\n{house_text}"
 
         admin_ids = [716496729, 6251430317, 5103843488]
         for a_id in admin_ids:
@@ -764,12 +806,12 @@ def run_weekly_reset_background():
 
     except Exception as e: print(f"⚠️ Error generating Admin Debrief: {e}")
 
-    # Weekly wipe
+    # --- THE GREAT WIPE ---
     c.execute("UPDATE users SET faction = NULL WHERE weekly_score < %s", (target_average,))
     c.execute("UPDATE users SET base_elo = live_elo, weekly_score = 0, weekly_attempts = 0, is_captain = 0")
     c.execute("DELETE FROM precise_scores")
     
-    # Captain Selection Restored
+    # --- CAPTAIN SELECTION & PUBLIC WRAP-UP ANNOUNCEMENT ---
     c.execute("SELECT user_id, first_name FROM users WHERE faction='Gryffindor 🦁🔥' AND weekly_attempts > 0 ORDER BY weekly_score DESC LIMIT 1")
     top_gryffindor = c.fetchone()
     c.execute("SELECT user_id, first_name FROM users WHERE faction='Slytherin 🐍💧' AND weekly_attempts > 0 ORDER BY weekly_score DESC LIMIT 1")
@@ -784,9 +826,47 @@ def run_weekly_reset_background():
     if top_ravenclaw: c.execute("UPDATE users SET faction='Ravenclaw 🦅💨', is_captain=1 WHERE user_id=%s", (top_ravenclaw[0],))
     if top_hufflepuff: c.execute("UPDATE users SET faction='Hufflepuff 🦡🌍', is_captain=1 WHERE user_id=%s", (top_hufflepuff[0],))
 
+    gryf_cap = f"[{top_gryffindor[1]}](tg://user?id={top_gryffindor[0]})" if top_gryffindor else "None"
+    slyth_cap = f"[{top_slytherin[1]}](tg://user?id={top_slytherin[0]})" if top_slytherin else "None"
+    rav_cap = f"[{top_ravenclaw[1]}](tg://user?id={top_ravenclaw[0]})" if top_ravenclaw else "None"
+    huff_cap = f"[{top_hufflepuff[1]}](tg://user?id={top_hufflepuff[0]})" if top_hufflepuff else "None"
+
+    winning_banner = ""
+    if winner_score > sorted_finals[1][1]:
+        house_name, emoji = winner_house.split()[0].upper(), winner_house.split()[1]
+        winning_banner = f"🥇 **TEAM {house_name} WINS!** {emoji}\nSecuring the top spot with **{winner_score}** points! Your reigning Team Captains for this new week are:\n\n"
+    elif winner_score > 0 and winner_score == sorted_finals[1][1]:
+        winning_banner = f"⚖️ **TEAM TIE!**\nThe top teams tied with **{winner_score}** points. Your reigning Team Captains for this new week are:\n\n"
+    else:
+        winning_banner = "⚖️ **THE WEEK HAS ENDED!**\nNo points were earned this week. Your reigning Team Captains for this new week are:\n\n"
+
+    announcement_text = "🏆 ✨ **WEEKLY CUP WRAP-UP & ANALYSIS** ✨ 🏆\n\n"
+    announcement_text += winning_banner
+    announcement_text += f"🦁 **Gryffindor:** 👑 {gryf_cap}\n🐍 **Slytherin:** 👑 {slyth_cap}\n🦅 **Ravenclaw:** 👑 {rav_cap}\n🦡 **Hufflepuff:** 👑 {huff_cap}\n\n"
+    announcement_text += "📊 **Community Performance Analysis:**\n"
+    announcement_text += f"• **Active Challengers:** **{total_active_students}** students consistently competed this week.\n"
+    announcement_text += f"• **Total Engagement:** A massive **{total_weekly_attempts}** questions were attempted collectively!\n"
+    announcement_text += f"• **Overall Accuracy:** The class achieved a combined accuracy rate of **{overall_accuracy}%**.\n"
+    announcement_text += f"• **League Progress:** The final promotion cut-off landed at **{int(target_average)} pts**{cutoff_change_text}, with **{promoted_count}** students successfully levelling up their league tier.\n\n"
+    announcement_text += "⚡️ The leaderboards have been wiped clean. Attempt your first quiz today at 7:00 PM to kick off the new week!"
+
+    for attempt in range(5):
+        try:
+            res = requests.post(url, json={"chat_id": CHAT_ID, "message_thread_id": ANNOUNCEMENT_THREAD_ID, "text": announcement_text, "parse_mode": "Markdown"}, timeout=10)
+            if res.json().get("ok"):
+                for _ in range(3):
+                    try:
+                        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False}, timeout=5)
+                        break
+                    except: time.sleep(2)
+                break
+            elif res.json().get("error_code") == 429: time.sleep(res.json().get("parameters", {}).get("retry_after", 3) + 1)
+            else: break
+        except: time.sleep(3 + attempt * 2)
+
+    # --- 🧹 SUNDAY SWEEP ---
     c.execute("DELETE FROM polls")
     c.execute("DELETE FROM user_answers")
-
     thirty_days_ago = (datetime.utcnow() + timedelta(hours=5, minutes=30) - timedelta(days=30)).strftime('%Y-%m-%d')
     c.execute("DELETE FROM daily_history WHERE date_str < %s", (thirty_days_ago,))
     if week_row: c.execute("DELETE FROM weekly_rank_history WHERE week_num < %s", (int(week_row[0]) - 10,))
