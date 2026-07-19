@@ -920,6 +920,13 @@ def cron_process_leaderboard():
         release_db(conn)
         return "Processed answers", 200
     except Exception as e:
+        try:
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
+                "chat_id": "716496729",
+                "text": f"🚨 **CRITICAL CRON ERROR (Queue Processor)** 🚨\n\n`{e}`",
+                "parse_mode": "Markdown"
+            }, timeout=5)
+        except: pass
         return f"Error: {e}", 500
 
 @app.route('/cron/heavy_math_0508', methods=['GET', 'POST'])
@@ -940,6 +947,13 @@ def cron_heavy_math():
         
         return "Math Engine completed", 200
     except Exception as e:
+        try:
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
+                "chat_id": "716496729",
+                "text": f"🚨 **CRITICAL CRON ERROR (Heavy Math Engine)** 🚨\n\n`{e}`",
+                "parse_mode": "Markdown"
+            }, timeout=5)
+        except: pass
         return f"Error: {e}", 500
 
 @app.route('/cron/update_telegram_text_0508', methods=['GET', 'POST'])
@@ -962,6 +976,13 @@ def cron_update_telegram_text():
             release_db(conn)
             return "No update needed.", 200
     except Exception as e:
+        try:
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
+                "chat_id": "716496729",
+                "text": f"🚨 **CRITICAL CRON ERROR (Telegram Updater)** 🚨\n\n`{e}`",
+                "parse_mode": "Markdown"
+            }, timeout=5)
+        except: pass
         return f"Error: {e}", 500
 
 # ==========================================
