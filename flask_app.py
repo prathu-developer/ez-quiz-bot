@@ -898,6 +898,7 @@ def trigger_weekly_reset():
 
 @app.route('/cron/process_leaderboard_0508', methods=['GET', 'POST'])
 def cron_process_leaderboard():
+    conn = None
     try:
         conn = get_db()
         c = conn.cursor()
@@ -917,7 +918,6 @@ def cron_process_leaderboard():
             conn.commit()
             
         c.close()
-        release_db(conn)
         return "Processed answers", 200
     except Exception as e:
         try:
@@ -928,9 +928,13 @@ def cron_process_leaderboard():
             }, timeout=5)
         except: pass
         return f"Error: {e}", 500
+    finally:
+        if conn:
+            release_db(conn)
 
 @app.route('/cron/heavy_math_0508', methods=['GET', 'POST'])
 def cron_heavy_math():
+    conn = None
     try:
         recalculate_dynamic_scores()
         bake_miniapp_cache()
@@ -943,8 +947,6 @@ def cron_heavy_math():
         """)
         conn.commit()
         c.close()
-        release_db(conn)
-        
         return "Math Engine completed", 200
     except Exception as e:
         try:
@@ -955,9 +957,13 @@ def cron_heavy_math():
             }, timeout=5)
         except: pass
         return f"Error: {e}", 500
+    finally:
+        if conn:
+            release_db(conn)
 
 @app.route('/cron/update_telegram_text_0508', methods=['GET', 'POST'])
 def cron_update_telegram_text():
+    conn = None
     try:
         conn = get_db()
         c = conn.cursor()
@@ -968,12 +974,13 @@ def cron_update_telegram_text():
             c.execute("UPDATE bot_settings SET value='0' WHERE key='telegram_needs_update'")
             conn.commit()
             c.close()
-            release_db(conn)
+            
+            # Note: update_live_leaderboard() opens its own connection, 
+            # so we let it handle itself while this route finishes cleanly.
             update_live_leaderboard()
             return "Telegram banner updated!", 200
         else:
             c.close()
-            release_db(conn)
             return "No update needed.", 200
     except Exception as e:
         try:
@@ -984,6 +991,9 @@ def cron_update_telegram_text():
             }, timeout=5)
         except: pass
         return f"Error: {e}", 500
+    finally:
+        if conn:
+            release_db(conn)
 
 # ==========================================
 # PHASE 3: THE DISPATCHER RESTORED
