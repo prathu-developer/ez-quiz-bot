@@ -17,6 +17,8 @@ DB_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:FlUVu8dA8xy02woL@
 # High-speed connection pool to handle massive group traffic instantly
 db_pool = psycopg2.pool.ThreadedConnectionPool(1, 20, DB_URL)
 
+CRON_SECRET = os.environ.get("CRON_SECRET", "Ez_Master_Key_77")
+
 def get_db():
     return db_pool.getconn()
 
@@ -898,6 +900,10 @@ def trigger_weekly_reset():
 
 @app.route('/cron/process_leaderboard_0508', methods=['GET', 'POST'])
 def cron_process_leaderboard():
+    # 🔒 SECURITY GATE
+    if request.headers.get("X-Cron-Secret") != CRON_SECRET:
+        return "Unauthorized", 401
+
     conn = None
     try:
         conn = get_db()
@@ -932,8 +938,13 @@ def cron_process_leaderboard():
         if conn:
             release_db(conn)
 
+
 @app.route('/cron/heavy_math_0508', methods=['GET', 'POST'])
 def cron_heavy_math():
+    # 🔒 SECURITY GATE
+    if request.headers.get("X-Cron-Secret") != CRON_SECRET:
+        return "Unauthorized", 401
+
     conn = None
     try:
         recalculate_dynamic_scores()
@@ -961,8 +972,13 @@ def cron_heavy_math():
         if conn:
             release_db(conn)
 
+
 @app.route('/cron/update_telegram_text_0508', methods=['GET', 'POST'])
 def cron_update_telegram_text():
+    # 🔒 SECURITY GATE
+    if request.headers.get("X-Cron-Secret") != CRON_SECRET:
+        return "Unauthorized", 401
+
     conn = None
     try:
         conn = get_db()
@@ -975,8 +991,6 @@ def cron_update_telegram_text():
             conn.commit()
             c.close()
             
-            # Note: update_live_leaderboard() opens its own connection, 
-            # so we let it handle itself while this route finishes cleanly.
             update_live_leaderboard()
             return "Telegram banner updated!", 200
         else:
@@ -994,6 +1008,16 @@ def cron_update_telegram_text():
     finally:
         if conn:
             release_db(conn)
+
+
+@app.route('/cron/dispatcher', methods=['GET', 'POST'])
+def trigger_dispatcher():
+    # 🔒 SECURITY GATE
+    if request.headers.get("X-Cron-Secret") != CRON_SECRET:
+        return "Unauthorized", 401
+        
+    threading.Thread(target=dispatch_practice_sets).start()
+    return "Dispatcher triggered!", 200
 
 # ==========================================
 # PHASE 3: THE DISPATCHER RESTORED
