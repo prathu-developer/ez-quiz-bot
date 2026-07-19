@@ -1107,11 +1107,6 @@ def dispatch_practice_sets():
     send_and_link_poll(set_c, "Choose the most appropriate option.", shuffle=True, start_q_num=11)
     notify_prathu("Grammar Practice Sets")
 
-@app.route('/cron/dispatcher', methods=['GET', 'POST'])
-def trigger_dispatcher():
-    threading.Thread(target=dispatch_practice_sets).start()
-    return "Dispatcher triggered!", 200
-
 def recalculate_dynamic_scores():
     try:
         conn = get_db()
