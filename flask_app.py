@@ -19,6 +19,8 @@ db_pool = psycopg2.pool.ThreadedConnectionPool(1, 20, DB_URL)
 
 CRON_SECRET = os.environ.get("CRON_SECRET", "Ez_Master_Key_77")
 
+GITHUB_PAT = os.environ.get("GITHUB_PAT", "")
+
 def get_db():
     return db_pool.getconn()
 
@@ -1020,7 +1022,7 @@ def trigger_dispatcher():
     return "Dispatcher triggered!", 200
 
 # ==========================================
-# PHASE 3: THE DISPATCHER RESTORED
+# SECURED: PRACTICE SET DISPATCHER
 # ==========================================
 def dispatch_practice_sets():
     CONNECT_TO_LEADERBOARD = False
@@ -1030,12 +1032,20 @@ def dispatch_practice_sets():
 
     try:
         cache_buster = int(time.time())
-        github_grammar_url = f"https://raw.githubusercontent.com/prathu-developer/exam-scraper-api/refs/heads/main/grammar.json?t={cache_buster}"
-        response = requests.get(github_grammar_url, timeout=15)
+        # 👉 CHANGED: Updated to the authenticated API URL structure for private contents
+        github_grammar_url = f"https://api.github.com/repos/prathu-developer/exam-scraper-api/contents/grammar.json?ref=main&t={cache_buster}"
+        
+        headers = {
+            "Authorization": f"token {GITHUB_PAT}",
+            "Accept": "application/vnd.github.v3.raw"  # Tells GitHub to return the raw JSON file text directly
+        }
+        
+        response = requests.get(github_grammar_url, headers=headers, timeout=15)
+        response.raise_for_status()
         data = response.json()
         titles, set_a, set_b, set_c = data.get("titles", []), data.get("set_a", []), data.get("set_b", []), data.get("set_c", [])
     except Exception as e:
-        print(f"⚠️ Failed to fetch grammar.json: {e}")
+        print(f"⚠️ Failed to fetch grammar.json from private GitHub: {e}")
         return
 
     if not set_a or not set_b or not set_c: return
@@ -1230,7 +1240,7 @@ def trigger_sunday_announcement():
     return "Sunday announcement triggered in background!", 200
 
 # ==========================================
-# BACKGROUND WORKER: DAILY VOCAB RESTORED
+# SECURED: DAILY VOCAB & QUIZZES
 # ==========================================
 def run_daily_vocab_and_quizzes():
     current_ist_time = datetime.utcnow() + timedelta(hours=5, minutes=30)
@@ -1252,8 +1262,16 @@ def run_daily_vocab_and_quizzes():
     elif dynamic_open_period < 5: dynamic_open_period = 5
 
     try:
-        mcqs = requests.get(f"https://raw.githubusercontent.com/prathu-developer/exam-scraper-api/refs/heads/main/questions.json?t={int(time.time())}", timeout=15).json()
-    except Exception as e: return
+        # 👉 CHANGED: Updated URL layout and authenticated header
+        github_vocab_url = f"https://api.github.com/repos/prathu-developer/exam-scraper-api/contents/questions.json?ref=main&t={int(time.time())}"
+        headers = {
+            "Authorization": f"token {GITHUB_PAT}",
+            "Accept": "application/vnd.github.v3.raw"
+        }
+        mcqs = requests.get(github_vocab_url, headers=headers, timeout=15).json()
+    except Exception as e: 
+        print(f"⚠️ Failed to fetch questions.json: {e}")
+        return
 
     for mcq in mcqs:
         options = mcq['options']
@@ -1287,7 +1305,7 @@ def run_daily_vocab_and_quizzes():
             except: time.sleep(3 + attempt * 2)
         time.sleep(3)
     notify_prathu("Daily Vocab Quiz")
-
+    
 @app.route('/daily_vocab/0508', methods=['GET', 'POST'])
 def trigger_daily_vocab():
     threading.Thread(target=run_daily_vocab_and_quizzes).start()
@@ -1368,9 +1386,19 @@ def trigger_countdown_update():
     threading.Thread(target=run_countdown_and_commentary).start()
     return "Countdown triggered!", 200
 
+# ==========================================
+# SECURED: EXAM COUNTDOWN DATABASE UPDATE
+# ==========================================
 def fetch_and_update_exams_db():
     try:
-        latest_exams = requests.get("https://raw.githubusercontent.com/prathu-developer/exam-scraper-api/refs/heads/main/exams.json", timeout=10).json()
+        # 👉 CHANGED: Updated URL layout and authenticated header for exams.json
+        github_exams_url = f"https://api.github.com/repos/prathu-developer/exam-scraper-api/contents/exams.json?ref=main&t={int(time.time())}"
+        headers = {
+            "Authorization": f"token {GITHUB_PAT}",
+            "Accept": "application/vnd.github.v3.raw"
+        }
+        latest_exams = requests.get(github_exams_url, headers=headers, timeout=10).json()
+        
         conn = get_db()
         c = conn.cursor()
         c.execute("DELETE FROM upcoming_exams")
@@ -1385,7 +1413,7 @@ def fetch_and_update_exams_db():
         conn.commit()
         c.close()
         release_db(conn)
-    except Exception as e: print(f"⚠️ Failed to update exam dates: {e}")
+    except Exception as e: print(f"⚠️ Failed to update exam dates from private repo: {e}")
 
 def update_exam_countdown():
     current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
