@@ -1019,7 +1019,7 @@
             document.getElementById('modalStudentElo').innerText = `🧠 ${targetUser.elo ? targetUser.elo.toFixed(1) : 1000}`;
             document.getElementById('modalStudentTitle').innerText = getAcademicTitle(targetUser.elo || 1000);
 
-            document.getElementById('statScore').innerText = targetUser.score;
+            document.getElementById('statScore').innerText = targetUser.score % 1 !== 0 ? targetUser.score.toFixed(2) : targetUser.score;
             document.getElementById('statAccuracy').innerText = targetUser.history.accuracy + '%';
 
             let totalAttempts = targetUser.history.correct + targetUser.history.wrong;
@@ -1094,9 +1094,9 @@
 
             let topperSingleEmoji = getSingleHouseEmoji(topper.house);
             document.getElementById('bannerTopperName').innerHTML = `${topper.name} <span style="font-weight:normal; font-size:1.15em; margin-left: 6px;">${topperSingleEmoji}</span>`;
-            document.getElementById('bannerTopperInfo').innerText = `${topper.score} pts • ${topStat.accuracy}% Accuracy`;
+            document.getElementById('bannerTopperInfo').innerText = `${topper.score % 1 !== 0 ? topper.score.toFixed(2) : topper.score} pts • ${topStat.accuracy}% Accuracy`;
 
-            document.getElementById('csTotal').innerText = targetUser.score;
+            document.getElementById('csTotal').innerText = targetUser.score % 1 !== 0 ? targetUser.score.toFixed(2) : targetUser.score;
             document.getElementById('csCorrect').innerText = targetUser.history.correct;
             document.getElementById('csWrong').innerText = targetUser.history.wrong;
             document.getElementById('csAcc').innerText = targetUser.history.accuracy + '%';
