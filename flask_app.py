@@ -1436,6 +1436,10 @@ def update_exam_countdown():
     for exam in sorted(dynamic_exams, key=lambda x: x['date']):
         delta = (exam['date'].date() - current_ist.date()).days
         if delta >= 0:
+            # 🛑 FILTER: Skip placeholder exams that have no official date announced yet
+            if exam.get('display_date', '').lower().strip() == 'to be announced':
+                continue
+                
             active_exams_found = True
             text += f"🎯 **{exam['name']}** `[{exam.get('status', 'Expected')}]`\n"
             if delta == 0: text += f"└ 🚨 **TODAY IS THE EXAM! Best of luck!** 🚨\n\n"
@@ -1490,7 +1494,7 @@ def generate_and_send_commentary():
                     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
                 """, (str(new_msg_id),))
                 conn.commit()
-                requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": new_msg_id, "disable_notification": True}, timeout=5)
+                # 🛑 The pinChatMessage line has been removed from here!
                 break
             else: time.sleep(2)
         except: time.sleep(3)
