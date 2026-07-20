@@ -1027,7 +1027,7 @@ def trigger_dispatcher():
 # SECURED: PRACTICE SET DISPATCHER
 # ==========================================
 def dispatch_practice_sets():
-    CONNECT_TO_LEADERBOARD = False
+    CONNECT_TO_LEADERBOARD = True
     PRACTICE_THREAD_ID = 10123
     current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
     current_day = current_ist.strftime('%a')
@@ -1316,16 +1316,33 @@ def trigger_daily_vocab():
 # ==========================================
 # BACKGROUND WORKER: SUNDAY REMINDERS RESTORED
 # ==========================================
+# ==========================================
+# BACKGROUND WORKER: SUNDAY REMINDERS RESTORED
+# ==========================================
 def run_sunday_reminder():
     current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
-    text = f"⏳ ⟪ **THE HOUSE CUP COUNTDOWN** ⟫ ⏳\n📅 `[ {(current_ist - timedelta(days=6)).strftime('%d %B')} ➪ {(current_ist - timedelta(days=1)).strftime('%d %B')} ]`\n\n🚨 **Last Chance!** 🚨\nToday is the **absolute final day** to complete your weekly quizzes!"
-    for attempt in range(10):
-        try:
-            res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": 246, "text": text, "parse_mode": "Markdown"}, timeout=20)
-            if res.status_code == 200:
-                requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False}, timeout=10)
-                break
-        except: time.sleep(3 + attempt * 2)
+    date_str = f"[ {(current_ist - timedelta(days=6)).strftime('%d %B')} ➪ {(current_ist - timedelta(days=1)).strftime('%d %B')} ]"
+    
+    # Target threads and their specific drill names
+    targets = [
+        {"thread_id": 246, "drill": "Vocab Drill"},
+        {"thread_id": 10123, "drill": "Topic Drill"}
+    ]
+
+    for target in targets:
+        text = f"⏳ ⟪ **THE HOUSE CUP COUNTDOWN** ⟫ ⏳\n📅 `{date_str}`\n🎯 **{target['drill']}**\n\n🚨 **Last Chance!** 🚨\nToday is the **absolute final day** to complete your weekly quizzes!"
+        
+        for attempt in range(10):
+            try:
+                res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": target["thread_id"], "text": text, "parse_mode": "Markdown"}, timeout=20)
+                if res.status_code == 200:
+                    requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False}, timeout=10)
+                    break
+            except: 
+                time.sleep(3 + attempt * 2)
+        
+        # A short 2-second pause between messages to keep Telegram's anti-spam filters happy
+        time.sleep(2)
 
 @app.route('/sunday_reminder/0508', methods=['GET', 'POST'])
 def trigger_sunday_reminder():
