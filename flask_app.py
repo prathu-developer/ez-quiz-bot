@@ -667,12 +667,13 @@ def run_weekly_reset_background():
 
     for i, user in enumerate(top_10):
         u_id, name, score, faction_val = user[0], user[1], user[2], str(user[4])
+        clean_score = int(score) if score % 1 == 0 else round(score, 2)
         if "Gryffindor" in faction_val: faction_emoji = "🦁 "
         elif "Slytherin" in faction_val: faction_emoji = "🐍 "
         elif "Ravenclaw" in faction_val: faction_emoji = "🦅 "
         elif "Hufflepuff" in faction_val: faction_emoji = "🦡 "
         else: faction_emoji = ""
-        group_text += f"{medals[i]}: {faction_emoji}[{name}](tg://user?id={u_id}) ({score} pts)\n"
+        group_text += f"{medals[i]}: {faction_emoji}[{name}](tg://user?id={u_id}) ({clean_score} pts)\n"
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     for attempt in range(5):
@@ -807,7 +808,8 @@ def run_weekly_reset_background():
         house_text = ""
         medals_house = ["🥇", "🥈", "🥉", "4️⃣"]
         for i, (h_name, h_score) in enumerate(sorted_finals):
-            house_text += f"{medals_house[i]} {h_name.split()[0]}: `{h_score} pts`\n"
+            clean_h_score = int(h_score) if h_score % 1 == 0 else round(h_score, 2)
+            house_text += f"{medals_house[i]} {h_name.split()[0]}: `{clean_h_score} pts`\n"
 
         admin_msg = f"🔐 **ADMIN DEBRIEF: WEEKLY CUP SEASON {current_week_num}**\n📅 `{date_range}`\n\n"
         admin_msg += f"👥 **1. COMMUNITY ENGAGEMENT**\n• Active Challengers: `{total_active_students}`\n• Total Volume: `{total_weekly_attempts}` attempts\n• Completion Rate: `{completion_rate}%`\n• Overall Accuracy: `{overall_accuracy}%`\n\n"
@@ -1613,7 +1615,7 @@ def bake_miniapp_cache():
         for day, stats in user_hist.items():
             weighted_daily_sums[day] = weighted_daily_sums.get(day, 0) + (stats["score"] * weight)
 
-        if index == 0: topper_history_dict = {k: v["score"] for k, v in user_hist.items()}
+        if index == 0: topper_history_dict = {k: (int(v["score"]) if v["score"] % 1 == 0 else round(v["score"], 2)) for k, v in user_hist.items()}
 
         leaderboard_list.append({
             "rank": index + 1, "id": uid, "name": user[1], "score": u_score,
@@ -1622,7 +1624,7 @@ def bake_miniapp_cache():
             "house": str(user[3]), "is_captain": user[4], "attempts": u_attempts, "league": user[6] if user[6] else 0,
             "rank_history": rank_hist_dict.get(uid, []),
             "history": {
-                "labels": [k for k, v in sorted_user_hist], "scores": [v["score"] for k, v in sorted_user_hist],
+                "labels": [k for k, v in sorted_user_hist], "scores": [(int(v["score"]) if v["score"] % 1 == 0 else round(v["score"], 2)) for k, v in sorted_user_hist],
                 "daily_correct": [v["correct"] for k, v in sorted_user_hist], "daily_attempts": [v["attempts"] for k, v in sorted_user_hist],
                 "accuracy": round((u_correct / u_attempts) * 100) if u_attempts > 0 else 0, "correct": u_correct, "wrong": max(0, u_attempts - u_correct)
             }
