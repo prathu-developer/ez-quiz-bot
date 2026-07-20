@@ -1316,9 +1316,6 @@ def trigger_daily_vocab():
 # ==========================================
 # BACKGROUND WORKER: SUNDAY REMINDERS RESTORED
 # ==========================================
-# ==========================================
-# BACKGROUND WORKER: SUNDAY REMINDERS RESTORED
-# ==========================================
 def run_sunday_reminder():
     current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
     date_str = f"[ {(current_ist - timedelta(days=6)).strftime('%d %B')} ➪ {(current_ist - timedelta(days=1)).strftime('%d %B')} ]"
@@ -1330,7 +1327,14 @@ def run_sunday_reminder():
     ]
 
     for target in targets:
-        text = f"⏳ ⟪ **THE HOUSE CUP COUNTDOWN** ⟫ ⏳\n📅 `{date_str}`\n🎯 **{target['drill']}**\n\n🚨 **Last Chance!** 🚨\nToday is the **absolute final day** to complete your weekly quizzes!"
+        text = (
+            f"⏳ ⟪ **THE HOUSE CUP COUNTDOWN** ⟫ ⏳\n"
+            f"📅 `{date_str}`\n"
+            f"🎯 **{target['drill']}**\n"
+            f"🚨 **Last Chance!** 🚨\n"
+            f"Today is the **absolute final day** to complete your weekly quizzes! The Great Hall hourglasses are locking soon.\n"
+            f"Every point shifts the balance of power. Finish your magical trials before tonight's final tally! 🏆✨"
+        )
         
         for attempt in range(10):
             try:
