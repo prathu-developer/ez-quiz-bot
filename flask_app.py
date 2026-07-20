@@ -1014,12 +1014,8 @@ def cron_update_telegram_text():
             release_db(conn)
 
 
-@app.route('/cron/dispatcher', methods=['GET', 'POST'])
+@app.route('/cron/dispatcher_0508', methods=['GET', 'POST'])
 def trigger_dispatcher():
-    # 🔒 SECURITY GATE
-    if request.headers.get("X-Cron-Secret") != CRON_SECRET:
-        return "Unauthorized", 401
-        
     threading.Thread(target=dispatch_practice_sets).start()
     return "Dispatcher triggered!", 200
 
