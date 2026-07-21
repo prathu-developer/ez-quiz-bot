@@ -552,14 +552,17 @@ def webhook():
         if 'text' in msg:
             text = msg.get('text', '')
             
-            # --- NEW INTERCEPT: THE EPHEMERAL RANK COMMAND ---
+            # --- INTERCEPT: EPHEMERAL /RANK COMMAND ---
             if chat_type in ['group', 'supergroup'] and text.startswith('/rank'):
                 threading.Thread(target=process_ranking_command, kwargs={
-                    "chat_id": chat_id, "user_id": msg['from']['id'], "message_id": msg['message_id'], "thread_id": thread_id
+                    "chat_id": chat_id, 
+                    "user_id": msg['from']['id'], 
+                    "message_id": msg['message_id'], 
+                    "thread_id": thread_id
                 }).start()
                 return 'OK', 200
 
-            # --- EXISTING AI LOGIC ---
+            # --- EXISTING LIXIE AI LOGIC ---
             if chat_type in ['group', 'supergroup'] and not text.startswith('/'):
                 if str(chat_id) == CHAT_ID and thread_id == 11:
                     replied_text = msg['reply_to_message']['text'] if 'reply_to_message' in msg and 'text' in msg['reply_to_message'] else None
@@ -1576,95 +1579,167 @@ def sync_message_edit(msg, target_msg_id):
 
 def process_ranking_command(chat_id, user_id, message_id, thread_id):
     try:
-        # ✨ STEALTH MODE: Instantly delete the student's "/ranking" text from the group
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage", json={
-            "chat_id": chat_id,
-            "message_id": message_id
-        }, timeout=5)
+        # 1. ✨ STEALTH MODE: Instantly delete the student's /rank text message from the group
+        try:
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage", json={
+                "chat_id": chat_id,
+                "message_id": message_id
+            }, timeout=5)
+        except Exception as e:
+            print(f"⚠️ Could not delete /rank message: {e}")
 
         conn = get_db()
         c = conn.cursor()
-        
-        # 1. Total Quizzes Available
+
+        # 2. Fetch Total Quizzes Currently Dropped
         c.execute("SELECT COUNT(*) FROM polls")
         total_quizzes = c.fetchone()[0]
-        
-        # 2. Get Student Stats
-        c.execute("SELECT weekly_score, weekly_attempts, faction FROM users WHERE user_id = %s", (user_id,))
+
+        # 3. Fetch Student Metrics
+        c.execute("""
+            SELECT weekly_score, weekly_attempts, weekly_correct, faction, league_tier, live_elo
+            FROM users WHERE user_id = %s
+        """, (user_id,))
         user_row = c.fetchone()
-        
-        # If the student hasn't played yet
-        if not user_row or user_row[1] == 0:
+
+        # If student hasn't attempted any quiz yet
+        if not user_row or not user_row[1] or user_row[1] == 0:
             c.close()
             release_db(conn)
             payload = {
                 "chat_id": chat_id,
-                "receiver_user_id": user_id, # ✨ THE EPHEMERAL MAGIC PARAMETER
-                "text": "🔮 **You haven't attempted any magical trials this week yet!** Drop into the drills to get ranked.",
-                "parse_mode": "Markdown"
+                "receiver_user_id": user_id, # ✨ Ephemeral delivery
+                "text": "🔮 **You haven't attempted any magical trials this week yet!** Drop into the daily quizzes to get ranked on the leaderboard.",
+                "parse_mode": "Markdown",
+                "reply_markup": {
+                    "inline_keyboard": [[{"text": "📊 Open Full Dashboard", "url": "https://t.me/Ez_vocab_bot/leaderboard"}]]
+                }
             }
             if thread_id: payload["message_thread_id"] = thread_id
             requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json=payload, timeout=10)
             return
 
-        u_score, u_attempts, u_faction = user_row[0], user_row[1], user_row[2] if user_row[2] else "🏳️ Unsorted"
-        
-        # 3. Calculate Promotion Cut-off (Class Average)
-        c.execute("SELECT weekly_score, weekly_attempts, (SELECT SUM(is_correct) FROM user_answers WHERE user_id = users.user_id) FROM users WHERE weekly_attempts > 0")
-        all_active_users = c.fetchall()
-        
+        u_score = user_row[0] if user_row[0] is not None else 0.0
+        u_attempts = user_row[1] if user_row[1] is not None else 0
+        u_correct = user_row[2] if user_row[2] is not None else 0
+        u_wrong = max(0, u_attempts - u_correct)
+        u_faction = user_row[3] or "🏳️ Unsorted"
+        u_league = user_row[4] if user_row[4] is not None else 0
+        u_elo = round(user_row[5]) if user_row[5] is not None else 1000
+        accuracy = int((u_correct / u_attempts) * 100) if u_attempts > 0 else 0
+
+        # 4. Fetch All Active Students & Calculate Weekly Rank
+        c.execute("""
+            SELECT user_id, weekly_score, weekly_attempts,
+                   (SELECT SUM(is_correct) FROM user_answers WHERE user_id = users.user_id) as correct
+            FROM users WHERE weekly_attempts > 0
+            ORDER BY weekly_score DESC, last_updated ASC
+        """)
+        all_active = c.fetchall()
+        total_active = len(all_active)
+
+        weekly_rank = 1
+        for idx, u in enumerate(all_active):
+            if u[0] == user_id:
+                weekly_rank = idx + 1
+                break
+
+        # 5. Calculate Promotion Cut-off (Class Average)
         sum_weighted_points, sum_weights = 0.0, 0.0
-        for score, attempts, correct in all_active_users:
-            if attempts == 0: continue
-            corr = correct if correct else 0
-            accuracy = corr / attempts
-            volume_weight = attempts / (attempts + 10.0)
-            final_weight = volume_weight * accuracy
-            if score < 0: final_weight = 0.0
-            sum_weighted_points += (score * final_weight)
-            sum_weights += final_weight
-            
+        for uid_i, score_i, att_i, cor_i in all_active:
+            if att_i == 0: continue
+            corr = cor_i if cor_i else 0
+            acc = corr / att_i
+            vol_w = att_i / (att_i + 10.0)
+            final_w = vol_w * acc
+            if score_i < 0: final_w = 0.0
+            sum_weighted_points += (score_i * final_w)
+            sum_weights += final_w
+
         target_average = int((sum_weighted_points / sum_weights) + 0.5) if sum_weights > 0 else 0
-        
-        # 4. Calculate Rank
-        all_active_users_sorted = sorted(all_active_users, key=lambda x: x[0], reverse=True)
-        rank = sum(1 for u in all_active_users_sorted if u[0] > u_score) + 1
-                
+
+        # 6. Calculate Global Lifetime Elo Rank
+        c.execute("SELECT user_id FROM users ORDER BY live_elo DESC, last_updated ASC")
+        all_elo = c.fetchall()
+        global_elo_rank = 1
+        for idx, row in enumerate(all_elo):
+            if row[0] == user_id:
+                global_elo_rank = idx + 1
+                break
+
         c.close()
         release_db(conn)
-        
-        # 5. Build Formatting
+
+        # 7. Map League Tier Names & House Emoji
+        LEAGUE_MAP = {
+            0: "🛡️ Unranked League", 1: "🥉 Bronze League", 2: "🥈 Silver League",
+            3: "🥇 Gold League", 4: "💠 Platinum League", 5: "💎 Diamond League",
+            6: "👑 Champion League", 7: "🎖️ Master League", 8: "⚡ Elite League",
+            9: "🌟 Legend League", 10: "🔮 Mythic League", 11: "⚛️ Prodigy League",
+            12: "☄️ Celestial League", 13: "🧿 Zenith League", 14: "🌌 Ascendant League"
+        }
+        league_display = LEAGUE_MAP.get(u_league, "🛡️ Unranked League")
+
         house_emoji = "🦁" if "Gryffindor" in u_faction else "🐍" if "Slytherin" in u_faction else "🦅" if "Ravenclaw" in u_faction else "🦡" if "Hufflepuff" in u_faction else "🏳️"
-        promo_status = "✅ **YES** *(Promotion Zone)*" if u_score >= target_average else "❌ **NO** *(Demotion Zone)*"
-        pending_quizzes = max(0, total_quizzes - u_attempts)
-        
+        clean_score = int(u_score) if u_score % 1 == 0 else round(u_score, 1)
+
+        # 8. Dynamic Promotion Status & Target Points Gap
+        if u_score >= target_average:
+            promo_status = "🟢 Promotion Status: Above the promotion cut-off."
+            if weekly_rank > 20 and len(all_active) >= 20:
+                target_pts = all_active[19][1]
+                pts_needed = round(max(0.1, target_pts - u_score + 0.1), 1)
+                clean_gap = int(pts_needed) if pts_needed % 1 == 0 else pts_needed
+                goal_text = f"Earn {clean_gap} more points to break into the Top 20 this week."
+            elif weekly_rank > 10 and len(all_active) >= 10:
+                target_pts = all_active[9][1]
+                pts_needed = round(max(0.1, target_pts - u_score + 0.1), 1)
+                clean_gap = int(pts_needed) if pts_needed % 1 == 0 else pts_needed
+                goal_text = f"Earn {clean_gap} more points to break into the Top 10 this week."
+            elif weekly_rank > 1:
+                target_pts = all_active[0][1]
+                pts_needed = round(max(0.1, target_pts - u_score + 0.1), 1)
+                clean_gap = int(pts_needed) if pts_needed % 1 == 0 else pts_needed
+                goal_text = f"Earn {clean_gap} more points to claim #1 place this week."
+            else:
+                goal_text = "You're ruling the entire academy at #1! 👑"
+        else:
+            promo_status = "🔴 Promotion Status: Below the promotion cut-off."
+            pts_needed = round(max(0.1, target_average - u_score + 0.1), 1)
+            clean_gap = int(pts_needed) if pts_needed % 1 == 0 else pts_needed
+            goal_text = f"Earn {clean_gap} more points to enter the Promotion Zone this week."
+
+        # 9. Format Message Body
         reply_text = (
-            f"📊 **YOUR LIVE RANKING**\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"🏅 **Rank:** `#{rank}`\n"
-            f"🛡️ **House:** {house_emoji} {u_faction.split()[0]}\n"
-            f"📈 **Promotion Track:** {promo_status}\n"
-            f"📝 **Pending Trials:** `{pending_quizzes}` quizzes remaining\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"*(This message is ephemeral and only visible to you)* 🪄"
+            f"🏆 **Your Weekly Progress** {house_emoji}\n"
+            f"You're currently **#{weekly_rank}** of **{total_active:,}** students with **{clean_score}** points, competing in the **{league_display}** and holding a 🧠 **Elo Rating of {u_elo}**.\n"
+            f"🎯 Accuracy: **{accuracy}%** • ✅ **{u_correct}** Correct • ❌ **{u_wrong}** Wrong • 📝 **{u_attempts}/{total_quizzes}** Quizzes Attempted\n"
+            f"🧠 Global Rating: **#{global_elo_rank}**\n"
+            f"{promo_status} {goal_text}"
         )
-        
-        # 6. Send Ephemerally
+
+        # 10. Send Ephemerally
         payload = {
             "chat_id": chat_id,
-            "receiver_user_id": user_id, # ✨ THE EPHEMERAL MAGIC PARAMETER
+            "receiver_user_id": user_id,  # ✨ Telegram Ephemeral parameter
             "text": reply_text,
-            "parse_mode": "Markdown"
+            "parse_mode": "Markdown",
+            "reply_markup": {
+                "inline_keyboard": [[
+                    {
+                        "text": "📊 Open Full Dashboard",
+                        "url": "https://t.me/Ez_vocab_bot/leaderboard"
+                    }
+                ]]
+            }
         }
-        if thread_id: payload["message_thread_id"] = thread_id
+        if thread_id:
+            payload["message_thread_id"] = thread_id
+
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json=payload, timeout=10)
-        
+
     except Exception as e:
-        print(f"Error in ranking command: {e}")
-        try:
-            c.close()
-            release_db(conn)
-        except: pass
+        print(f"🚨 Error executing /rank command: {e}")
 
 # ==========================================
 # RESTORED: ADMIN DRAFT VIEWER
