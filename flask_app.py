@@ -552,10 +552,10 @@ def webhook():
         if 'text' in msg:
             text = msg.get('text', '')
             
-            # --- NEW INTERCEPT: THE EPHEMERAL RANKING COMMAND ---
-            if chat_type in ['group', 'supergroup'] and text.startswith('/ranking'):
+            # --- NEW INTERCEPT: THE EPHEMERAL RANK COMMAND ---
+            if chat_type in ['group', 'supergroup'] and text.startswith('/rank'):
                 threading.Thread(target=process_ranking_command, kwargs={
-                    "chat_id": chat_id, "user_id": msg['from']['id'], "thread_id": thread_id
+                    "chat_id": chat_id, "user_id": msg['from']['id'], "message_id": msg['message_id'], "thread_id": thread_id
                 }).start()
                 return 'OK', 200
 
@@ -1574,8 +1574,14 @@ def sync_message_edit(msg, target_msg_id):
     except Exception as e:
         print(f"Sync edit error: {e}")
 
-def process_ranking_command(chat_id, user_id, thread_id):
+def process_ranking_command(chat_id, user_id, message_id, thread_id):
     try:
+        # ✨ STEALTH MODE: Instantly delete the student's "/ranking" text from the group
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage", json={
+            "chat_id": chat_id,
+            "message_id": message_id
+        }, timeout=5)
+
         conn = get_db()
         c = conn.cursor()
         
