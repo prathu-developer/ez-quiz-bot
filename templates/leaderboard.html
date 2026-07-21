@@ -714,6 +714,8 @@
             document.getElementById('weekNumber').innerText = data.current_week;
             document.getElementById('activeCount').innerText = data.leaderboard.length;
 
+            window.totalQuizzesAvailable = data.total_quizzes || 0;
+
             window.topperHistory = data.topper_history;
             window.classAvgHistory = data.class_avg_history;
             window.currentUserData = data.current_user;
@@ -887,26 +889,7 @@
             });
 
         // --- IST TIME CALCULATOR FOR MAX AVAILABLE QUESTIONS ---
-        function getMaxAvailableQuestions() {
-            let now = new Date();
-            // Convert local time to UTC, then add 5 hours and 30 minutes for IST
-            let utc = now.getTime() + (now.getTimezoneOffset() * 60000);
-            let istTime = new Date(utc + (330 * 60000));
-
-            let day = istTime.getDay(); // 0 = Sun, 1 = Mon ... 6 = Sat
-            let hour = istTime.getHours();
-
-            let quizzesReleased = 0;
-            if (day === 0) {
-                quizzesReleased = 6; // On Sunday, all 6 quizzes (Mon-Sat) are out
-            } else {
-                // If it is 7 PM (19:00) or later, today's quiz is out. Otherwise, only up to yesterday.
-                quizzesReleased = (hour >= 19) ? day : (day - 1);
-            }
-
-            // 25 questions per quiz
-            return Math.max(0, quizzesReleased * 25);
-        }
+        
 
         function updateTimer() {
             let now = new Date();
@@ -1023,8 +1006,8 @@
             document.getElementById('statAccuracy').innerText = targetUser.history.accuracy + '%';
 
             let totalAttempts = targetUser.history.correct + targetUser.history.wrong;
-            let maxAvailable = getMaxAvailableQuestions();
-            // Fallback: If a student somehow has more attempts than expected, prevent weird fractions (e.g. 30/25)
+            let maxAvailable = window.totalQuizzesAvailable || 0;
+            
             if (totalAttempts > maxAvailable) maxAvailable = totalAttempts;
 
             document.getElementById('statAttempts').innerText = `${totalAttempts} / ${maxAvailable}`;
