@@ -339,6 +339,11 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
     if not is_admin and not is_explicitly_summoned and not is_asking_doubt:
         return
 
+    # --- ✨ LIXIE CATCH-ALL RANK & RANKING INTERCEPT ✨ ---
+    if "rank" in text_lower or "score" in text_lower or "points" in text_lower:
+        process_ranking_command(chat_id, user_id, message_id, thread_id)
+        return
+
     try:
         conn = get_db()
         c = conn.cursor()
