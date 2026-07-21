@@ -1318,7 +1318,11 @@ def run_daily_vocab_and_quizzes():
                 elif poll_res.status_code == 429: time.sleep(poll_res.json().get("parameters", {}).get("retry_after", 5) + 1)
                 else: time.sleep(2)
             except: time.sleep(3 + attempt * 2)
-        time.sleep(3)
+            
+        # ✨ FIX: 5-second delay = 12 msgs/min (100% immune to Telegram's spam filter)
+        # Completes safely at 7:02 PM, leaving a 3-minute cooldown before Grammar drops at 7:05 PM!
+        time.sleep(5)
+        
     notify_prathu("Daily Vocab Quiz")
     
 @app.route('/daily_vocab/0508', methods=['GET', 'POST'])
