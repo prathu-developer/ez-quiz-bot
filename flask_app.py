@@ -1591,30 +1591,34 @@ def process_ranking_command(chat_id, user_id, message_id, thread_id):
                 "message_id": message_id
             }, timeout=5)
         except Exception as e:
-            print(f"⚠️ Could not delete /rank message: {e}")
+            pass
 
         conn = get_db()
         c = conn.cursor()
 
-        # 2. Fetch Total Quizzes Currently Dropped
-        c.execute("SELECT COUNT(*) FROM polls")
-        total_quizzes = c.fetchone()[0]
+        # 2. ⚡ CACHE TURBOCHARGER: Read everything instantly from the pre-baked JSON
+        c.execute("SELECT json_data FROM global_cache WHERE cache_key = 'miniapp_snapshot'")
+        cache_row = c.fetchone()
+        c.close()
+        release_db(conn)
 
-        # 3. Fetch Student Metrics
-        c.execute("""
-            SELECT weekly_score, weekly_attempts, weekly_correct, faction, league_tier, live_elo
-            FROM users WHERE user_id = %s
-        """, (user_id,))
-        user_row = c.fetchone()
+        if not cache_row:
+            return
 
-        # If student hasn't attempted any quiz yet
-        if not user_row or not user_row[1] or user_row[1] == 0:
-            c.close()
-            release_db(conn)
+        # Parse the JSON cache
+        cache_data = json.loads(cache_row[0])
+        leaderboard = cache_data.get('leaderboard', [])
+        elo_ranking = cache_data.get('elo_ranking', [])
+        total_quizzes = cache_data.get('total_quizzes', 0)
+
+        # 3. Find the Student's pre-calculated stats
+        user_stats = next((u for u in leaderboard if u['id'] == user_id), None)
+
+        if not user_stats or user_stats.get('attempts', 0) == 0:
             payload = {
                 "chat_id": chat_id,
-                "receiver_user_id": user_id, # ✨ Ephemeral delivery
-                "text": "🔮 **You haven't attempted any magical trials this week yet!** Drop into the daily quizzes to get ranked on the leaderboard.",
+                "receiver_user_id": user_id,
+                "text": "🔮 **You haven't attempted any magical trials this week yet!** Drop into the daily quizzes to get ranked.",
                 "parse_mode": "Markdown",
                 "message_thread_id": 11,
                 "reply_markup": {
@@ -1624,57 +1628,34 @@ def process_ranking_command(chat_id, user_id, message_id, thread_id):
             requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json=payload, timeout=10)
             return
 
-        u_score = user_row[0] if user_row[0] is not None else 0.0
-        u_attempts = user_row[1] if user_row[1] is not None else 0
-        u_correct = user_row[2] if user_row[2] is not None else 0
-        u_wrong = max(0, u_attempts - u_correct)
-        u_league = user_row[4] if user_row[4] is not None else 0
-        u_elo = round(user_row[5]) if user_row[5] is not None else 1000
-        accuracy = int((u_correct / u_attempts) * 100) if u_attempts > 0 else 0
+        u_score = user_stats['score']
+        u_attempts = user_stats['attempts']
+        u_correct = user_stats['history']['correct']
+        u_wrong = user_stats['history']['wrong']
+        u_league = user_stats['league']
+        u_elo = user_stats['elo']
+        accuracy = user_stats['history']['accuracy']
+        weekly_rank = user_stats['rank']
+        total_active = len(leaderboard)
 
-        # 4. Fetch All Active Students & Calculate Weekly Rank
-        c.execute("""
-            SELECT user_id, weekly_score, weekly_attempts,
-                   (SELECT SUM(is_correct) FROM user_answers WHERE user_id = users.user_id) as correct
-            FROM users WHERE weekly_attempts > 0
-            ORDER BY weekly_score DESC, last_updated ASC
-        """)
-        all_active = c.fetchall()
-        total_active = len(all_active)
-
-        weekly_rank = 1
-        for idx, u in enumerate(all_active):
-            if u[0] == user_id:
-                weekly_rank = idx + 1
-                break
-
-        # 5. Calculate Promotion Cut-off (Class Average)
+        # 4. Instant In-Memory Average Calculation
         sum_weighted_points, sum_weights = 0.0, 0.0
-        for uid_i, score_i, att_i, cor_i in all_active:
-            if att_i == 0: continue
-            corr = cor_i if cor_i else 0
-            acc = corr / att_i
-            vol_w = att_i / (att_i + 10.0)
+        for u in leaderboard:
+            att = u.get('attempts', 0)
+            if att == 0: continue
+            acc = u['history']['accuracy'] / 100.0 
+            vol_w = att / (att + 10.0)
             final_w = vol_w * acc
-            if score_i < 0: final_w = 0.0
-            sum_weighted_points += (score_i * final_w)
+            if u['score'] < 0: final_w = 0.0
+            sum_weighted_points += (u['score'] * final_w)
             sum_weights += final_w
 
         target_average = int((sum_weighted_points / sum_weights) + 0.5) if sum_weights > 0 else 0
 
-        # 6. Calculate Global Lifetime Elo Rank
-        c.execute("SELECT user_id FROM users ORDER BY live_elo DESC, last_updated ASC")
-        all_elo = c.fetchall()
-        global_elo_rank = 1
-        for idx, row in enumerate(all_elo):
-            if row[0] == user_id:
-                global_elo_rank = idx + 1
-                break
+        # 5. Extract Global Elo Rank
+        global_elo_rank = next((eu['rank'] for eu in elo_ranking if eu['id'] == user_id), "N/A")
 
-        c.close()
-        release_db(conn)
-
-        # 7. Map League Tier Icon and Name
+        # 6. Map League Tier Icon and Name
         LEAGUE_INFO = {
             0: ("🛡️", "Unranked"), 1: ("🥉", "Bronze"), 2: ("🥈", "Silver"),
             3: ("🥇", "Gold"), 4: ("💠", "Platinum"), 5: ("💎", "Diamond"),
@@ -1685,21 +1666,21 @@ def process_ranking_command(chat_id, user_id, message_id, thread_id):
         lg_icon, lg_name = LEAGUE_INFO.get(u_league, ("🛡️", "Unranked"))
         clean_score = int(u_score) if u_score % 1 == 0 else round(u_score, 1)
 
-        # 8. Dynamic Status Line & Target Gap
+        # 7. Dynamic Status Line & Target Gap
         if u_score >= target_average:
             status_symbol = "🟢"
-            if weekly_rank > 20 and len(all_active) >= 20:
-                target_pts = all_active[19][1]
+            if weekly_rank > 20 and total_active >= 20:
+                target_pts = leaderboard[19]['score']
                 pts_needed = round(max(0.1, target_pts - u_score + 0.1), 1)
                 clean_gap = int(pts_needed) if pts_needed % 1 == 0 else pts_needed
                 status_line = f"{status_symbol} Above cut-off. Need {clean_gap} pts to reach Top 20."
-            elif weekly_rank > 10 and len(all_active) >= 10:
-                target_pts = all_active[9][1]
+            elif weekly_rank > 10 and total_active >= 10:
+                target_pts = leaderboard[9]['score']
                 pts_needed = round(max(0.1, target_pts - u_score + 0.1), 1)
                 clean_gap = int(pts_needed) if pts_needed % 1 == 0 else pts_needed
                 status_line = f"{status_symbol} Above cut-off. Need {clean_gap} pts to reach Top 10."
             elif weekly_rank > 1:
-                target_pts = all_active[0][1]
+                target_pts = leaderboard[0]['score']
                 pts_needed = round(max(0.1, target_pts - u_score + 0.1), 1)
                 clean_gap = int(pts_needed) if pts_needed % 1 == 0 else pts_needed
                 status_line = f"{status_symbol} Above cut-off. Need {clean_gap} pts to claim #1."
@@ -1711,7 +1692,7 @@ def process_ranking_command(chat_id, user_id, message_id, thread_id):
             clean_gap = int(pts_needed) if pts_needed % 1 == 0 else pts_needed
             status_line = f"{status_symbol} Need {clean_gap} pts to reach the Promotion Zone."
 
-        # 9. Format Message Body
+        # 8. Format Message Body
         reply_text = (
             f"🏆 **Your Weekly Progress**\n\n"
             f"🏅 **Rank:** #{weekly_rank} / {total_active}\n\n"
@@ -1722,13 +1703,13 @@ def process_ranking_command(chat_id, user_id, message_id, thread_id):
             f"{status_line}"
         )
 
-        # 10. Send Ephemerally
+        # 9. Send Ephemerally
         payload = {
             "chat_id": chat_id,
-            "receiver_user_id": user_id,  # ✨ Telegram Ephemeral parameter
+            "receiver_user_id": user_id,
             "text": reply_text,
             "parse_mode": "Markdown",
-            "message_thread_id": 11,      # ✨ Routed strictly to Thread ID 11
+            "message_thread_id": 11,
             "reply_markup": {
                 "inline_keyboard": [[
                     {
@@ -1738,9 +1719,7 @@ def process_ranking_command(chat_id, user_id, message_id, thread_id):
                 ]]
             }
         }
-
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json=payload, timeout=10)
-
     except Exception as e:
         print(f"🚨 Error executing /rank command: {e}")
         
