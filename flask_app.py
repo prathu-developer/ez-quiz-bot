@@ -269,7 +269,7 @@ def update_live_leaderboard():
     msg_text += "━━━━━━━━━━━━━━━━━━━━\n\n"
 
     msg_text += "📊 **COMMUNITY PULSE**\n\n"
-    msg_text += f"➪ Quizzes Released: {total_quizzes} / 150\n"
+    msg_text += f"➪ Quizzes Released: {total_quizzes}\n"
     msg_text += f"➪ Maximum Score: {max_pts} pts\n"
     msg_text += f"➪ Promotion Cut-off: {target_average} pts\n"
     msg_text += f"➪ Safe Zone: {safe_zone_count} students\n"
