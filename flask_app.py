@@ -1724,6 +1724,7 @@ def process_ranking_command(chat_id, user_id, message_id, thread_id):
             "receiver_user_id": user_id,  # ✨ Telegram Ephemeral parameter
             "text": reply_text,
             "parse_mode": "Markdown",
+            "message_thread_id": 11,      # ✨ FORCED TO THREAD 11
             "reply_markup": {
                 "inline_keyboard": [[
                     {
@@ -1733,11 +1734,9 @@ def process_ranking_command(chat_id, user_id, message_id, thread_id):
                 ]]
             }
         }
-        if thread_id:
-            payload["message_thread_id"] = thread_id
 
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json=payload, timeout=10)
-
+        
     except Exception as e:
         print(f"🚨 Error executing /rank command: {e}")
 
