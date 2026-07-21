@@ -551,6 +551,15 @@ def webhook():
 
         if 'text' in msg:
             text = msg.get('text', '')
+            
+            # --- NEW INTERCEPT: THE EPHEMERAL RANKING COMMAND ---
+            if chat_type in ['group', 'supergroup'] and text.startswith('/ranking'):
+                threading.Thread(target=process_ranking_command, kwargs={
+                    "chat_id": chat_id, "user_id": msg['from']['id'], "thread_id": thread_id
+                }).start()
+                return 'OK', 200
+
+            # --- EXISTING AI LOGIC ---
             if chat_type in ['group', 'supergroup'] and not text.startswith('/'):
                 if str(chat_id) == CHAT_ID and thread_id == 11:
                     replied_text = msg['reply_to_message']['text'] if 'reply_to_message' in msg and 'text' in msg['reply_to_message'] else None
@@ -1540,7 +1549,116 @@ def relay_message(message_id, target_thread_id):
         except: time.sleep(3)
 
 def sync_message_edit(msg, target_msg_id):
-    pass # Media sync identical to original...
+    try:
+        # If it's a standard text message
+        if 'text' in msg:
+            payload = {
+                "chat_id": CHAT_ID,
+                "message_id": target_msg_id,
+                "text": msg['text']
+            }
+            if 'entities' in msg:
+                payload['entities'] = msg['entities']
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText", json=payload, timeout=10)
+            
+        # If it's a photo/document with a caption
+        elif 'caption' in msg:
+            payload = {
+                "chat_id": CHAT_ID,
+                "message_id": target_msg_id,
+                "caption": msg['caption']
+            }
+            if 'caption_entities' in msg:
+                payload['caption_entities'] = msg['caption_entities']
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageCaption", json=payload, timeout=10)
+    except Exception as e:
+        print(f"Sync edit error: {e}")
+
+def process_ranking_command(chat_id, user_id, thread_id):
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        
+        # 1. Total Quizzes Available
+        c.execute("SELECT COUNT(*) FROM polls")
+        total_quizzes = c.fetchone()[0]
+        
+        # 2. Get Student Stats
+        c.execute("SELECT weekly_score, weekly_attempts, faction FROM users WHERE user_id = %s", (user_id,))
+        user_row = c.fetchone()
+        
+        # If the student hasn't played yet
+        if not user_row or user_row[1] == 0:
+            c.close()
+            release_db(conn)
+            payload = {
+                "chat_id": chat_id,
+                "receiver_user_id": user_id, # ✨ THE EPHEMERAL MAGIC PARAMETER
+                "text": "🔮 **You haven't attempted any magical trials this week yet!** Drop into the drills to get ranked.",
+                "parse_mode": "Markdown"
+            }
+            if thread_id: payload["message_thread_id"] = thread_id
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json=payload, timeout=10)
+            return
+
+        u_score, u_attempts, u_faction = user_row[0], user_row[1], user_row[2] if user_row[2] else "🏳️ Unsorted"
+        
+        # 3. Calculate Promotion Cut-off (Class Average)
+        c.execute("SELECT weekly_score, weekly_attempts, (SELECT SUM(is_correct) FROM user_answers WHERE user_id = users.user_id) FROM users WHERE weekly_attempts > 0")
+        all_active_users = c.fetchall()
+        
+        sum_weighted_points, sum_weights = 0.0, 0.0
+        for score, attempts, correct in all_active_users:
+            if attempts == 0: continue
+            corr = correct if correct else 0
+            accuracy = corr / attempts
+            volume_weight = attempts / (attempts + 10.0)
+            final_weight = volume_weight * accuracy
+            if score < 0: final_weight = 0.0
+            sum_weighted_points += (score * final_weight)
+            sum_weights += final_weight
+            
+        target_average = int((sum_weighted_points / sum_weights) + 0.5) if sum_weights > 0 else 0
+        
+        # 4. Calculate Rank
+        all_active_users_sorted = sorted(all_active_users, key=lambda x: x[0], reverse=True)
+        rank = sum(1 for u in all_active_users_sorted if u[0] > u_score) + 1
+                
+        c.close()
+        release_db(conn)
+        
+        # 5. Build Formatting
+        house_emoji = "🦁" if "Gryffindor" in u_faction else "🐍" if "Slytherin" in u_faction else "🦅" if "Ravenclaw" in u_faction else "🦡" if "Hufflepuff" in u_faction else "🏳️"
+        promo_status = "✅ **YES** *(Promotion Zone)*" if u_score >= target_average else "❌ **NO** *(Demotion Zone)*"
+        pending_quizzes = max(0, total_quizzes - u_attempts)
+        
+        reply_text = (
+            f"📊 **YOUR LIVE RANKING**\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"🏅 **Rank:** `#{rank}`\n"
+            f"🛡️ **House:** {house_emoji} {u_faction.split()[0]}\n"
+            f"📈 **Promotion Track:** {promo_status}\n"
+            f"📝 **Pending Trials:** `{pending_quizzes}` quizzes remaining\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"*(This message is ephemeral and only visible to you)* 🪄"
+        )
+        
+        # 6. Send Ephemerally
+        payload = {
+            "chat_id": chat_id,
+            "receiver_user_id": user_id, # ✨ THE EPHEMERAL MAGIC PARAMETER
+            "text": reply_text,
+            "parse_mode": "Markdown"
+        }
+        if thread_id: payload["message_thread_id"] = thread_id
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json=payload, timeout=10)
+        
+    except Exception as e:
+        print(f"Error in ranking command: {e}")
+        try:
+            c.close()
+            release_db(conn)
+        except: pass
 
 # ==========================================
 # RESTORED: ADMIN DRAFT VIEWER
@@ -1589,6 +1707,9 @@ def bake_miniapp_cache():
     c.execute("SELECT value FROM bot_settings WHERE key='current_week'")
     week_row = c.fetchone()
     current_week_val = week_row[0] if week_row else 14
+
+    c.execute("SELECT COUNT(*) FROM polls")
+    total_quizzes_val = c.fetchone()[0]
 
     c.execute("""
         SELECT user_id, first_name, weekly_score, faction, is_captain, weekly_attempts, league_tier, weekly_correct, live_elo, last_updated
@@ -1653,7 +1774,7 @@ def bake_miniapp_cache():
 
     class_avg_history_dict = {day: round(weighted_daily_sums[day] / sum_weights) if sum_weights > 0 else 0 for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]}
 
-    json_string = json.dumps({"current_week": current_week_val, "leaderboard": leaderboard_list, "topper_history": topper_history_dict, "class_avg_history": class_avg_history_dict, "elo_ranking": elo_leaderboard})
+    json_string = json.dumps({"current_week": current_week_val, "total_quizzes": total_quizzes_val, "leaderboard": leaderboard_list, "topper_history": topper_history_dict, "class_avg_history": class_avg_history_dict, "elo_ranking": elo_leaderboard})
     
     c.execute("""
         INSERT INTO global_cache (cache_key, json_data) VALUES ('miniapp_snapshot', %s)
