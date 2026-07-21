@@ -154,13 +154,13 @@ def update_live_leaderboard():
     current_ist_time = datetime.utcnow() + timedelta(hours=5, minutes=30)
     monday_date = current_ist_time - timedelta(days=current_ist_time.weekday())
     sunday_date = monday_date + timedelta(days=6)
-    date_range = f"{monday_date.strftime('%d %b')} - {sunday_date.strftime('%d %b')}"
+    date_range = f"{monday_date.strftime('%d %b')} – {sunday_date.strftime('%d %b')}"
 
     weekday_idx = current_ist_time.weekday()
     if weekday_idx == 6:
-        phase_text = "Final Day! *(Locks at Midnight)*"
+        phase_text = "Final Day! • Locks at Midnight"
     else:
-        phase_text = f"Day {weekday_idx + 1} of 6 *(Competition Active)*"
+        phase_text = f"Day {weekday_idx + 1} of 6 • Competition Active"
 
     c.execute("SELECT COUNT(*) FROM polls")
     total_quizzes = c.fetchone()[0]
@@ -226,26 +226,31 @@ def update_live_leaderboard():
 
     sorted_houses = sorted(team_scores.items(), key=lambda x: x[1], reverse=True)
     top_house, top_score = sorted_houses[0]
+    second_score = sorted_houses[1][1]
 
-    house_emoji_map = {'Gryffindor 🦁🔥': '🦁', 'Slytherin 🐍💧': '🐍', 'Ravenclaw 🦅💨': '🦅', 'Hufflepuff 🦡🌍': '🦡'}
-    house_abbrev = {'Gryffindor 🦁🔥': '🦁 **GRY:**', 'Slytherin 🐍💧': '🐍 **SLY:**', 'Ravenclaw 🦅💨': '🦅 **RAV:**', 'Hufflepuff 🦡🌍': '🦡 **HUF:**'}
+    house_abbrev = {
+        'Gryffindor 🦁🔥': '🦁 Gryffindor',
+        'Slytherin 🐍💧': '🐍 Slytherin',
+        'Ravenclaw 🦅💨': '🦅 Ravenclaw',
+        'Hufflepuff 🦡🌍': '🦡 Hufflepuff'
+    }
 
-    standings_parts = []
-    for house, score in sorted_houses:
-        abbrev = house_abbrev.get(house, "🏳️ **UNK:**")
+    house_text = ""
+    medals_house = ["🥇", "🥈", "🥉", "4️⃣"]
+    for i, (house, score) in enumerate(sorted_houses):
+        abbrev = house_abbrev.get(house, "🏳️ Unknown")
         clean_score = int(score) if score % 1 == 0 else round(score, 2)
-        standings_parts.append(f"{abbrev} `{clean_score}`")
+        house_text += f"{medals_house[i]} {abbrev} — {clean_score} pts\n"
 
-    dynamic_house_line = " | ".join(standings_parts)
-
-    if top_score > sorted_houses[1][1]:
+    if top_score > second_score:
+        margin = top_score - second_score
+        clean_margin = int(margin) if margin % 1 == 0 else round(margin, 2)
         house_name_only = top_house.split()[0]
-        house_emoji = house_emoji_map.get(top_house, "🏳️")
-        lead_text = f"🏆 *({house_emoji} {house_name_only} leads the race for the House Cup!)*"
-    elif top_score > 0 and top_score == sorted_houses[1][1]:
-        lead_text = "⚖️ *(The House Cup is currently tied!)*"
+        lead_text = f"🏆 {house_name_only} leads the House Cup by {clean_margin} pts!"
+    elif top_score > 0 and top_score == second_score:
+        lead_text = "⚖️ The House Cup is currently tied!"
     else:
-        lead_text = "⚖️ *(No points have been earned yet!)*"
+        lead_text = "⚖️ No points have been earned yet!"
 
     c.execute("SELECT user_id, first_name, weekly_score, faction, is_captain FROM users WHERE weekly_attempts > 0 ORDER BY weekly_score DESC, last_updated ASC LIMIT 10")
     top_10 = c.fetchall()
@@ -254,25 +259,24 @@ def update_live_leaderboard():
     release_db(conn)
 
     msg_text = "🏰 **THE BATTLE FOR THE HOUSE CUP** 🏰\n"
-    msg_text += f"📅 **{date_range}** | 👥 **{total_active} Active Students**\n"
-    msg_text += f"⏳ **Phase:** {phase_text}\n"
+    msg_text += f"📅 {date_range} | 👥 {total_active} Active Students\n"
+    msg_text += f"⏳ {phase_text}\n"
     msg_text += "━━━━━━━━━━━━━━━━━━━━\n\n"
 
-    msg_text += "📊 **THE COMMUNITY PULSE**\n"
-    msg_text += f"➪ **Quizzes Dropped:** `{total_quizzes} Quizzes` (Max `{max_pts} pts`)\n"
-    msg_text += f"➪ **Promotion Cut-off:** `{target_average} pts` (Class Average)\n"
-    msg_text += f"➪ **Safe Zone:** `{safe_zone_count}` students above the cut-off\n"
-    msg_text += f"➪ **Global Accuracy:** `{global_accuracy_pct}%` correct overall\n"
-
-    msg_text += "━━━━━━━━━━━━━━━━━━━━\n\n"
-
-    msg_text += "⚔️ **HOUSE STANDINGS**\n"
-    msg_text += f"{dynamic_house_line}\n"
+    msg_text += "⚔️ **HOUSE WAR**\n\n"
+    msg_text += f"{house_text}\n"
     msg_text += f"{lead_text}\n"
-
     msg_text += "━━━━━━━━━━━━━━━━━━━━\n\n"
 
-    msg_text += "🏆 **TOP WIZARDS & WITCHES** 🏆\n"
+    msg_text += "📊 **COMMUNITY PULSE**\n\n"
+    msg_text += f"➪ Quizzes Released: {total_quizzes} / 150\n"
+    msg_text += f"➪ Maximum Score: {max_pts} pts\n"
+    msg_text += f"➪ Promotion Cut-off: {target_average} pts\n"
+    msg_text += f"➪ Safe Zone: {safe_zone_count} students\n"
+    msg_text += f"➪ Global Accuracy: {global_accuracy_pct}%\n"
+    msg_text += "━━━━━━━━━━━━━━━━━━━━\n\n"
+
+    msg_text += "🏆 **TOP 10 WIZARDS & WITCHES**\n\n"
 
     medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
 
@@ -288,7 +292,7 @@ def update_live_leaderboard():
         else: faction_emoji = "🏳️"
 
         captain_emoji = "🪄 " if is_captain == 1 else ""
-        msg_text += f"{medals[i]} {faction_emoji} {captain_emoji}[{name}](tg://user?id={u_id}) ➪ `{clean_score} pts`\n"
+        msg_text += f"{medals[i]} {faction_emoji} {captain_emoji}[{name}](tg://user?id={u_id}) ➪ {clean_score} pts\n"
 
     msg_text += "\n━━━━━━━━━━━━━━━━━━━━"
 
@@ -302,7 +306,7 @@ def update_live_leaderboard():
         "reply_markup": {
             "inline_keyboard": [[
                 {
-                    "text": "🏆 See All Ranking",
+                    "text": "💡 See All Ranking",
                     "url": "https://t.me/Ez_vocab_bot/leaderboard"
                 }
             ]]
