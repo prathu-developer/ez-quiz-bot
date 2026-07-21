@@ -1579,7 +1579,7 @@ def sync_message_edit(msg, target_msg_id):
 
 def process_ranking_command(chat_id, user_id, message_id, thread_id):
     try:
-        # 1. ✨ STEALTH MODE: Instantly delete the student's /rank text message from the group
+        # 1. ✨ STEALTH MODE: Instantly delete the student's /rank text message
         try:
             requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage", json={
                 "chat_id": chat_id,
@@ -1611,11 +1611,11 @@ def process_ranking_command(chat_id, user_id, message_id, thread_id):
                 "receiver_user_id": user_id, # ✨ Ephemeral delivery
                 "text": "🔮 **You haven't attempted any magical trials this week yet!** Drop into the daily quizzes to get ranked on the leaderboard.",
                 "parse_mode": "Markdown",
+                "message_thread_id": 11,
                 "reply_markup": {
                     "inline_keyboard": [[{"text": "📊 Open Full Dashboard", "url": "https://t.me/Ez_vocab_bot/leaderboard"}]]
                 }
             }
-            if thread_id: payload["message_thread_id"] = thread_id
             requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json=payload, timeout=10)
             return
 
@@ -1623,7 +1623,6 @@ def process_ranking_command(chat_id, user_id, message_id, thread_id):
         u_attempts = user_row[1] if user_row[1] is not None else 0
         u_correct = user_row[2] if user_row[2] is not None else 0
         u_wrong = max(0, u_attempts - u_correct)
-        u_faction = user_row[3] or "🏳️ Unsorted"
         u_league = user_row[4] if user_row[4] is not None else 0
         u_elo = round(user_row[5]) if user_row[5] is not None else 1000
         accuracy = int((u_correct / u_attempts) * 100) if u_attempts > 0 else 0
@@ -1670,52 +1669,52 @@ def process_ranking_command(chat_id, user_id, message_id, thread_id):
         c.close()
         release_db(conn)
 
-        # 7. Map League Tier Names & House Emoji
-        LEAGUE_MAP = {
-            0: "🛡️ Unranked League", 1: "🥉 Bronze League", 2: "🥈 Silver League",
-            3: "🥇 Gold League", 4: "💠 Platinum League", 5: "💎 Diamond League",
-            6: "👑 Champion League", 7: "🎖️ Master League", 8: "⚡ Elite League",
-            9: "🌟 Legend League", 10: "🔮 Mythic League", 11: "⚛️ Prodigy League",
-            12: "☄️ Celestial League", 13: "🧿 Zenith League", 14: "🌌 Ascendant League"
+        # 7. Map League Tier Icon and Name
+        LEAGUE_INFO = {
+            0: ("🛡️", "Unranked"), 1: ("🥉", "Bronze"), 2: ("🥈", "Silver"),
+            3: ("🥇", "Gold"), 4: ("💠", "Platinum"), 5: ("💎", "Diamond"),
+            6: ("👑", "Champion"), 7: ("🎖️", "Master"), 8: ("⚡", "Elite"),
+            9: ("🌟", "Legend"), 10: ("🔮", "Mythic"), 11: ("⚛️", "Prodigy"),
+            12: ("☄️", "Celestial"), 13: ("🧿", "Zenith"), 14: ("🌌", "Ascendant")
         }
-        league_display = LEAGUE_MAP.get(u_league, "🛡️ Unranked League")
-
-        house_emoji = "🦁" if "Gryffindor" in u_faction else "🐍" if "Slytherin" in u_faction else "🦅" if "Ravenclaw" in u_faction else "🦡" if "Hufflepuff" in u_faction else "🏳️"
+        lg_icon, lg_name = LEAGUE_INFO.get(u_league, ("🛡️", "Unranked"))
         clean_score = int(u_score) if u_score % 1 == 0 else round(u_score, 1)
 
-        # 8. Dynamic Promotion Status & Target Points Gap
+        # 8. Dynamic Status Line & Target Gap
         if u_score >= target_average:
-            promo_status = "🟢 Promotion Status: Above the promotion cut-off."
+            status_symbol = "🟢"
             if weekly_rank > 20 and len(all_active) >= 20:
                 target_pts = all_active[19][1]
                 pts_needed = round(max(0.1, target_pts - u_score + 0.1), 1)
                 clean_gap = int(pts_needed) if pts_needed % 1 == 0 else pts_needed
-                goal_text = f"Earn {clean_gap} more points to break into the Top 20 this week."
+                status_line = f"{status_symbol} Above cut-off. Need {clean_gap} pts to reach Top 20."
             elif weekly_rank > 10 and len(all_active) >= 10:
                 target_pts = all_active[9][1]
                 pts_needed = round(max(0.1, target_pts - u_score + 0.1), 1)
                 clean_gap = int(pts_needed) if pts_needed % 1 == 0 else pts_needed
-                goal_text = f"Earn {clean_gap} more points to break into the Top 10 this week."
+                status_line = f"{status_symbol} Above cut-off. Need {clean_gap} pts to reach Top 10."
             elif weekly_rank > 1:
                 target_pts = all_active[0][1]
                 pts_needed = round(max(0.1, target_pts - u_score + 0.1), 1)
                 clean_gap = int(pts_needed) if pts_needed % 1 == 0 else pts_needed
-                goal_text = f"Earn {clean_gap} more points to claim #1 place this week."
+                status_line = f"{status_symbol} Above cut-off. Need {clean_gap} pts to claim #1."
             else:
-                goal_text = "You're ruling the entire academy at #1! 👑"
+                status_line = f"{status_symbol} Above cut-off. Ruling at #1 place!"
         else:
-            promo_status = "🔴 Promotion Status: Below the promotion cut-off."
+            status_symbol = "🔴"
             pts_needed = round(max(0.1, target_average - u_score + 0.1), 1)
             clean_gap = int(pts_needed) if pts_needed % 1 == 0 else pts_needed
-            goal_text = f"Earn {clean_gap} more points to enter the Promotion Zone this week."
+            status_line = f"{status_symbol} Need {clean_gap} pts to reach the Promotion Zone."
 
         # 9. Format Message Body
         reply_text = (
-            f"🏆 **Your Weekly Progress** {house_emoji}\n"
-            f"You're currently **#{weekly_rank}** of **{total_active:,}** students with **{clean_score}** points, competing in the **{league_display}** and holding a 🧠 **Elo Rating of {u_elo}**.\n"
-            f"🎯 Accuracy: **{accuracy}%** • ✅ **{u_correct}** Correct • ❌ **{u_wrong}** Wrong • 📝 **{u_attempts}/{total_quizzes}** Quizzes Attempted\n"
-            f"🧠 Global Rating: **#{global_elo_rank}**\n"
-            f"{promo_status} {goal_text}"
+            f"🏆 **Your Weekly Progress**\n\n"
+            f"🏅 **Rank:** #{weekly_rank} / {total_active}\n\n"
+            f"⭐ **Score:** {clean_score} pts\n\n"
+            f"{lg_icon} **League:** {lg_name} • 🧠 **{u_elo} Elo**\n\n"
+            f"🎯 **{accuracy}% Accuracy** • ✅**{u_correct}** • ❌**{u_wrong}** • 📝**{u_attempts}/{total_quizzes}**\n\n"
+            f"🌍 **Global Rank:** #{global_elo_rank}\n\n"
+            f"{status_line}"
         )
 
         # 10. Send Ephemerally
@@ -1724,7 +1723,7 @@ def process_ranking_command(chat_id, user_id, message_id, thread_id):
             "receiver_user_id": user_id,  # ✨ Telegram Ephemeral parameter
             "text": reply_text,
             "parse_mode": "Markdown",
-            "message_thread_id": 11,      # ✨ FORCED TO THREAD 11
+            "message_thread_id": 11,      # ✨ Routed strictly to Thread ID 11
             "reply_markup": {
                 "inline_keyboard": [[
                     {
@@ -1736,10 +1735,10 @@ def process_ranking_command(chat_id, user_id, message_id, thread_id):
         }
 
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json=payload, timeout=10)
-        
+
     except Exception as e:
         print(f"🚨 Error executing /rank command: {e}")
-
+        
 # ==========================================
 # RESTORED: ADMIN DRAFT VIEWER
 # ==========================================
