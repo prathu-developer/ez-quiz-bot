@@ -682,15 +682,16 @@ def run_weekly_reset_background():
 
         if score >= target_average:
             if current_league >= 15: 
-                # 🛡️ THE OMNISCIENT RULE: Once in the Genesis tiers (15+), strictly +1 promotion per week.
-                new_league = min(24, current_league + 1)
+                # 🛡️ THE GENESIS GRIND: Once at Omniscient (15) or higher, strictly +1 promotion per week.
+                # Max ceiling is now 25 (Genesis X).
+                new_league = min(25, current_league + 1)
             else:
                 # Standard promotion for Ascendant (14) and below
                 if rank_index == 0: new_league = current_league + 3
                 elif rank_index < 10: new_league = current_league + 2
                 else: new_league = current_league + 1
                 
-                # 🛡️ THE GENESIS GATE: Cannot skip past Genesis I (15). Everyone must enter at Gen I.
+                # 🛡️ THE OMNISCIENT GATE: Cannot skip past Omniscient (15) in a single jump.
                 if new_league > 15:
                     new_league = 15
         else:
