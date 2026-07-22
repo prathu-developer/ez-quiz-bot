@@ -167,11 +167,26 @@
         /* Ascendant: Fast, chaotic, aggressive energy */
         @keyframes ascendantGrind { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
         
-        /* Omniscient: Very slow, soft, holy shimmer sliding across the ivory */
-        @keyframes holyShine { 0% { background-position: -200% center; } 100% { background-position: 200% center; } }
+        /* Omniscient: Sharp, holy shimmer sliding across the ivory */
+        @keyframes holyShine { 
+            0% { background-position: -150% center; } 
+            100% { background-position: 150% center; } 
+        }
         
-        /* Genesis: Deep cosmic drift for the background nebula and stars */
-        @keyframes galaxyDrift { 0% { background-position: 0% 0%, 0% 0%, 0% 0%; } 100% { background-position: -400px -400px, -300px -200px, 100% 100%; } }
+        /* Genesis: Deep cosmic drift with a glowing pulse */
+        @keyframes galaxyDrift { 
+            0% { 
+                background-position: 0px 0px, 0px 0px, 0% 0%; 
+                box-shadow: 0 0 20px rgba(217, 70, 239, 0.7), inset 0 0 15px rgba(139, 92, 246, 0.5);
+            } 
+            50% {
+                box-shadow: 0 0 35px rgba(217, 70, 239, 1), inset 0 0 25px rgba(139, 92, 246, 0.8);
+            }
+            100% { 
+                background-position: -200px -200px, -150px -100px, 100% 100%; 
+                box-shadow: 0 0 20px rgba(217, 70, 239, 0.7), inset 0 0 15px rgba(139, 92, 246, 0.5);
+            } 
+        }
 
 
         /* 🌌 14. Ascendant */
@@ -184,10 +199,10 @@
 
         /* 👁️‍🗨️ 15. Omniscient (The Sacred Manuscript) */
         .bg-omniscient {
-            /* Ivory base with a soft cream/gold shimmer passing through */
-            background: linear-gradient(110deg, #faf7f0 30%, #fffde7 50%, #faf7f0 70%);
-            background-size: 200% 100%;
-            animation: holyShine 5s infinite linear;
+            /* Ivory base with a sharp white/gold gleam passing through */
+            background: linear-gradient(110deg, #faf7f0 35%, #ffffff 50%, #faf7f0 65%);
+            background-size: 250% 100%;
+            animation: holyShine 3.5s infinite linear;
             border: 1px solid #d4af37; /* Antique, soft gold */
             color: #78350f; /* Deep, ancient ink brown */
             box-shadow: 0 0 20px rgba(212, 175, 55, 0.4), inset 0 0 15px rgba(255,255,255,1);
@@ -204,10 +219,9 @@
                 radial-gradient(1.5px 1.5px at 50px 70px, rgba(251,207,232,0.8), rgba(0,0,0,0)),
                 linear-gradient(45deg, #020617, #3b0764, #701a75, #020617);
             background-size: 80px 80px, 120px 120px, 300% 300%;
-            animation: galaxyDrift 15s infinite linear;
+            animation: galaxyDrift 8s infinite linear;
             border: 1px solid #fbbf24; /* Sharp, explosive solid gold outline */
             color: #ffffff;
-            box-shadow: 0 0 25px rgba(217, 70, 239, 0.9), inset 0 0 15px rgba(139, 92, 246, 0.5);
             text-shadow: 0 0 8px #f472b6, 0 0 15px #e879f9; /* Intense glowing text */
             font-weight: 900;
             letter-spacing: 1px;
