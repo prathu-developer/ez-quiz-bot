@@ -681,9 +681,18 @@ def run_weekly_reset_background():
         current_league = row[5] if row[5] is not None else 0
 
         if score >= target_average:
-            if rank_index == 0: new_league = min(14, current_league + 3)
-            elif rank_index < 10: new_league = min(14, current_league + 2)
-            else: new_league = min(14, current_league + 1)
+            if current_league >= 15: 
+                # 🛡️ THE OMNISCIENT RULE: Once in the Genesis tiers (15+), strictly +1 promotion per week.
+                new_league = min(24, current_league + 1)
+            else:
+                # Standard promotion for Ascendant (14) and below
+                if rank_index == 0: new_league = current_league + 3
+                elif rank_index < 10: new_league = current_league + 2
+                else: new_league = current_league + 1
+                
+                # 🛡️ THE GENESIS GATE: Cannot skip past Genesis I (15). Everyone must enter at Gen I.
+                if new_league > 15:
+                    new_league = 15
         else:
             new_league = max(0, current_league - 1)
         c.execute("UPDATE users SET league_tier = %s WHERE user_id = %s", (new_league, uid))
