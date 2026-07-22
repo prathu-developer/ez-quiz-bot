@@ -162,39 +162,63 @@
         .bg-celestial { background: linear-gradient(135deg, #1e3a8a, #60a5fa, #e0f2fe); border: 1px solid #ffffff; box-shadow: 0 0 25px rgba(147, 197, 253, 1); color: #0f172a; }
         .bg-zenith { background: linear-gradient(135deg, #000000, #18181b); border: 1px solid #fbbf24; box-shadow: 0 0 30px rgba(251, 191, 36, 1); color: #fde047; text-shadow: 0 0 4px rgba(253, 224, 71, 0.8); }
         
-        /* Animated Auras for Absolute Leagues */
-        @keyframes genesisAura { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+        /* --- ANIMATIONS FOR ABSOLUTE LEAGUES --- */
         
+        /* Ascendant: Fast, chaotic, aggressive energy */
+        @keyframes ascendantGrind { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+        
+        /* Omniscient: Very slow, soft, holy shimmer sliding across the ivory */
+        @keyframes holyShine { 0% { background-position: -200% center; } 100% { background-position: 200% center; } }
+        
+        /* Genesis: Deep cosmic drift for the background nebula and stars */
+        @keyframes galaxyDrift { 0% { background-position: 0% 0%, 0% 0%, 0% 0%; } 100% { background-position: -400px -400px, -300px -200px, 100% 100%; } }
+
+
+        /* 🌌 14. Ascendant */
         .bg-ascendant { 
             background: linear-gradient(45deg, #ef4444, #f59e0b, #10b981, #3b82f6, #8b5cf6, #ef4444); 
-            background-size: 200% 200%; animation: genesisAura 4s linear infinite;
+            background-size: 200% 200%; animation: ascendantGrind 4s linear infinite;
             border: 2px solid #ffffff; box-shadow: 0 0 15px #ef4444, 0 0 25px #3b82f6; 
             text-shadow: 0 0 5px rgba(255,255,255,0.9); 
         }
 
-        /* Legacy Marble & Gold */
+        /* 👁️‍🗨️ 15. Omniscient (The Sacred Manuscript) */
         .bg-omniscient {
-            background: linear-gradient(135deg, #ffffff, #fef08a, #fde047);
-            border: 2px solid #fbbf24; color: #78350f;
-            box-shadow: 0 0 20px rgba(251, 191, 36, 0.8), inset 0 0 10px rgba(255,255,255,1);
-            text-shadow: 0 0 2px rgba(255,255,255,0.8);
+            /* Ivory base with a soft cream/gold shimmer passing through */
+            background: linear-gradient(110deg, #faf7f0 30%, #fffde7 50%, #faf7f0 70%);
+            background-size: 200% 100%;
+            animation: holyShine 5s infinite linear;
+            border: 2px solid #d4af37; /* Antique, soft gold */
+            color: #78350f; /* Deep, ancient ink brown */
+            box-shadow: 0 0 20px rgba(212, 175, 55, 0.4), inset 0 0 15px rgba(255,255,255,1);
+            text-shadow: 0 0 3px rgba(255,255,255,0.9);
             font-weight: 900;
+            letter-spacing: 0.5px;
         }
 
-        /* Animated Dark Cosmic Ultimate */
+        /* ✨ 16-25. Genesis (The Living Nebula) */
         .bg-genesis {
-            background: linear-gradient(45deg, #020617, #312e81, #701a75, #020617);
-            background-size: 200% 200%; animation: genesisAura 5s ease infinite;
-            border: 2px solid #fbcfe8; color: #fdf4ff;
+            /* Layer 1: White Stars, Layer 2: Pink/Gold Dust, Layer 3: Moving Purple Nebula */
+            background-image: 
+                radial-gradient(1px 1px at 20px 30px, rgba(255,255,255,0.9), rgba(0,0,0,0)),
+                radial-gradient(1.5px 1.5px at 50px 70px, rgba(251,207,232,0.8), rgba(0,0,0,0)),
+                linear-gradient(45deg, #020617, #3b0764, #701a75, #020617);
+            background-size: 80px 80px, 120px 120px, 300% 300%;
+            animation: galaxyDrift 15s infinite linear;
+            border: 2px solid #fbbf24; /* Sharp, explosive solid gold outline */
+            color: #ffffff;
             box-shadow: 0 0 25px rgba(217, 70, 239, 0.9), inset 0 0 15px rgba(139, 92, 246, 0.5);
-            text-shadow: 0 0 6px #f472b6;
+            text-shadow: 0 0 8px #f472b6, 0 0 15px #e879f9; /* Intense glowing text */
+            font-weight: 900;
             letter-spacing: 1px;
         }
 
-        /* Row Tinting for the New Leagues */
-        .row-bg-omniscient { background: #fffbeb !important; border-color: #fef08a !important; box-shadow: inset 0 0 15px rgba(251, 191, 36, 0.15) !important; }
-        .mod-bg-omniscient { background: linear-gradient(180deg, #fffbeb 0%, #f4f6f8 220px) !important; }
+        /* --- ROW TINTING FOR THE DASHBOARD BACKGROUNDS --- */
+        /* Soft, pristine ivory glow for Omniscient rows */
+        .row-bg-omniscient { background: #faf8f5 !important; border-color: #f3e8d5 !important; box-shadow: inset 0 0 15px rgba(212, 175, 55, 0.1) !important; }
+        .mod-bg-omniscient { background: linear-gradient(180deg, #faf8f5 0%, #f4f6f8 220px) !important; }
 
+        /* Deep magical purple glow for Genesis rows */
         .row-bg-genesis { background: #fdf4ff !important; border-color: #fbcfe8 !important; box-shadow: inset 0 0 15px rgba(217, 70, 239, 0.15) !important; }
         .mod-bg-genesis { background: linear-gradient(180deg, #fdf4ff 0%, #f4f6f8 220px) !important; }
         
