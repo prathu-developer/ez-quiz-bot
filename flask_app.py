@@ -1313,7 +1313,8 @@ def dispatch_practice_sets():
     time.sleep(2)
     safe_send_text("🎯 **SET A — Error Detection**\n⬇️")
     time.sleep(2)
-    send_and_link_poll(set_a, "Identify the part containing the error.", shuffle=False, start_q_num=1)
+    # ✨ Changed shuffle to True
+    send_and_link_poll(set_a, "Identify the part containing the error.", shuffle=True, start_q_num=1)
     time.sleep(300)
     safe_send_text("🎯 **SET B — Sentence Improvement**\n⬇️")
     time.sleep(2)
