@@ -1135,13 +1135,7 @@ def cron_process_leaderboard():
         if conn:
             release_db(conn)
 
-
-@app.route('/cron/heavy_math_0508', methods=['GET', 'POST'])
-def cron_heavy_math():
-    # 🔒 SECURITY GATE
-    if request.headers.get("X-Cron-Secret") != CRON_SECRET:
-        return "Unauthorized", 401
-
+def run_heavy_math_background():
     conn = None
     try:
         recalculate_dynamic_scores()
@@ -1155,7 +1149,6 @@ def cron_heavy_math():
         """)
         conn.commit()
         c.close()
-        return "Math Engine completed", 200
     except Exception as e:
         try:
             requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
@@ -1164,11 +1157,19 @@ def cron_heavy_math():
                 "parse_mode": "Markdown"
             }, timeout=5)
         except: pass
-        return f"Error: {e}", 500
     finally:
         if conn:
             release_db(conn)
 
+@app.route('/cron/heavy_math_0508', methods=['GET', 'POST'])
+def cron_heavy_math():
+    # 🔒 SECURITY GATE
+    if request.headers.get("X-Cron-Secret") != CRON_SECRET:
+        return "Unauthorized", 401
+
+    # ✨ FIX: Instantly answer the cron request, then run the heavy math in the background
+    threading.Thread(target=run_heavy_math_background).start()
+    return "Math Engine triggered in background!", 200
 
 @app.route('/cron/update_telegram_text_0508', methods=['GET', 'POST'])
 def cron_update_telegram_text():
