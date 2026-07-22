@@ -22,10 +22,30 @@ CRON_SECRET = os.environ.get("CRON_SECRET", "Ez_Master_Key_77")
 GITHUB_PAT = os.environ.get("GITHUB_PAT", "")
 
 def get_db():
+    # Try up to 3 times to find a breathing connection in the pool
+    max_retries = 3
+    for _ in range(max_retries):
+        conn = db_pool.getconn()
+        try:
+            # Polite knock to test if the pooled connection is alive
+            c = conn.cursor()
+            c.execute("SELECT 1")
+            c.close()
+            return conn
+        except (Exception, psycopg2.DatabaseError):
+            # The connection is dead! 
+            # Passing 'close=True' explicitly tells the pool to destroy this dead connection.
+            db_pool.putconn(conn, close=True)
+            
+    # Fallback: if the pool is totally exhausted, grab one last time
     return db_pool.getconn()
 
 def release_db(conn):
-    db_pool.putconn(conn)
+    try:
+        # Return the healthy connection to the pool so others can use it
+        db_pool.putconn(conn)
+    except Exception as e:
+        print(f"⚠️ Error releasing connection to pool: {e}")
 
 # --- AI Configuration ---
 API_KEYS = [
