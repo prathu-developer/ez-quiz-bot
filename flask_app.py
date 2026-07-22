@@ -1105,17 +1105,14 @@ def trigger_weekly_reset():
     threading.Thread(target=run_weekly_reset_background).start()
     return "Weekly reset triggered!", 200
 
-@app.route('/cron/process_leaderboard_0508', methods=['GET', 'POST'])
-def cron_process_leaderboard():
-    # 🔒 SECURITY GATE
-    if request.headers.get("X-Cron-Secret") != CRON_SECRET:
-        return "Unauthorized", 401
-
+def run_queue_processor_background():
     conn = None
     try:
         conn = get_db()
         c = conn.cursor()
-        c.execute("SELECT id, user_id, first_name, poll_id, chosen_option FROM answer_queue WHERE status = 'pending'")
+        
+        # ✨ FIX 1: Pick up both 'pending' AND stuck 'processing' answers from previous network drops
+        c.execute("SELECT id, user_id, first_name, poll_id, chosen_option FROM answer_queue WHERE status IN ('pending', 'processing')")
         pending_answers = c.fetchall()
 
         if pending_answers:
@@ -1131,19 +1128,33 @@ def cron_process_leaderboard():
             conn.commit()
             
         c.close()
-        return "Processed answers", 200
     except Exception as e:
-        try:
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
-                "chat_id": "716496729",
-                "text": f"🚨 **CRITICAL CRON ERROR (Queue Processor)** 🚨\n\n`{e}`",
-                "parse_mode": "Markdown"
-            }, timeout=5)
-        except: pass
-        return f"Error: {e}", 500
+        error_str = str(e).lower()
+        # ✨ FIX 2: Silently ignore harmless SSL/EOF network drops
+        if "ssl" in error_str or "eof" in error_str or "closed" in error_str or "timeout" in error_str:
+            pass # The cron runs every 60 seconds; it will automatically pick up the dropped answers on the next run!
+        else:
+            # If it is a real code error, alert the admin
+            try:
+                requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
+                    "chat_id": "716496729",
+                    "text": f"🚨 **CRITICAL CRON ERROR (Queue Processor)** 🚨\n\n`{e}`",
+                    "parse_mode": "Markdown"
+                }, timeout=5)
+            except: pass
     finally:
         if conn:
             release_db(conn)
+
+@app.route('/cron/process_leaderboard_0508', methods=['GET', 'POST'])
+def cron_process_leaderboard():
+    # 🔒 SECURITY GATE
+    if request.headers.get("X-Cron-Secret") != CRON_SECRET:
+        return "Unauthorized", 401
+    
+    # ✨ FIX 3: Instantly answer the cron request to prevent 30s timeouts
+    threading.Thread(target=run_queue_processor_background).start()
+    return "Queue Processor triggered in background!", 200
 
 def run_heavy_math_background():
     conn = None
