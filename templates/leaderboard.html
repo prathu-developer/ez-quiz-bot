@@ -167,24 +167,25 @@
         /* Ascendant: Fast, chaotic, aggressive energy */
         @keyframes ascendantGrind { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
         
-        /* Omniscient: Sharp, holy shimmer sliding across the ivory */
+        /* Omniscient: A continuous, sweeping metallic reflection */
         @keyframes holyShine { 
-            0% { background-position: -150% center; } 
-            100% { background-position: 150% center; } 
+            0% { background-position: 200% center; } 
+            100% { background-position: -200% center; } 
         }
         
-        /* Genesis: Deep cosmic drift with a glowing pulse */
+        /* Genesis: Violent, sloshing plasma with a 3D breathing void */
         @keyframes galaxyDrift { 
             0% { 
-                background-position: 0px 0px, 0px 0px, 0% 0%; 
-                box-shadow: 0 0 20px rgba(217, 70, 239, 0.7), inset 0 0 15px rgba(139, 92, 246, 0.5);
+                background-position: 0% 50%; 
+                box-shadow: 0 0 15px rgba(217, 70, 239, 0.5), inset 0 0 12px rgba(0, 0, 0, 0.9);
             } 
-            50% {
-                box-shadow: 0 0 35px rgba(217, 70, 239, 1), inset 0 0 25px rgba(139, 92, 246, 0.8);
+            50% { 
+                background-position: 100% 50%; 
+                box-shadow: 0 0 30px rgba(217, 70, 239, 1), inset 0 0 15px rgba(255, 255, 255, 0.4);
             }
             100% { 
-                background-position: -200px -200px, -150px -100px, 100% 100%; 
-                box-shadow: 0 0 20px rgba(217, 70, 239, 0.7), inset 0 0 15px rgba(139, 92, 246, 0.5);
+                background-position: 0% 50%; 
+                box-shadow: 0 0 15px rgba(217, 70, 239, 0.5), inset 0 0 12px rgba(0, 0, 0, 0.9);
             } 
         }
 
@@ -199,30 +200,35 @@
 
         /* 👁️‍🗨️ 15. Omniscient (The Sacred Manuscript) */
         .bg-omniscient {
-            /* Ivory base with a sharp white/gold gleam passing through */
-            background: linear-gradient(110deg, #faf7f0 35%, #ffffff 50%, #faf7f0 65%);
-            background-size: 250% 100%;
-            animation: holyShine 3.5s infinite linear;
-            border: 1px solid #d4af37; /* Antique, soft gold */
-            color: #78350f; /* Deep, ancient ink brown */
-            box-shadow: 0 0 20px rgba(212, 175, 55, 0.4), inset 0 0 15px rgba(255,255,255,1);
-            text-shadow: 0 0 3px rgba(255,255,255,0.9);
+            /* High-contrast metallic fold: dark edge -> white glare -> sharp gold crease */
+            background: linear-gradient(110deg, #e8dcc4 20%, #faf7f0 40%, #ffffff 48%, #cfa936 50%, #ffffff 52%, #faf7f0 60%, #e8dcc4 80%);
+            background-size: 300% 100%;
+            animation: holyShine 4s linear infinite;
+            
+            border: 1px solid #c89f2d; 
+            color: #5c270b; 
+            
+            /* The key to depth: A bright top highlight and a dark bottom shadow inside the badge */
+            box-shadow: inset 0 4px 6px rgba(255,255,255,1), inset 0 -4px 6px rgba(180, 130, 40, 0.25), 0 2px 8px rgba(212, 175, 55, 0.4);
+            text-shadow: 0 1px 1px rgba(255,255,255,0.9);
             font-weight: 900;
             letter-spacing: 0.5px;
         }
 
         /* ✨ 16-25. Genesis (The Living Nebula) */
         .bg-genesis {
-            /* Layer 1: White Stars, Layer 2: Pink/Gold Dust, Layer 3: Moving Purple Nebula */
-            background-image: 
-                radial-gradient(1px 1px at 20px 30px, rgba(255,255,255,0.9), rgba(0,0,0,0)),
-                radial-gradient(1.5px 1.5px at 50px 70px, rgba(251,207,232,0.8), rgba(0,0,0,0)),
-                linear-gradient(45deg, #020617, #3b0764, #701a75, #020617);
-            background-size: 80px 80px, 120px 120px, 300% 300%;
-            animation: galaxyDrift 8s infinite linear;
-            border: 1px solid #fbbf24; /* Sharp, explosive solid gold outline */
+            /* Removed the tiny dots. Replaced with thick bands of highly contrasting cosmic colours */
+            background: linear-gradient(60deg, #020617, #7e22ce, #db2777, #3b82f6, #020617);
+            background-size: 300% 300%;
+            
+            /* 'alternate' makes the colors slosh left to right smoothly */
+            animation: galaxyDrift 5s ease-in-out infinite alternate;
+            
+            border: 1px solid #fde047;
             color: #ffffff;
-            text-shadow: 0 0 8px #f472b6, 0 0 15px #e879f9; /* Intense glowing text */
+            
+            /* Dark text shadow makes the white text pop against the bright shifting background */
+            text-shadow: 0 2px 4px rgba(0,0,0,0.8), 0 0 10px #e879f9; 
             font-weight: 900;
             letter-spacing: 1px;
         }
