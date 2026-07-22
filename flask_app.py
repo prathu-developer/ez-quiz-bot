@@ -1266,11 +1266,17 @@ def dispatch_practice_sets():
         return False
 
     def send_and_link_poll(q_list, default_ui_type, shuffle, start_q_num):
+        import random
         conn = get_db()
         c = conn.cursor()
         for i, mcq in enumerate(q_list):
             options = mcq['options']
             if mcq['correct_answer'] not in options: options[0] = mcq['correct_answer']
+            
+            # Python shuffles the list if the rule demands it
+            if shuffle:
+                random.shuffle(options)
+                
             correct_index = options.index(mcq['correct_answer'])
             current_ui = f'Choose the best replacement for the words "{mcq["target_phrase"]}".' if 'target_phrase' in mcq else mcq.get('custom_ui', default_ui_type)
 
@@ -1279,9 +1285,8 @@ def dispatch_practice_sets():
                 "question": f"Que {start_q_num + i}: {current_ui}\n\n{mcq['sentence']}"[:300],
                 "options": json.dumps([opt[:100] for opt in options]),
                 "type": "quiz", "correct_option_id": correct_index, "explanation": mcq['explanation'][:200],
-                "is_anonymous": False, "shuffle_options": shuffle, "open_period": dynamic_open_period
+                "is_anonymous": False, "open_period": dynamic_open_period
             }
-
             for tg_attempt in range(10):
                 try:
                     res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPoll", json=poll_payload, timeout=20)
@@ -1475,15 +1480,20 @@ def run_daily_vocab_and_quizzes():
         print(f"⚠️ Failed to fetch questions.json: {e}")
         return
 
+    import random
     for mcq in mcqs:
         options = mcq['options']
         if mcq['correct_answer'] not in options: options[0] = mcq['correct_answer']
+        
+        # Vocab options should ALWAYS be randomized
+        random.shuffle(options)
+        
         correct_index = options.index(mcq['correct_answer'])
 
         poll_payload = {
             "chat_id": CHAT_ID, "message_thread_id": 246, "question": mcq['question'], "options": json.dumps(options),
             "type": "quiz", "correct_option_id": correct_index, "explanation": mcq.get('explanation', '')[:200],
-            "is_anonymous": False, "shuffle_options": True, "open_period": dynamic_open_period
+            "is_anonymous": False, "open_period": dynamic_open_period
         }
 
         for attempt in range(10):
