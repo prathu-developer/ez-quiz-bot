@@ -161,8 +161,29 @@
         }
         .bg-celestial { background: linear-gradient(135deg, #1e3a8a, #60a5fa, #e0f2fe); border: 1px solid #ffffff; box-shadow: 0 0 25px rgba(147, 197, 253, 1); color: #0f172a; }
         .bg-zenith { background: linear-gradient(135deg, #000000, #18181b); border: 1px solid #fbbf24; box-shadow: 0 0 30px rgba(251, 191, 36, 1); color: #fde047; text-shadow: 0 0 4px rgba(253, 224, 71, 0.8); }
-        .bg-ascendant { background: linear-gradient(45deg, #ef4444, #f59e0b, #10b981, #3b82f6, #8b5cf6); border: 2px solid #ffffff; box-shadow: 0 0 15px #ef4444, 0 0 25px #3b82f6, 0 0 35px #8b5cf6; text-shadow: 0 0 5px rgba(255,255,255,0.9); }
+        
+        /* Animated Auras for Absolute Leagues */
+        @keyframes godAura { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+        @keyframes omniPulse { 0% { box-shadow: 0 0 15px rgba(255,255,255,0.6), inset 0 0 10px rgba(255,255,255,0.3); } 100% { box-shadow: 0 0 25px rgba(255,255,255,1), 0 0 15px #eab308, inset 0 0 20px rgba(255,255,255,0.8); } }
+        
+        .bg-ascendant { 
+            background: linear-gradient(45deg, #ef4444, #f59e0b, #10b981, #3b82f6, #8b5cf6, #ef4444); 
+            background-size: 200% 200%; animation: godAura 4s linear infinite;
+            border: 1px solid #ffffff; box-shadow: 0 0 12px rgba(239, 68, 68, 0.8), 0 0 20px rgba(139, 92, 246, 0.8); 
+            text-shadow: 0 0 5px rgba(255,255,255,0.9); 
+        }
+        
+        .bg-omniscient {
+            background: linear-gradient(135deg, #0f172a, #000000);
+            border: 1px solid #fde047; color: #fde047;
+            animation: omniPulse 1.5s infinite alternate;
+            text-shadow: 0 0 8px rgba(253, 224, 71, 1);
+            letter-spacing: 1px;
+        }
 
+        .row-bg-omniscient { background: #faf5ff !important; border-color: #e9d5ff !important; box-shadow: inset 0 0 15px rgba(216, 180, 254, 0.2) !important; }
+        .mod-bg-omniscient { background: linear-gradient(180deg, #faf5ff 0%, #f4f6f8 220px) !important; }
+        
         /* --- LEAGUE TINT CLASSES --- */
         .row-bg-unranked {
             background: white;
@@ -453,7 +474,8 @@
                                 <span class="league-badge bg-prodigy">🎇 Prodigy</span> <span class="league-arrow">➔</span>
                                 <span class="league-badge bg-celestial">☄️ Celestial</span> <span class="league-arrow">➔</span>
                                 <span class="league-badge bg-zenith">🧿 Zenith</span> <span class="league-arrow">➔</span>
-                                <span class="league-badge bg-ascendant">🌌 Ascendant</span>
+                                <span class="league-badge bg-ascendant">🌌 Ascendant</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-omniscient">👁️‍🗨️ Omniscient (Gen I - X)</span>
                             </div>
 
                             <div class="cut-off-alert">
@@ -626,23 +648,59 @@
         function getLeagueBadgeHTML(tier) {
             const leagues = [
                 { name: 'Unranked', class: 'bg-unranked', icon: '🛡️' }, // 0
-                { name: 'Bronze', class: 'bg-bronze', icon: '🥉' },      // 1
-                { name: 'Silver', class: 'bg-silver', icon: '🥈' },      // 2
-                { name: 'Gold', class: 'bg-gold', icon: '🥇' },          // 3
-                { name: 'Platinum', class: 'bg-plat', icon: '💠' },      // 4
-                { name: 'Diamond', class: 'bg-dia', icon: '💎' },        // 5
-                { name: 'Champion', class: 'bg-champ', icon: '👑' },     // 6
-                { name: 'Master', class: 'bg-master', icon: '🎖️' },      // 7
-                { name: 'Elite', class: 'bg-elite', icon: '⚡' },        // 8
-                { name: 'Legend', class: 'bg-legend', icon: '🌟' },      // 9
-                { name: 'Mythic', class: 'bg-mythic', icon: '🔮' },      // 10
-                { name: 'Prodigy', class: 'bg-prodigy', icon: '⚛️' },    // 11
-                { name: 'Celestial', class: 'bg-celestial', icon: '☄️' },// 12
-                { name: 'Zenith', class: 'bg-zenith', icon: '🧿' },      // 13
-                { name: 'Ascendant', class: 'bg-ascendant', icon: '🌌' } // 14
+                { name: 'Bronze', class: 'bg-bronze', icon: '🥉' },      
+                { name: 'Silver', class: 'bg-silver', icon: '🥈' },      
+                { name: 'Gold', class: 'bg-gold', icon: '🥇' },          
+                { name: 'Platinum', class: 'bg-plat', icon: '💠' },      
+                { name: 'Diamond', class: 'bg-dia', icon: '💎' },        
+                { name: 'Champion', class: 'bg-champ', icon: '👑' },     
+                { name: 'Master', class: 'bg-master', icon: '🎖️' },      
+                { name: 'Elite', class: 'bg-elite', icon: '⚡' },        
+                { name: 'Legend', class: 'bg-legend', icon: '🌟' },      
+                { name: 'Mythic', class: 'bg-mythic', icon: '🔮' },      
+                { name: 'Prodigy', class: 'bg-prodigy', icon: '⚛️' },    
+                { name: 'Celestial', class: 'bg-celestial', icon: '☄️' },
+                { name: 'Zenith', class: 'bg-zenith', icon: '🧿' },      
+                { name: 'Ascendant', class: 'bg-ascendant', icon: '🌌' }, // 14
+                { name: 'Gen I', class: 'bg-omniscient', icon: '👁️‍🗨️' },  // 15
+                { name: 'Gen II', class: 'bg-omniscient', icon: '👁️‍🗨️' }, // 16
+                { name: 'Gen III', class: 'bg-omniscient', icon: '👁️‍🗨️' }, // 17
+                { name: 'Gen IV', class: 'bg-omniscient', icon: '👁️‍🗨️' },  // 18
+                { name: 'Gen V', class: 'bg-omniscient', icon: '👁️‍🗨️' },   // 19
+                { name: 'Gen VI', class: 'bg-omniscient', icon: '👁️‍🗨️' },  // 20
+                { name: 'Gen VII', class: 'bg-omniscient', icon: '👁️‍🗨️' }, // 21
+                { name: 'Gen VIII', class: 'bg-omniscient', icon: '👁️‍🗨️' },// 22
+                { name: 'Gen IX', class: 'bg-omniscient', icon: '👁️‍🗨️' },  // 23
+                { name: 'Gen X', class: 'bg-omniscient', icon: '👁️‍🗨️' }    // 24
             ];
             let l = leagues[tier] || leagues[0];
             return `<span class="league-badge ${l.class}">${l.icon} ${l.name}</span>`;
+        }
+
+        function getLeagueBgClass(tier, type='row') {
+            const classes = [
+                'unranked', 'bronze', 'silver', 'gold', 'plat', 'dia', 'champ',
+                'master', 'elite', 'legend', 'mythic', 'prodigy', 'celestial', 'zenith', 'ascendant',
+                'omniscient', 'omniscient', 'omniscient', 'omniscient', 'omniscient',
+                'omniscient', 'omniscient', 'omniscient', 'omniscient', 'omniscient'
+            ];
+            let base = classes[tier] || classes[0];
+            return type === 'row' ? `row-bg-${base}` : `mod-bg-${base}`;
+        }
+
+        function getLeagueFooterColor(tier) {
+            const colors = [
+                'rgba(255, 255, 255, 0.98)', 'rgba(255, 247, 237, 0.98)', 'rgba(248, 250, 252, 0.98)',
+                'rgba(254, 252, 232, 0.98)', 'rgba(240, 249, 255, 0.98)', 'rgba(250, 245, 255, 0.98)',
+                'rgba(254, 242, 242, 0.98)', 'rgba(240, 253, 244, 0.98)', 'rgba(255, 241, 242, 0.98)',
+                'rgba(253, 242, 248, 0.98)', 'rgba(236, 254, 255, 0.98)', 'rgba(253, 244, 255, 0.98)',
+                'rgba(239, 246, 255, 0.98)', 'rgba(250, 250, 250, 0.98)', 'rgba(245, 243, 255, 0.98)',
+                'rgba(255, 253, 245, 0.98)', 'rgba(255, 253, 245, 0.98)', 'rgba(255, 253, 245, 0.98)', 
+                'rgba(255, 253, 245, 0.98)', 'rgba(255, 253, 245, 0.98)', 'rgba(255, 253, 245, 0.98)', 
+                'rgba(255, 253, 245, 0.98)', 'rgba(255, 253, 245, 0.98)', 'rgba(255, 253, 245, 0.98)', 
+                'rgba(255, 253, 245, 0.98)'
+            ];
+            return colors[tier] || colors[0];
         }
 
         function getLeagueBgClass(tier, type='row') {
