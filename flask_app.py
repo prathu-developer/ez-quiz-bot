@@ -496,7 +496,7 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
             active_key = API_KEYS[db_key_index]
             temp_client = genai.Client(api_key=active_key)
             response = temp_client.models.generate_content(
-                model='gemini-3.1-flash-lite',
+                model='gemini-3.5-flash-lite',
                 contents=text,
                 config=types.GenerateContentConfig(system_instruction=system_prompt, temperature=0.4)
             )
@@ -941,7 +941,7 @@ def run_weekly_reset_background():
             active_key = API_KEYS[0] 
             temp_client = genai.Client(api_key=active_key)
             ai_resp = temp_client.models.generate_content(
-                model='gemini-3.5-flash',
+                model='gemini-3.6-flash',
                 contents=raw_data_prompt,
                 config=types.GenerateContentConfig(temperature=0.4)
             )
@@ -1721,7 +1721,7 @@ def generate_and_send_commentary():
 
     try:
         ai_text = genai.Client(api_key="AIzaSyDb5THxDk58CrdPJ7nVKJov6L87_G2hQ0g").models.generate_content(
-            model='gemini-3.5-flash',
+            model='gemini-3.6-flash',
             contents=f"Create a short Telegram exam commentary message following this EXACT 3-line structure:\nLine 1: [Urgency Emoji] {target_exam} ➪ {days_left} Days Left!\nLine 2: [1 short, hype, action-oriented sentence about studying/preparing]\nLine 3: [1 short motivational sign-off with emojis]\nRules: STRICTLY follow the 3-line format. No conversational filler. No hashtags. Keep it clean."
         ).text.strip()
     except: return
