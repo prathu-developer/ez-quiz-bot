@@ -2092,8 +2092,6 @@ Selection Rules:
 
 Output exactly in this format:
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 📖 WORD OF THE DAY
 
 <Word> (<Part of Speech>) <+ / − / = Connotation>
@@ -2111,8 +2109,6 @@ Output exactly in this format:
 
 📍 Where you'll hear it
 <One short line explaining where this word commonly appears in editorials or competitive exams>
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Connotation Guide:
 + = Positive
