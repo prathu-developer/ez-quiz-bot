@@ -386,11 +386,11 @@ def update_live_leaderboard():
             "inline_keyboard": [[
                 {
                     "text": "📊 View Full Elo Leaderboard",
-                    "url": "https://t.me/Ez_vocab_bot/leaderboard"
+                    # ✨ Added the startapp parameter to signal the Mini App
+                    "url": "https://t.me/Ez_vocab_bot/leaderboard?startapp=elo"
                 }
             ]]
         }
-    }
 
     for attempt in range(max_retries):
         try:
