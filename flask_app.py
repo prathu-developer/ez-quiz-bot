@@ -272,12 +272,25 @@ def update_live_leaderboard():
     else:
         lead_text = "⚖️ No points have been earned yet!"
 
+    # 1. Fetch House Cup Top 10
     c.execute("SELECT user_id, first_name, weekly_score, faction, is_captain FROM users WHERE weekly_attempts > 0 ORDER BY weekly_score DESC, last_updated ASC LIMIT 10")
     top_10 = c.fetchall()
+
+    # 2. ✨ Fetch Elo Top 10 (Filtering out 7-day inactive users)
+    seven_days_ago = time.time() - (7 * 24 * 3600)
+    c.execute("""
+        SELECT user_id, first_name, live_elo 
+        FROM users 
+        WHERE live_elo IS NOT NULL AND COALESCE(last_updated, 0) >= %s 
+        ORDER BY live_elo DESC, last_updated ASC 
+        LIMIT 10
+    """, (seven_days_ago,))
+    top_10_elo = c.fetchall()
 
     c.close()
     release_db(conn)
 
+    # --- BUILD HOUSE CUP MESSAGE (MESSAGE 7628) ---
     msg_text = "🏰 **THE BATTLE FOR THE HOUSE CUP** 🏰\n"
     msg_text += f"📅 {date_range} | 👥 {total_active} Active Students\n"
     msg_text += f"⏳ {phase_text}\n"
@@ -337,6 +350,51 @@ def update_live_leaderboard():
     for attempt in range(max_retries):
         try:
             res = requests.post(url, json=payload, timeout=10)
+            if res.status_code == 200 or (res.status_code == 400 and "message is not modified" in res.text.lower()):
+                break
+            elif res.status_code == 429:
+                sleep_time = res.json().get("parameters", {}).get("retry_after", 3)
+                time.sleep(sleep_time + 1)
+            else:
+                time.sleep(2)
+        except requests.exceptions.RequestException as e:
+            time.sleep(3 + attempt)
+
+    # --- ✨ BUILD ELO LEADERBOARD MESSAGE (MESSAGE 10948) ---
+    elo_msg_text = "🏆 **CLASS TOPPERS LEADERBOARD** 🏆\n"
+    elo_msg_text += "*(Based on Global Elo Rating)*\n"
+    elo_msg_text += "━━━━━━━━━━━━━━━━━━━━\n\n"
+
+    elo_medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+
+    if not top_10_elo:
+        elo_msg_text += "No active students found this week.\n"
+    else:
+        for i, user in enumerate(top_10_elo):
+            u_id, name, elo = user
+            clean_elo = int(elo) if elo % 1 == 0 else round(elo, 1)
+            elo_msg_text += f"{elo_medals[i]} [{name}](tg://user?id={u_id}) ➪ {clean_elo} Elo\n"
+
+    elo_msg_text += "\n━━━━━━━━━━━━━━━━━━━━"
+
+    elo_payload = {
+        "chat_id": CHAT_ID,
+        "message_id": 10948,
+        "text": elo_msg_text,
+        "parse_mode": "Markdown",
+        "reply_markup": {
+            "inline_keyboard": [[
+                {
+                    "text": "📊 View Full Elo Leaderboard",
+                    "url": "https://t.me/Ez_vocab_bot/leaderboard"
+                }
+            ]]
+        }
+    }
+
+    for attempt in range(max_retries):
+        try:
+            res = requests.post(url, json=elo_payload, timeout=10)
             if res.status_code == 200 or (res.status_code == 400 and "message is not modified" in res.text.lower()):
                 break
             elif res.status_code == 429:
