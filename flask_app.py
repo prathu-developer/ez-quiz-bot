@@ -2075,6 +2075,91 @@ def get_mini_app_leaderboard():
     if row: return Response(row[0], mimetype='application/json')
     return jsonify({"error": "Syncing..."}), 503
 
+# ==========================================
+# BACKGROUND WORKER: WORD OF THE DAY
+# ==========================================
+def run_word_of_the_day():
+    prompt = """Select ONE "Word of the Day" from today's editorials.
+
+Selection Rules:
+• Choose a high-value word frequently seen in competitive exams (SSC, Banking, CDS, AFCAT, CAPF, Insurance, Railways, etc.).
+• Prefer words that are moderately difficult—not everyday words, but not extremely rare or literary.
+• The word should be genuinely useful for editorial reading and RCs.
+• Avoid very common words (e.g., important, increase, support, issue, concern, improve, robust, significant).
+• Avoid highly technical, legal, scientific, or archaic words.
+• Prefer words with clear real-world usage, useful collocations, and strong exam relevance.
+• ALWAYS use British English spelling for all output and synonyms.
+
+Output exactly in this format:
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📖 WORD OF THE DAY
+
+<Word> (<Part of Speech>) <+ / − / = Connotation>
+
+🔊 <Use simple English phonetic spelling only. Never use IPA symbols.>
+
+💡 Think of
+<Short memory trick (1–2 lines)>
+
+📝 <Simple English meaning> (<Hindi meaning>)
+
+🔄 <Synonym 1> • <Synonym 2> • <Synonym 3>
+
+↔️ <Antonym 1> • <Antonym 2> • <Antonym 3>
+
+📍 Where you'll hear it
+<One short line explaining where this word commonly appears in editorials or competitive exams>
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Connotation Guide:
++ = Positive
+− = Negative
+= = Neutral (descriptive)"""
+
+    try:
+        # Use the first API key for generation
+        active_key = API_KEYS[0]
+        temp_client = genai.Client(api_key=active_key)
+        response = temp_client.models.generate_content(
+            model='gemini-3.6-flash',
+            contents=prompt,
+            config=types.GenerateContentConfig(temperature=0.5)
+        )
+        ai_text = response.text.strip()
+    except Exception as e:
+        print(f"⚠️ Error generating Word of the Day: {e}")
+        return
+
+    # Send the generated message to the specific thread
+    for attempt in range(10):
+        try:
+            res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
+                "chat_id": CHAT_ID,
+                "message_thread_id": 2343,
+                "text": ai_text
+            }, timeout=20)
+            
+            if res.status_code == 200:
+                break
+            elif res.status_code == 429: 
+                time.sleep(res.json().get("parameters", {}).get("retry_after", 5) + 1)
+            else: 
+                time.sleep(2)
+        except: 
+            time.sleep(3 + attempt * 2)
+
+@app.route('/cron/word_of_the_day_0508', methods=['GET', 'POST'])
+def trigger_word_of_the_day():
+    # 🔒 SECURITY GATE
+    if request.headers.get("X-Cron-Secret") != CRON_SECRET:
+        return "Unauthorized", 401
+        
+    threading.Thread(target=run_word_of_the_day).start()
+    return "Word of the Day triggered!", 200
+
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
