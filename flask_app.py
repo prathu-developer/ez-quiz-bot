@@ -1996,8 +1996,9 @@ def bake_miniapp_cache():
     c.execute("SELECT user_id, first_name, live_elo, last_updated FROM users ORDER BY live_elo DESC, last_updated ASC")
     all_elo_users = c.fetchall()
 
-    two_days_ago = time.time() - (48 * 3600)
-    elo_leaderboard = [{"rank": i + 1, "id": eu[0], "name": eu[1], "elo": round(eu[2] if eu[2] is not None else 1000, 1), "is_active": True if (eu[3] if eu[3] else 0) >= two_days_ago else False} for i, eu in enumerate(all_elo_users)]
+    # ✨ Changed from a 48-hour to a 7-day inactivity threshold to perfectly match the weekly season
+    seven_days_ago = time.time() - (7 * 24 * 3600)
+    elo_leaderboard = [{"rank": i + 1, "id": eu[0], "name": eu[1], "elo": round(eu[2] if eu[2] is not None else 1000, 1), "is_active": True if (eu[3] if eu[3] else 0) >= seven_days_ago else False} for i, eu in enumerate(all_elo_users)]
 
     c.execute("SELECT user_id, week_num, rank, total_members, score, attempts, correct FROM weekly_rank_history ORDER BY week_num DESC")
     rank_hist_dict = {}
