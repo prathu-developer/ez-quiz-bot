@@ -1329,7 +1329,8 @@ def dispatch_practice_sets():
     time.sleep(300)
     safe_send_text("🎯 **SET B — Sentence Improvement**\n⬇️")
     time.sleep(2)
-    send_and_link_poll(set_b, "Choose the best replacement.", shuffle=False, start_q_num=6)
+    # ✨ Changed shuffle to True to scramble all options
+    send_and_link_poll(set_b, "Choose the best replacement.", shuffle=True, start_q_num=6)
     time.sleep(300)
     safe_send_text("🎯 **SET C — Fill in the Blank**\n⬇️")
     time.sleep(2)
