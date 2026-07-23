@@ -2119,18 +2119,27 @@ Connotation Guide:
 − = Negative
 = = Neutral (descriptive)"""
 
-    try:
-        # Use the first API key for generation
-        active_key = API_KEYS[0]
-        temp_client = genai.Client(api_key=active_key)
-        response = temp_client.models.generate_content(
-            model='gemini-3.6-flash',
-            contents=prompt,
-            config=types.GenerateContentConfig(temperature=0.5)
-        )
-        ai_text = response.text.strip()
-    except Exception as e:
-        print(f"⚠️ Error generating Word of the Day: {e}")
+    ai_text = None
+    
+    # 🔄 Loop through all available API keys until one successfully works
+    for key in API_KEYS:
+        try:
+            temp_client = genai.Client(api_key=key)
+            response = temp_client.models.generate_content(
+                model='gemini-3.6-flash',
+                contents=prompt,
+                config=types.GenerateContentConfig(temperature=0.5)
+            )
+            if response.text:
+                ai_text = response.text.strip()
+                break  # ✨ Success! Break out of the loop and send the message.
+        except Exception as e:
+            print(f"⚠️ API Key Failed, trying next one... Error: {e}")
+            continue
+
+    # If every single key in the array is dead, stop the function
+    if not ai_text:
+        print("🚨 CRITICAL: All API keys failed for Word of the Day.")
         return
 
     # Send the generated message to the specific thread
