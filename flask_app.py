@@ -2151,12 +2151,8 @@ Connotation Guide:
         except: 
             time.sleep(3 + attempt * 2)
 
-@app.route('/cron/word_of_the_day_0508', methods=['GET', 'POST'])
+@app.route('/word_of_the_day/0508', methods=['GET', 'POST'])
 def trigger_word_of_the_day():
-    # 🔒 SECURITY GATE
-    if request.headers.get("X-Cron-Secret") != CRON_SECRET:
-        return "Unauthorized", 401
-        
     threading.Thread(target=run_word_of_the_day).start()
     return "Word of the Day triggered!", 200
 
