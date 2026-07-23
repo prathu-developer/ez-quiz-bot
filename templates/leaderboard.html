@@ -1401,6 +1401,8 @@
         let globalEloData = [];
 
         // Modify the fetch to catch the new elo data
+        let eloAutoOpened = false; // Safety switch to prevent spam re-opening
+        
         const oldRender = renderLeaderboardData;
         renderLeaderboardData = function(data) {
             oldRender(data); // Run original
@@ -1412,6 +1414,12 @@
             });
             window.currentUserData.elo = data.current_user.elo || 1000;
             globalEloData = data.elo_ranking || [];
+            
+            // ✨ NEW: Catch the secret signal from Telegram and open the Elo board instantly
+            if (tg.initDataUnsafe?.start_param === 'elo' && !eloAutoOpened) {
+                openEloLeaderboard();
+                eloAutoOpened = true; 
+            }
         };
 
         function openEloLeaderboard() {
