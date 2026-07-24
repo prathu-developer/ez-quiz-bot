@@ -1529,7 +1529,6 @@ def run_sunday_announcement():
             elif res.status_code == 429: time.sleep(res.json().get("parameters", {}).get("retry_after", 5) + 1)
             else: time.sleep(2)
         except: time.sleep(3 + attempt * 2)
-            notify_prathu("📢 **Sunday Announcement** posted successfully!")
 
 @app.route('/sunday_announcement/0508', methods=['GET', 'POST'])
 def trigger_sunday_announcement():
@@ -1651,7 +1650,6 @@ def run_sunday_reminder():
                 time.sleep(3 + attempt * 2)
         
         time.sleep(2)
-        notify_prathu("⏳ **Sunday Warning Reminder** posted successfully!")
 
 @app.route('/sunday_reminder/0508', methods=['GET', 'POST'])
 def trigger_sunday_reminder():
@@ -1694,7 +1692,6 @@ def run_sunday_final_reminder():
                 notify_prathu("⏱️ **Sunday Final Midnight Reminder** posted successfully!")
                 break
         except: time.sleep(3 + attempt * 2)
-        notify_prathu("⏱️ **Sunday Final Midnight Reminder** posted successfully!")
 
 @app.route('/sunday_final_reminder/0508', methods=['GET', 'POST'])
 def trigger_sunday_final_reminder():
