@@ -1773,59 +1773,72 @@ def update_exam_countdown():
 
 def generate_and_send_commentary():
     current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
-    target_exam, days_left = None, 0
+    milestone_exams = []
+    
     try:
         conn = get_db()
         c = conn.cursor()
-        c.execute("SELECT name, exam_date FROM upcoming_exams")
+        c.execute("SELECT name, exam_date FROM upcoming_exams ORDER BY exam_date ASC")
         for row in c.fetchall():
             try:
                 delta = (datetime.strptime(row[1], "%Y-%m-%d").date() - current_ist.date()).days
-                # The bot only speaks on these exact milestone days
-                if delta in [90, 60, 30, 15, 7, 1]: target_exam, days_left = row[0], delta; break
+                # ✨ We removed the 'break' command and now append ALL matching exams to a list
+                if delta in [90, 60, 30, 15, 7, 1]: 
+                    milestone_exams.append((row[0], delta))
             except ValueError: continue
     except: pass
     
-    if not target_exam: 
+    # If no exams hit a milestone today, stop here
+    if not milestone_exams: 
         try:
             c.close()
             release_db(conn)
         except: pass
         return
 
-    prompt = f"Create a short Telegram exam commentary message following this EXACT 3-line structure:\nLine 1: [Urgency Emoji] {target_exam} ➪ {days_left} Days Left!\nLine 2: [1 short, hype, action-oriented sentence about studying/preparing]\nLine 3: [1 short motivational sign-off with emojis]\nRules: STRICTLY follow the 3-line format. No conversational filler. No hashtags. Keep it clean. ALWAYS use British English spelling."
-
-    ai_text = None
+    combined_ai_text = ""
     
-    # 🔄 ✨ UPGRADE: Loop through all available API keys to prevent the silent crash!
-    for key in API_KEYS:
-        try:
-            temp_client = genai.Client(api_key=key)
-            response = temp_client.models.generate_content(
-                model='gemini-3.6-flash',
-                contents=prompt
-            )
-            if response.text:
-                ai_text = response.text.strip()
-                break
-        except Exception as e:
-            continue
+    # ✨ Loop through EVERY exam that hit a milestone today
+    for exam_name, days_left in milestone_exams:
+        prompt = f"Create a short Telegram exam commentary message following this EXACT 3-line structure:\nLine 1: [Urgency Emoji] {exam_name} ➪ {days_left} Days Left!\nLine 2: [1 short, hype, action-oriented sentence about studying/preparing]\nLine 3: [1 short motivational sign-off with emojis]\nRules: STRICTLY follow the 3-line format. No conversational filler. No hashtags. Keep it clean. ALWAYS use British English spelling."
 
-    if not ai_text: 
+        ai_text = None
+        for key in API_KEYS:
+            try:
+                temp_client = genai.Client(api_key=key)
+                response = temp_client.models.generate_content(
+                    model='gemini-3.6-flash',
+                    contents=prompt
+                )
+                if response.text:
+                    ai_text = response.text.strip()
+                    break
+            except Exception:
+                continue
+        
+        # Stitch the messages together with a clean divider
+        if ai_text:
+            if combined_ai_text:
+                combined_ai_text += "\n\n━━━━━━━━━━━━━━━━━━━━\n\n"
+            combined_ai_text += ai_text
+
+    if not combined_ai_text: 
         try:
             c.close()
             release_db(conn)
         except: pass
         return
 
+    # Delete yesterday's message to keep the chat clean
     try:
         c.execute("SELECT value FROM bot_settings WHERE key='last_commentary_msg_id'")
         if last_msg := c.fetchone(): requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage", json={"chat_id": CHAT_ID, "message_id": int(last_msg[0])}, timeout=5)
     except: pass
 
+    # Send the master message containing ALL milestones
     for attempt in range(3):
         try:
-            res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": COUNTDOWN_THREAD_ID, "text": f"🤖 **Daily Exam Insights**\n\n{ai_text}", "parse_mode": "Markdown"}, timeout=10)
+            res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": COUNTDOWN_THREAD_ID, "text": f"🤖 **Daily Exam Insights**\n\n{combined_ai_text}", "parse_mode": "Markdown"}, timeout=10)
             if res.json().get("ok"):
                 new_msg_id = res.json()["result"]["message_id"]
                 c.execute("""
@@ -1841,7 +1854,7 @@ def generate_and_send_commentary():
         c.close()
         release_db(conn)
     except: pass
-
+        
 def relay_message(message_id, target_thread_id):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/copyMessage"
     payload = {"chat_id": CHAT_ID, "from_chat_id": SOURCE_CHAT_ID, "message_id": message_id, "message_thread_id": target_thread_id}
