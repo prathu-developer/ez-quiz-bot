@@ -72,12 +72,12 @@ THREAD_MAPPING = {
 COUNTDOWN_THREAD_ID = 6539
 COUNTDOWN_MESSAGE_ID = 6542 
 
-def notify_prathu(quiz_name):
+def notify_prathu(message):
     admin_chat_id = "716496729"
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
         "chat_id": admin_chat_id,
-        "text": f"🎩 ✅ **Success:** The {quiz_name} has been successfully dropped into the group!",
+        "text": f"🎩 🤖 **Lixie System Report:**\n{message}",
         "parse_mode": "Markdown"
     }
     try:
@@ -698,6 +698,7 @@ def run_daily_reset_background():
     conn.commit()
     c.close()
     release_db(conn)
+    notify_prathu("✅ **Daily Scores Reset** executed successfully!")
 
 @app.route('/reset_daily/0508', methods=['GET', 'POST'])
 def trigger_daily_reset():
@@ -1087,7 +1088,7 @@ def run_weekly_reset_background():
             try: requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": a_id, "text": admin_msg, "parse_mode": "Markdown"}, timeout=5)
             except: pass
 
-    except Exception as e: print(f"⚠️ Error generating Admin Debrief: {e}")
+    except Exception as e: notify_prathu(f"🚨 **ERROR (Weekly Debrief):** Failed to compile or send the Admin Debrief!\n`{e}`")
 
     # --- THE GREAT WIPE ---
     c.execute("UPDATE users SET faction = NULL WHERE weekly_score < %s", (target_average,))
@@ -1158,6 +1159,7 @@ def run_weekly_reset_background():
     c.close()
     release_db(conn)
     update_live_leaderboard()
+    notify_prathu("🏆 **Weekly Cup Reset & Analytics Debrief** executed successfully!")
 
 @app.route('/reset_weekly/0508', methods=['GET', 'POST'])
 def trigger_weekly_reset():
@@ -1317,7 +1319,7 @@ def dispatch_practice_sets():
         data = response.json()
         titles, set_a, set_b, set_c = data.get("titles", []), data.get("set_a", []), data.get("set_b", []), data.get("set_c", [])
     except Exception as e:
-        print(f"⚠️ Failed to fetch grammar.json from private GitHub: {e}")
+        notify_prathu(f"🚨 **CRITICAL ERROR (Grammar):** Failed to fetch `grammar.json` from GitHub. Practice sets did NOT drop!\n`{e}`")
         return
 
     if not set_a or not set_b or not set_c: return
@@ -1519,6 +1521,7 @@ def run_sunday_announcement():
             elif res.status_code == 429: time.sleep(res.json().get("parameters", {}).get("retry_after", 5) + 1)
             else: time.sleep(2)
         except: time.sleep(3 + attempt * 2)
+            notify_prathu("📢 **Sunday Announcement** posted successfully!")
 
 @app.route('/sunday_announcement/0508', methods=['GET', 'POST'])
 def trigger_sunday_announcement():
@@ -1556,7 +1559,7 @@ def run_daily_vocab_and_quizzes():
         }
         mcqs = requests.get(github_vocab_url, headers=headers, timeout=15).json()
     except Exception as e: 
-        print(f"⚠️ Failed to fetch questions.json: {e}")
+        notify_prathu(f"🚨 **CRITICAL ERROR (Vocab):** Failed to fetch `questions.json` from GitHub. Quizzes did NOT drop!\n`{e}`")
         return
 
     import random
@@ -1640,6 +1643,7 @@ def run_sunday_reminder():
         
         # A short 2-second pause between messages to keep Telegram's anti-spam filters happy
         time.sleep(2)
+        notify_prathu("⏳ **Sunday Warning Reminder** posted successfully!")
 
 @app.route('/sunday_reminder/0508', methods=['GET', 'POST'])
 def trigger_sunday_reminder():
@@ -1681,6 +1685,7 @@ def run_sunday_final_reminder():
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False}, timeout=10)
                 break
         except: time.sleep(3 + attempt * 2)
+        notify_prathu("⏱️ **Sunday Final Midnight Reminder** posted successfully!")
 
 @app.route('/sunday_final_reminder/0508', methods=['GET', 'POST'])
 def trigger_sunday_final_reminder():
@@ -1696,6 +1701,7 @@ def run_countdown_and_commentary():
     update_exam_countdown()
     time.sleep(5)
     generate_and_send_commentary()
+    notify_prathu("📅 **Exam Countdown & AI Commentary** updated successfully!")
 
 @app.route('/update_countdown/0508', methods=['GET', 'POST'])
 def trigger_countdown_update():
@@ -2231,7 +2237,7 @@ Connotation Guide:
 
     # If every single key in the array is dead, stop the function
     if not ai_text:
-        print("🚨 CRITICAL: All API keys failed for Word of the Day.")
+        notify_prathu("🚨 **CRITICAL ERROR (Word of the Day):** All Gemini API keys failed or timed out. Word of the Day did NOT drop!")
         return
 
     # Send the generated message to the specific thread
@@ -2251,6 +2257,7 @@ Connotation Guide:
                 time.sleep(2)
         except: 
             time.sleep(3 + attempt * 2)
+        notify_prathu("📖 **Word of the Day** generated and posted successfully!")
 
 @app.route('/word_of_the_day/0508', methods=['GET', 'POST'])
 def trigger_word_of_the_day():
