@@ -1781,17 +1781,42 @@ def generate_and_send_commentary():
         for row in c.fetchall():
             try:
                 delta = (datetime.strptime(row[1], "%Y-%m-%d").date() - current_ist.date()).days
+                # The bot only speaks on these exact milestone days
                 if delta in [90, 60, 30, 15, 7, 1]: target_exam, days_left = row[0], delta; break
             except ValueError: continue
     except: pass
-    if not target_exam: return
+    
+    if not target_exam: 
+        try:
+            c.close()
+            release_db(conn)
+        except: pass
+        return
 
-    try:
-        ai_text = genai.Client(api_key="AIzaSyDb5THxDk58CrdPJ7nVKJov6L87_G2hQ0g").models.generate_content(
-            model='gemini-3.6-flash',
-            contents=f"Create a short Telegram exam commentary message following this EXACT 3-line structure:\nLine 1: [Urgency Emoji] {target_exam} ➪ {days_left} Days Left!\nLine 2: [1 short, hype, action-oriented sentence about studying/preparing]\nLine 3: [1 short motivational sign-off with emojis]\nRules: STRICTLY follow the 3-line format. No conversational filler. No hashtags. Keep it clean."
-        ).text.strip()
-    except: return
+    prompt = f"Create a short Telegram exam commentary message following this EXACT 3-line structure:\nLine 1: [Urgency Emoji] {target_exam} ➪ {days_left} Days Left!\nLine 2: [1 short, hype, action-oriented sentence about studying/preparing]\nLine 3: [1 short motivational sign-off with emojis]\nRules: STRICTLY follow the 3-line format. No conversational filler. No hashtags. Keep it clean. ALWAYS use British English spelling."
+
+    ai_text = None
+    
+    # 🔄 ✨ UPGRADE: Loop through all available API keys to prevent the silent crash!
+    for key in API_KEYS:
+        try:
+            temp_client = genai.Client(api_key=key)
+            response = temp_client.models.generate_content(
+                model='gemini-3.6-flash',
+                contents=prompt
+            )
+            if response.text:
+                ai_text = response.text.strip()
+                break
+        except Exception as e:
+            continue
+
+    if not ai_text: 
+        try:
+            c.close()
+            release_db(conn)
+        except: pass
+        return
 
     try:
         c.execute("SELECT value FROM bot_settings WHERE key='last_commentary_msg_id'")
@@ -1808,12 +1833,14 @@ def generate_and_send_commentary():
                     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
                 """, (str(new_msg_id),))
                 conn.commit()
-                # 🛑 The pinChatMessage line has been removed from here!
                 break
             else: time.sleep(2)
         except: time.sleep(3)
-    c.close()
-    release_db(conn)
+        
+    try:
+        c.close()
+        release_db(conn)
+    except: pass
 
 def relay_message(message_id, target_thread_id):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/copyMessage"
