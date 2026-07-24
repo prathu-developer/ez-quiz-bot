@@ -372,7 +372,8 @@ def update_live_leaderboard():
     else:
         for i, user in enumerate(top_10_elo):
             u_id, name, elo = user
-            clean_elo = int(elo) if elo % 1 == 0 else round(elo, 1)
+            # ✨ Changed to round to the nearest whole number for display
+            clean_elo = int(round(elo))
             elo_msg_text += f"{elo_medals[i]} [{name}](tg://user?id={u_id}) ➪ {clean_elo} Elo\n"
 
     elo_msg_text += "\n━━━━━━━━━━━━━━━━━━━━"
@@ -1937,6 +1938,7 @@ def process_ranking_command(chat_id, user_id, message_id, thread_id):
         }
         lg_icon, lg_name = LEAGUE_INFO.get(u_league, ("🛡️", "Unranked"))
         clean_score = int(u_score) if u_score % 1 == 0 else round(u_score, 1)
+        clean_u_elo = int(round(u_elo)) # ✨ Added whole number formatting
 
         # 7. Dynamic Status Line & Target Gap
         if u_score >= target_average:
@@ -1969,7 +1971,8 @@ def process_ranking_command(chat_id, user_id, message_id, thread_id):
             f"🏆 **Your Weekly Progress**\n\n"
             f"🏅 **Rank:** #{weekly_rank} / {total_active}\n\n"
             f"⭐ **Score:** {clean_score} pts\n\n"
-            f"{lg_icon} **League:** {lg_name} • 🧠 **{u_elo} Elo**\n\n"
+            # ✨ Updated variable here
+            f"{lg_icon} **League:** {lg_name} • 🧠 **{clean_u_elo} Elo**\n\n"
             f"🎯 **{accuracy}% Accuracy** • ✅**{u_correct}** • ❌**{u_wrong}** • 📝**{u_attempts}/{total_quizzes}**\n\n"
             f"🌍 **Global Rank:** #{global_elo_rank}\n\n"
             f"{status_line}"
