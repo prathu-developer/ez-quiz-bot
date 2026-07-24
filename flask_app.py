@@ -1523,7 +1523,9 @@ def run_sunday_announcement():
     for attempt in range(10):
         try:
             res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": 3, "text": text, "parse_mode": "Markdown"}, timeout=20)
-            if res.status_code == 200: break
+            if res.status_code == 200: 
+                notify_prathu("📢 **Sunday Announcement** posted successfully!")
+                break
             elif res.status_code == 429: time.sleep(res.json().get("parameters", {}).get("retry_after", 5) + 1)
             else: time.sleep(2)
         except: time.sleep(3 + attempt * 2)
@@ -1643,11 +1645,11 @@ def run_sunday_reminder():
                 res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": target["thread_id"], "text": text, "parse_mode": "Markdown"}, timeout=20)
                 if res.status_code == 200:
                     requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False}, timeout=10)
+                    notify_prathu("⏳ **Sunday Warning Reminder** posted successfully!")
                     break
             except: 
                 time.sleep(3 + attempt * 2)
         
-        # A short 2-second pause between messages to keep Telegram's anti-spam filters happy
         time.sleep(2)
         notify_prathu("⏳ **Sunday Warning Reminder** posted successfully!")
 
@@ -1689,6 +1691,7 @@ def run_sunday_final_reminder():
             res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": 11, "text": text, "parse_mode": "HTML"}, timeout=20)
             if res.status_code == 200:
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False}, timeout=10)
+                notify_prathu("⏱️ **Sunday Final Midnight Reminder** posted successfully!")
                 break
         except: time.sleep(3 + attempt * 2)
         notify_prathu("⏱️ **Sunday Final Midnight Reminder** posted successfully!")
