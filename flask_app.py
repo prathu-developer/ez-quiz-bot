@@ -2145,12 +2145,44 @@ def bake_miniapp_cache():
 
         if index == 0: topper_history_dict = {k: (int(v["score"]) if v["score"] % 1 == 0 else round(v["score"], 2)) for k, v in user_hist.items()}
 
+        # ✨ THE MASTER GROWTH FORMULA ✨
+        hist = rank_hist_dict.get(uid, [])
+        lifetime_growth_text = "Calibrating..."
+        
+        if len(hist) > 0:
+            curr_acc = (u_correct / u_attempts) * 100 if u_attempts > 0 else 0
+            u_elo_val = user[8] if user[8] is not None else 1000
+            
+            # Establish the Dynamic Baseline
+            if len(hist) == 1:
+                # Sophomore: Base off their single Week 1
+                base_att = hist[0]['attempts']
+                base_corr = hist[0]['correct'] if hist[0]['correct'] else 0
+            else:
+                # Veteran: Base off the average of their two oldest weeks (which are at the end of the list)
+                base_att = hist[-1]['attempts'] + hist[-2]['attempts']
+                base_corr = (hist[-1]['correct'] if hist[-1]['correct'] else 0) + (hist[-2]['correct'] if hist[-2]['correct'] else 0)
+                
+            base_acc = (base_corr / base_att) * 100 if base_att > 0 else 0
+            
+            # Calculate Sub-Indicators
+            accuracy_shift = curr_acc - base_acc
+            elo_factor = (u_elo_val - 1000) / 10.0
+            consistency_multiplier = 1.0 + (len(hist) * 0.05) # 5% boost for every active week
+            
+            raw_growth = (accuracy_shift + elo_factor) * consistency_multiplier
+            
+            # Format the output (hide negative dips to prevent demotivation)
+            if raw_growth > 0:
+                lifetime_growth_text = f"+{int(raw_growth)}%"
+
         leaderboard_list.append({
             "rank": index + 1, "id": uid, "name": user[1], "score": u_score,
             "elo": round(user[8] if user[8] is not None else 1000, 1), 
             "last_updated": user[9] if user[9] else 0,
             "house": str(user[3]), "is_captain": user[4], "attempts": u_attempts, "league": user[6] if user[6] else 0,
-            "rank_history": rank_hist_dict.get(uid, []),
+            "lifetime_growth": lifetime_growth_text, # ✨ Slotted straight into the JSON payload!
+            "rank_history": hist,
             "history": {
                 "labels": [k for k, v in sorted_user_hist], "scores": [(int(v["score"]) if v["score"] % 1 == 0 else round(v["score"], 2)) for k, v in sorted_user_hist],
                 "daily_correct": [v["correct"] for k, v in sorted_user_hist], "daily_attempts": [v["attempts"] for k, v in sorted_user_hist],
