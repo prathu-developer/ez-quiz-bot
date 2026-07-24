@@ -825,8 +825,19 @@
             
             // ⚡ THE GPU TURBOCHARGER: Build HTML in background memory
             let htmlBuffer = "";
+            let demotionRenderCount = 0; // ✨ Track demotion rows
 
             data.leaderboard.forEach((user, index) => {
+                let isDemotion = user.score < targetAverage;
+                if (isDemotion) {
+                    demotionRenderCount++;
+                }
+
+                // ✨ HIDE DEMOTION OVERFLOW (Only Admins see past top 10)
+                if (!window.currentUserData.is_admin && isDemotion && demotionRenderCount > 10) {
+                    return; // Skip rendering this row entirely
+                }
+
                 let cascadeDelay = index * 0.04;
 
                 let rankDisplay = `#${user.rank}`;
@@ -1031,7 +1042,8 @@
                 return;
             }
 
-            targetUser.rank_history.forEach((entry, idx) => {
+            // ✨ ONLY SHOW TOP 5 RECENT ENTRIES
+            targetUser.rank_history.slice(0, 5).forEach((entry, idx) => {
                 let statusBadge = idx === 0 ? `<span class="league-badge bg-gold" style="font-size:0.6em; padding:2px 4px; margin-left:8px;">Previous Week</span>` : '';
 
                 let score = entry.score || 0;
