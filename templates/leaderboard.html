@@ -1087,7 +1087,7 @@
             let leagueBadge = getLeagueBadgeHTML(targetUser.league);
             let singleHouseEmoji = getSingleHouseEmoji(targetUser.house);
             document.getElementById('modalStudentHouse').innerHTML = `<span style="font-size: 1.15em;">${singleHouseEmoji}</span> <span style="margin-left: 8px;">${leagueBadge}</span>`;
-            document.getElementById('modalStudentElo').innerText = `🧠 ${targetUser.elo ? targetUser.elo.toFixed(1) : 1000}`;
+            document.getElementById('modalStudentElo').innerText = `🧠 ${targetUser.elo ? Math.round(targetUser.elo) : 1000}`;
             document.getElementById('modalStudentTitle').innerText = getAcademicTitle(targetUser.elo || 1000);
 
             document.getElementById('statScore').innerText = targetUser.score % 1 !== 0 ? targetUser.score.toFixed(2) : targetUser.score;
@@ -1439,7 +1439,7 @@
                             <div style="font-weight: 900; color: #94a3b8; width: 25px;">#${eu.rank}</div>
                             <div style="font-weight: bold; color: #1e293b;">${eu.name}</div>
                         </div>
-                        <div style="font-weight: 800; color: #2563eb;">🧠 ${eu.elo.toFixed(1)}</div>
+                        <div style="font-weight: 800; color: #2563eb;">🧠 ${Math.round(eu.elo)}</div>
                     </div>
                 `;
             });
@@ -1451,7 +1451,7 @@
 
             // Formatting
             let myRankDisplay = myEloEntry ? `#${myEloEntry.rank}` : 'N/A';
-            let myEloDisplay = myEloEntry ? myEloEntry.elo.toFixed(1) : window.currentUserData.elo.toFixed(1);
+            let myEloDisplay = myEloEntry ? Math.round(myEloEntry.elo) : Math.round(window.currentUserData.elo);
 
             // Tiny warning tag if they are currently inactive
             let inactivityWarning = myEloEntry && !myEloEntry.is_active
