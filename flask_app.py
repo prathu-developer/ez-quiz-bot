@@ -1321,6 +1321,13 @@ def dispatch_practice_sets():
         return
 
     if not set_a or not set_b or not set_c: return
+    
+    # ✨ NEW: Completely shuffle the questions within each set before sending
+    import random
+    random.shuffle(set_a)
+    random.shuffle(set_b)
+    random.shuffle(set_c)
+
     dynamic_open_period = int(((current_ist + timedelta(days=6 - current_ist.weekday())).replace(hour=23, minute=59, second=59) - current_ist).total_seconds())
 
     def safe_send_text(text, pin=False):
