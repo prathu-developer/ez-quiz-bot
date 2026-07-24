@@ -2219,14 +2219,18 @@ def get_mini_app_leaderboard():
 # BACKGROUND WORKER: WORD OF THE DAY
 # ==========================================
 def run_word_of_the_day():
-    # 1. Fetch the Lifetime Memory Bank
+    # 1. Fetch the Lifetime Memory Bank from the dedicated table
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT value FROM bot_settings WHERE key='lifetime_wotd'")
-    row = c.fetchone()
-    used_words = json.loads(row[0]) if row and row[0] else []
-    c.close()
-    release_db(conn)
+    try:
+        c.execute("SELECT word FROM lifetime_words")
+        used_words = [row[0] for row in c.fetchall()]
+    except Exception as e:
+        print(f"DB Read Error: {e}")
+        used_words = []
+    finally:
+        c.close()
+        release_db(conn)
     
     banned_words_text = ", ".join(used_words) if used_words else "None"
 
@@ -2299,26 +2303,24 @@ Connotation Guide:
             }, timeout=20)
             
             if res.status_code == 200:
-                # 4. Extract the newly generated word and save it FOREVER
+                # 4. Extract the newly generated word and save it to the dedicated table
                 try:
                     lines = [line.strip() for line in ai_text.split('\n') if line.strip()]
                     word_line = lines[1] # The line directly below "📖 WORD OF THE DAY"
                     extracted_word = word_line.split(' ')[0].strip().lower()
                     
-                    used_words.append(extracted_word)
-                    # ✨ The 30-day cap is completely removed. This array will now grow infinitely!
-                        
                     conn = get_db()
                     c = conn.cursor()
+                    # ON CONFLICT DO NOTHING ensures the database doesn't crash if a duplicate slips through
                     c.execute("""
-                        INSERT INTO bot_settings (key, value) VALUES ('lifetime_wotd', %s) 
-                        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-                    """, (json.dumps(used_words),))
+                        INSERT INTO lifetime_words (word) VALUES (%s) 
+                        ON CONFLICT (word) DO NOTHING
+                    """, (extracted_word,))
                     conn.commit()
                     c.close()
                     release_db(conn)
                 except Exception as parse_e:
-                    print(f"Failed to save word to lifetime memory: {parse_e}")
+                    print(f"Failed to save word to dedicated table: {parse_e}")
                     
                 break
             elif res.status_code == 429: 
@@ -2328,7 +2330,7 @@ Connotation Guide:
         except: 
             time.sleep(3 + attempt * 2)
             
-    notify_prathu("📖 **Word of the Day** generated and recorded to lifetime memory successfully!")
+    notify_prathu("📖 **Word of the Day** generated and saved to Supabase successfully!")
 
 @app.route('/word_of_the_day/0508', methods=['GET', 'POST'])
 def trigger_word_of_the_day():
