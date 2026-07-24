@@ -551,8 +551,8 @@
 
             <div class="stats-grid-4">
                 <div class="mini-stat">
-                    <div class="mini-stat-val val-blue" id="statScore">0</div>
-                    <div class="mini-stat-label">Total Points</div>
+                    <div class="mini-stat-val val-amber" id="statGrowth" style="font-size: 1.5em;">Calibrating...</div>
+                    <div class="mini-stat-label">Lifetime Growth 📈</div>
                 </div>
                 <div class="mini-stat">
                     <div class="mini-stat-val val-green" id="statAccuracy">0%</div>
@@ -1100,18 +1100,19 @@
 
             document.getElementById('statAttempts').innerText = `${totalAttempts} / ${maxAvailable}`;
 
-            let streak = 0;
-            if (targetUser.history.scores.length > 0) {
-                for (let i = targetUser.history.scores.length - 1; i >= 0; i--) {
-                    if (targetUser.history.labels[i] === 'Sun') continue;
-                    if (targetUser.history.scores[i] > 0) streak++;
-                    else break;
-                }
-            } else if (targetUser.score > 0) {
-                streak = 1;
+            // Map the Master Growth Formula data directly from the Python backend
+            let growthText = targetUser.lifetime_growth || "Calibrating...";
+            let growthElement = document.getElementById('statGrowth');
+            
+            growthElement.innerText = growthText;
+            
+            // Make the percentage pop visually while keeping 'Calibrating' subtle
+            if (growthText.includes('+')) {
+                growthElement.style.fontSize = "1.8em";
+            } else {
+                growthElement.style.fontSize = "1.3em";
             }
-            document.getElementById('statStreak').innerText = streak;
-
+            
             let topper = globalData.length > 0 ? globalData[0] : targetUser;
 
             let topCor = topper.history.correct;
