@@ -2219,9 +2219,22 @@ def get_mini_app_leaderboard():
 # BACKGROUND WORKER: WORD OF THE DAY
 # ==========================================
 def run_word_of_the_day():
-    prompt = """Select ONE "Word of the Day" from today's editorials.
+    # 1. Fetch the Lifetime Memory Bank
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT value FROM bot_settings WHERE key='lifetime_wotd'")
+    row = c.fetchone()
+    used_words = json.loads(row[0]) if row and row[0] else []
+    c.close()
+    release_db(conn)
+    
+    banned_words_text = ", ".join(used_words) if used_words else "None"
+
+    # 2. Inject the massive banned list into the prompt
+    prompt = f"""Select ONE "Word of the Day" from today's editorials.
 
 Selection Rules:
+• 🚫 LIFETIME BAN: DO NOT USE ANY OF THESE PREVIOUSLY USED WORDS: {banned_words_text}
 • Choose a high-value word frequently seen in competitive exams (SSC, Banking, CDS, AFCAT, CAPF, Insurance, Railways, etc.).
 • Prefer words that are moderately difficult—not everyday words, but not extremely rare or literary.
 • The word should be genuinely useful for editorial reading and RCs.
@@ -2257,7 +2270,6 @@ Connotation Guide:
 
     ai_text = None
     
-    # 🔄 Loop through all available API keys until one successfully works
     for key in API_KEYS:
         try:
             temp_client = genai.Client(api_key=key)
@@ -2268,17 +2280,16 @@ Connotation Guide:
             )
             if response.text:
                 ai_text = response.text.strip()
-                break  # ✨ Success! Break out of the loop and send the message.
+                break
         except Exception as e:
             print(f"⚠️ API Key Failed, trying next one... Error: {e}")
             continue
 
-    # If every single key in the array is dead, stop the function
     if not ai_text:
         notify_prathu("🚨 **CRITICAL ERROR (Word of the Day):** All Gemini API keys failed or timed out. Word of the Day did NOT drop!")
         return
 
-    # Send the generated message to the specific thread
+    # 3. Send the message
     for attempt in range(10):
         try:
             res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
@@ -2288,6 +2299,27 @@ Connotation Guide:
             }, timeout=20)
             
             if res.status_code == 200:
+                # 4. Extract the newly generated word and save it FOREVER
+                try:
+                    lines = [line.strip() for line in ai_text.split('\n') if line.strip()]
+                    word_line = lines[1] # The line directly below "📖 WORD OF THE DAY"
+                    extracted_word = word_line.split(' ')[0].strip().lower()
+                    
+                    used_words.append(extracted_word)
+                    # ✨ The 30-day cap is completely removed. This array will now grow infinitely!
+                        
+                    conn = get_db()
+                    c = conn.cursor()
+                    c.execute("""
+                        INSERT INTO bot_settings (key, value) VALUES ('lifetime_wotd', %s) 
+                        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                    """, (json.dumps(used_words),))
+                    conn.commit()
+                    c.close()
+                    release_db(conn)
+                except Exception as parse_e:
+                    print(f"Failed to save word to lifetime memory: {parse_e}")
+                    
                 break
             elif res.status_code == 429: 
                 time.sleep(res.json().get("parameters", {}).get("retry_after", 5) + 1)
@@ -2295,7 +2327,8 @@ Connotation Guide:
                 time.sleep(2)
         except: 
             time.sleep(3 + attempt * 2)
-        notify_prathu("📖 **Word of the Day** generated and posted successfully!")
+            
+    notify_prathu("📖 **Word of the Day** generated and recorded to lifetime memory successfully!")
 
 @app.route('/word_of_the_day/0508', methods=['GET', 'POST'])
 def trigger_word_of_the_day():
