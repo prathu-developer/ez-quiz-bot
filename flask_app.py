@@ -2215,18 +2215,17 @@ def get_mini_app_leaderboard():
     if row: return Response(row[0], mimetype='application/json')
     return jsonify({"error": "Syncing..."}), 503
 
-# ==========================================
-# BACKGROUND WORKER: WORD OF THE DAY
-# ==========================================
 def run_word_of_the_day():
-    # 1. Fetch the Lifetime Memory Bank from the dedicated table
+    # ==========================================
+    # PART 1: LIFETIME WORD OF THE DAY (Thread 2343)
+    # ==========================================
     conn = get_db()
     c = conn.cursor()
     try:
         c.execute("SELECT word FROM lifetime_words")
         used_words = [row[0] for row in c.fetchall()]
     except Exception as e:
-        print(f"DB Read Error: {e}")
+        print(f"DB Read Error (WOTD): {e}")
         used_words = []
     finally:
         c.close()
@@ -2234,17 +2233,13 @@ def run_word_of_the_day():
     
     banned_words_text = ", ".join(used_words) if used_words else "None"
 
-    # 2. Inject the massive banned list into the prompt
-    prompt = f"""Select ONE "Word of the Day" from today's editorials.
+    wotd_prompt = f"""Select ONE "Word of the Day" from today's editorials.
 
 Selection Rules:
 • 🚫 LIFETIME BAN: DO NOT USE ANY OF THESE PREVIOUSLY USED WORDS: {banned_words_text}
-• Choose a high-value word frequently seen in competitive exams (SSC, Banking, CDS, AFCAT, CAPF, Insurance, Railways, etc.).
-• Prefer words that are moderately difficult—not everyday words, but not extremely rare or literary.
+• Choose a high-value word frequently seen in competitive exams.
+• Prefer words that are moderately difficult—not everyday words, but not extremely rare.
 • The word should be genuinely useful for editorial reading and RCs.
-• Avoid very common words (e.g., important, increase, support, issue, concern, improve, robust, significant).
-• Avoid highly technical, legal, scientific, or archaic words.
-• Prefer words with clear real-world usage, useful collocations, and strong exam relevance.
 • ALWAYS use British English spelling for all output and synonyms.
 
 Output exactly in this format:
@@ -2272,65 +2267,139 @@ Connotation Guide:
 − = Negative
 = = Neutral (descriptive)"""
 
-    ai_text = None
+    wotd_text = None
+    successful_key_idx = 0 # ✨ Track which key does the heavy lifting
     
-    for key in API_KEYS:
+    for idx, key in enumerate(API_KEYS):
         try:
             temp_client = genai.Client(api_key=key)
-            response = temp_client.models.generate_content(
-                model='gemini-3.6-flash',
-                contents=prompt,
-                config=types.GenerateContentConfig(temperature=0.5)
-            )
+            response = temp_client.models.generate_content(model='gemini-3.6-flash', contents=wotd_prompt, config=types.GenerateContentConfig(temperature=0.5))
             if response.text:
-                ai_text = response.text.strip()
+                wotd_text = response.text.strip()
+                successful_key_idx = idx # Lock in the successful key
                 break
-        except Exception as e:
-            print(f"⚠️ API Key Failed, trying next one... Error: {e}")
-            continue
+        except: continue
 
-    if not ai_text:
-        notify_prathu("🚨 **CRITICAL ERROR (Word of the Day):** All Gemini API keys failed or timed out. Word of the Day did NOT drop!")
-        return
+    if wotd_text:
+        for attempt in range(10):
+            try:
+                res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": 2343, "text": wotd_text}, timeout=20)
+                if res.status_code == 200:
+                    try:
+                        lines = [line.strip() for line in wotd_text.split('\n') if line.strip()]
+                        extracted_word = lines[1].split(' ')[0].strip().lower()
+                        conn = get_db()
+                        c = conn.cursor()
+                        c.execute("INSERT INTO lifetime_words (word) VALUES (%s) ON CONFLICT (word) DO NOTHING", (extracted_word,))
+                        conn.commit()
+                        c.close()
+                        release_db(conn)
+                    except: pass
+                    notify_prathu("📖 **Word of the Day** generated successfully!")
+                    break
+                elif res.status_code == 429: time.sleep(res.json().get("parameters", {}).get("retry_after", 5) + 1)
+                else: time.sleep(2)
+            except: time.sleep(3 + attempt * 2)
+    else:
+        notify_prathu("🚨 **ERROR:** WOTD generation failed!")
 
-    # 3. Send the message
-    for attempt in range(10):
-        try:
-            res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
-                "chat_id": CHAT_ID,
-                "message_thread_id": 2343,
-                "text": ai_text
-            }, timeout=20)
+    # ==========================================
+    # PART 2: FOREIGN EXPRESSIONS (Thread 11028)
+    # ==========================================
+    time.sleep(5) 
+    
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        # Fetch the next 3 unused words sequentially
+        c.execute("SELECT id, word FROM foreign_expressions WHERE is_used = FALSE ORDER BY id ASC LIMIT 3")
+        foreign_batch = c.fetchall()
+    except Exception as e:
+        print(f"DB Read Error (Foreign Words): {e}")
+        foreign_batch = []
+    finally:
+        c.close()
+        release_db(conn)
+
+    if len(foreign_batch) == 3:
+        words_to_define = [row[1] for row in foreign_batch]
+        words_ids = [row[0] for row in foreign_batch]
+        words_string = ", ".join(words_to_define)
+
+        foreign_prompt = f"""You are an expert linguistics AI. Define the following 3 foreign expressions commonly used in English literature and news editorials: {words_string}
+
+Rules:
+• ALWAYS use British English spelling.
+• Do not add any introductory, acknowledging, or concluding text. 
+• Strictly follow the formatting below.
+
+Output EXACTLY in this format:
+
+🌍 FOREIGN EXPRESSIONS
+
+1. 📜 <Expression 1> (<Language of origin>)
+
+🔊 <Simple English Pronunciation>
+
+💡 <Short, simple meaning in English>.
+(<Hindi meaning>)
+
+📰 <One natural editorial-style sentence using the expression naturally.>
+
+2. 📜 <Expression 2> (<Language of origin>)
+
+🔊 <Simple English Pronunciation>
+
+💡 <Short, simple meaning in English>.
+(<Hindi meaning>)
+
+📰 <One natural editorial-style sentence using the expression naturally.>
+
+3. 📜 <Expression 3> (<Language of origin>)
+
+🔊 <Simple English Pronunciation>
+
+💡 <Short, simple meaning in English>.
+(<Hindi meaning>)
+
+📰 <One natural editorial-style sentence using the expression naturally.>"""
+
+        foreign_text = None
+        
+        # ✨ LOAD BALANCER: Shift the array to start with the NEXT key in line
+        shifted_keys = API_KEYS[successful_key_idx + 1:] + API_KEYS[:successful_key_idx + 1]
+        
+        for key in shifted_keys:
+            try:
+                temp_client = genai.Client(api_key=key)
+                response = temp_client.models.generate_content(model='gemini-3.6-flash', contents=foreign_prompt, config=types.GenerateContentConfig(temperature=0.3))
+                if response.text:
+                    foreign_text = response.text.strip()
+                    break
+            except: continue
             
-            if res.status_code == 200:
-                # 4. Extract the newly generated word and save it to the dedicated table
+        if foreign_text:
+            for attempt in range(10):
                 try:
-                    lines = [line.strip() for line in ai_text.split('\n') if line.strip()]
-                    word_line = lines[1] # The line directly below "📖 WORD OF THE DAY"
-                    extracted_word = word_line.split(' ')[0].strip().lower()
-                    
-                    conn = get_db()
-                    c = conn.cursor()
-                    # ON CONFLICT DO NOTHING ensures the database doesn't crash if a duplicate slips through
-                    c.execute("""
-                        INSERT INTO lifetime_words (word) VALUES (%s) 
-                        ON CONFLICT (word) DO NOTHING
-                    """, (extracted_word,))
-                    conn.commit()
-                    c.close()
-                    release_db(conn)
-                except Exception as parse_e:
-                    print(f"Failed to save word to dedicated table: {parse_e}")
-                    
-                break
-            elif res.status_code == 429: 
-                time.sleep(res.json().get("parameters", {}).get("retry_after", 5) + 1)
-            else: 
-                time.sleep(2)
-        except: 
-            time.sleep(3 + attempt * 2)
-            
-    notify_prathu("📖 **Word of the Day** generated and saved to Supabase successfully!")
+                    res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": 11028, "text": foreign_text}, timeout=20)
+                    if res.status_code == 200:
+                        try:
+                            conn = get_db()
+                            c = conn.cursor()
+                            c.execute("UPDATE foreign_expressions SET is_used = TRUE WHERE id IN %s", (tuple(words_ids),))
+                            conn.commit()
+                            c.close()
+                            release_db(conn)
+                        except: pass
+                        notify_prathu("🌍 **Foreign Expressions** drop executed successfully!")
+                        break
+                    elif res.status_code == 429: time.sleep(res.json().get("parameters", {}).get("retry_after", 5) + 1)
+                    else: time.sleep(2)
+                except: time.sleep(3 + attempt * 2)
+        else:
+            notify_prathu("🚨 **ERROR:** Foreign Expressions AI generation failed!")
+    elif len(foreign_batch) < 3:
+        notify_prathu("🚨 **ALERT:** You are out of Foreign Expressions! The master list of 250 has been completed.")
 
 @app.route('/word_of_the_day/0508', methods=['GET', 'POST'])
 def trigger_word_of_the_day():
