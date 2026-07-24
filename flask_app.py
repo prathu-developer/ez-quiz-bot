@@ -2335,18 +2335,9 @@ Rules:
 
 Output EXACTLY in this format:
 
-🌍 **FOREIGN EXPRESSIONS**
+🌍 FOREIGN EXPRESSIONS
 
-1️⃣ **<Expression 1>** (<Language of origin>)
-
-🔊 <Simple English Pronunciation>
-
-💡 <Short, simple meaning in English>.
-(<Hindi meaning>)
-
-📰 <One natural editorial-style sentence using the expression naturally.>
-
-2️⃣ **<Expression 2>** (<Language of origin>)
+1️⃣ <Expression 1> (<Language of origin>)
 
 🔊 <Simple English Pronunciation>
 
@@ -2355,7 +2346,16 @@ Output EXACTLY in this format:
 
 📰 <One natural editorial-style sentence using the expression naturally.>
 
-3️⃣ **<Expression 3>** (<Language of origin>)
+2️⃣ <Expression 2> (<Language of origin>)
+
+🔊 <Simple English Pronunciation>
+
+💡 <Short, simple meaning in English>.
+(<Hindi meaning>)
+
+📰 <One natural editorial-style sentence using the expression naturally.>
+
+3️⃣ <Expression 3> (<Language of origin>)
 
 🔊 <Simple English Pronunciation>
 
