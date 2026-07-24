@@ -1403,7 +1403,7 @@ def dispatch_practice_sets():
     safe_send_text("🎯 **SET C — Fill in the Blank**\n⬇️")
     time.sleep(2)
     send_and_link_poll(set_c, "Choose the most appropriate option.", shuffle=True, start_q_num=11)
-    notify_prathu("Grammar Practice Sets")
+    notify_prathu("✅ **Grammar Practice Sets** generated and dispatched!")
 
 def recalculate_dynamic_scores():
     try:
@@ -1602,7 +1602,7 @@ def run_daily_vocab_and_quizzes():
         # Completes safely at 7:02 PM, leaving a 3-minute cooldown before Grammar drops at 7:05 PM!
         time.sleep(5)
         
-    notify_prathu("Daily Vocab Quiz")
+    notify_prathu("✅ **Daily Vocab Quiz** generated and dispatched!")
     
 @app.route('/daily_vocab/0508', methods=['GET', 'POST'])
 def trigger_daily_vocab():
