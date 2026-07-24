@@ -614,6 +614,7 @@ def webhook():
         l_name = user_info.get('last_name', '').strip()
         formatted_name = f"{f_name} {l_name[0]}".strip() if l_name else f_name
 
+        conn = None
         try:
             conn = get_db()
             c = conn.cursor()
@@ -621,26 +622,31 @@ def webhook():
                       (user_info['id'], formatted_name, ans['poll_id'], ans['option_ids'][0]))
             conn.commit()
             c.close()
-            release_db(conn)
             return 'OK', 200
         except Exception as e:
             return 'DB Locked, Retrying', 500
+        finally:
+            if conn:
+                release_db(conn)
 
     elif 'edited_message' in update:
         msg = update['edited_message']
         chat_id = msg['chat']['id']
 
         if str(chat_id) == SOURCE_CHAT_ID:
+            conn = None
             try:
                 conn = get_db()
                 c = conn.cursor()
                 c.execute("SELECT target_msg_id FROM message_links WHERE source_msg_id = %s", (msg['message_id'],))
                 row = c.fetchone()
                 c.close()
-                release_db(conn)
                 if row: sync_message_edit(msg=msg, target_msg_id=row[0])
             except Exception as e:
                 pass
+            finally:
+                if conn:
+                    release_db(conn)
         return 'OK', 200
 
     elif 'message' in update:
