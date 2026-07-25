@@ -1785,7 +1785,7 @@ def update_exam_countdown():
 
 def generate_and_send_commentary():
     current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
-    target_exam, days_left, is_today = None, 0, False
+    milestones_hit = []
     
     try:
         conn = get_db()
@@ -1793,59 +1793,48 @@ def generate_and_send_commentary():
         c.execute("SELECT name, exam_date, is_exact_date, display_date FROM upcoming_exams ORDER BY exam_date ASC")
         rows = c.fetchall()
 
-        # STEP 1: Highest Priority — Check if ANY exam is scheduled for TODAY (delta == 0)
+        # STEP 1: Collect ALL exams that hit a milestone today
         for row in rows:
             try:
                 exam_name = row[0]
                 exam_date = datetime.strptime(row[1], "%Y-%m-%d").date()
+                is_exact_date = bool(row[2])
+                display_date = row[3]
                 delta = (exam_date - current_ist.date()).days
-                
+
+                # Urgent: Exam is today
                 if delta == 0:
-                    target_exam = exam_name
-                    days_left = 0
-                    is_today = True
-                    break
+                    milestones_hit.append({"name": exam_name, "days": 0, "is_today": True})
+                # Milestone: 1, 7, 15, 30, 60, 90 days left (Excluding tentative placeholder dates)
+                elif is_exact_date and display_date.lower().strip() != "to be announced" and delta in [90, 60, 30, 15, 7, 1]:
+                    milestones_hit.append({"name": exam_name, "days": delta, "is_today": False})
             except ValueError:
                 continue
-
-        # STEP 2: Second Priority — Check for exact milestone countdowns (for exact dates only)
-        if not target_exam:
-            for row in rows:
-                try:
-                    exam_name = row[0]
-                    exam_date = datetime.strptime(row[1], "%Y-%m-%d").date()
-                    is_exact_date = bool(row[2])
-                    display_date = row[3]
-                    delta = (exam_date - current_ist.date()).days
-
-                    # Ignore non-exact/tentative placeholder dates for exact day countdowns
-                    # (Prevents false "7 Days Left" alerts for exams with estimated month windows like "August-September")
-                    if not is_exact_date or display_date.lower().strip() == "to be announced":
-                        continue
-
-                    if delta in [90, 60, 30, 15, 7, 1]:
-                        target_exam = exam_name
-                        days_left = delta
-                        is_today = False
-                        break
-                except ValueError:
-                    continue
     except Exception as e:
         print(f"⚠️ Error fetching exam commentary target: {e}")
-
-    if not target_exam:
-        try:
-            c.close()
-            release_db(conn)
-        except:
-            pass
+        try: c.close(); release_db(conn)
+        except: pass
         return
 
-    # STEP 3: Formulate AI Prompt based on context (Exam Day vs Milestone Countdown)
-    if is_today:
+    # If no milestones are hit today, silently exit
+    if not milestones_hit:
+        try: c.close(); release_db(conn)
+        except: pass
+        return
+
+    # STEP 2: Sort exams by urgency (0 days first, then 1, 7, 15...)
+    milestones_hit.sort(key=lambda x: x["days"])
+    
+    # The most urgent exam gets the AI commentary spotlight
+    primary_exam = milestones_hit[0]
+    # Any other exams falling on the same day become Quick Insights
+    secondary_exams = milestones_hit[1:]
+
+    # STEP 3: Formulate Contextual Prompt
+    if primary_exam["is_today"]:
         prompt = (
             f"Create a short Telegram exam-day wishing message following this EXACT 3-line structure:\n"
-            f"Line 1: 🚨 {target_exam} ➪ TODAY IS THE EXAM!\n"
+            f"Line 1: 🚨 {primary_exam['name']} ➪ TODAY IS THE EXAM!\n"
             f"Line 2: [1 short, encouraging sentence wishing candidates best of luck and advising them to stay calm and confident]\n"
             f"Line 3: Best of luck to all candidates! 🚀🏆\n"
             f"Rules: STRICTLY follow the 3-line format. No conversational filler. No hashtags. Keep it clean. ALWAYS use British English spelling."
@@ -1853,18 +1842,25 @@ def generate_and_send_commentary():
     else:
         prompt = (
             f"Create a short Telegram exam commentary message following this EXACT 3-line structure:\n"
-            f"Line 1: 🚨 {target_exam} ➪ {days_left} Days Left!\n"
+            f"Line 1: 🚨 {primary_exam['name']} ➪ {primary_exam['days']} Days Left!\n"
             f"Line 2: [1 short, hype, action-oriented sentence about studying/preparing]\n"
             f"Line 3: [1 short motivational sign-off with emojis]\n"
             f"Rules: STRICTLY follow the 3-line format. No conversational filler. No hashtags. Keep it clean. ALWAYS use British English spelling."
         )
 
+    # STEP 4: Database-Backed Key Rotation
     ai_text = None
+    try:
+        c.execute("SELECT value FROM bot_settings WHERE key='current_key_index'")
+        key_row = c.fetchone()
+        db_key_index = int(key_row[0]) if key_row else 0
+    except:
+        db_key_index = 0
 
-    # Loop through available API keys to generate commentary safely
-    for key in API_KEYS:
+    for attempt in range(len(API_KEYS)):
         try:
-            temp_client = genai.Client(api_key=key)
+            active_key = API_KEYS[db_key_index]
+            temp_client = genai.Client(api_key=active_key)
             response = temp_client.models.generate_content(
                 model='gemini-3.6-flash',
                 contents=prompt
@@ -1873,59 +1869,67 @@ def generate_and_send_commentary():
                 ai_text = response.text.strip()
                 break
         except Exception:
+            # If a key fails (rate limit/quota), rotate to the next key and save it to the DB instantly
+            db_key_index = (db_key_index + 1) % len(API_KEYS)
+            try:
+                c.execute("INSERT INTO bot_settings (key, value) VALUES ('current_key_index', %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (str(db_key_index),))
+                conn.commit()
+            except: pass
             continue
 
     if not ai_text:
-        try:
-            c.close()
-            release_db(conn)
-        except:
-            pass
+        try: c.close(); release_db(conn)
+        except: pass
         return
 
-    # Delete previous commentary message if tracked
+    # STEP 5: Construct the final message with Secondary Exams (Quick Insights)
+    final_message = f"🤖 **Daily Exam Insights**\n\n{ai_text}"
+    
+    if secondary_exams:
+        final_message += "\n\n━━━━━━━━━━━━━━━━━━━━\n📌 **Quick Insights:**\n"
+        for sec in secondary_exams:
+            if sec["is_today"]:
+                final_message += f"• 🚨 **{sec['name']}** ➪ TODAY IS THE EXAM!\n"
+            else:
+                final_message += f"• **{sec['name']}** ➪ {sec['days']} Days Left\n"
+
+    # STEP 6: Delete the previous day's commentary message to keep the thread clean
     try:
         c.execute("SELECT value FROM bot_settings WHERE key='last_commentary_msg_id'")
         if last_msg := c.fetchone():
             requests.post(
-                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage",
-                json={"chat_id": CHAT_ID, "message_id": int(last_msg[0])},
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage", 
+                json={"chat_id": CHAT_ID, "message_id": int(last_msg[0])}, 
                 timeout=5
             )
-    except:
+    except: 
         pass
 
-    # Send new commentary message
+    # STEP 7: Send the new message and save its ID for tomorrow's deletion
     for attempt in range(3):
         try:
             res = requests.post(
-                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
                 json={
-                    "chat_id": CHAT_ID,
-                    "message_thread_id": COUNTDOWN_THREAD_ID,
-                    "text": f"🤖 **Daily Exam Insights**\n\n{ai_text}",
+                    "chat_id": CHAT_ID, 
+                    "message_thread_id": COUNTDOWN_THREAD_ID, 
+                    "text": final_message, 
                     "parse_mode": "Markdown"
-                },
+                }, 
                 timeout=10
             )
             if res.json().get("ok"):
                 new_msg_id = res.json()["result"]["message_id"]
-                c.execute("""
-                    INSERT INTO bot_settings (key, value) VALUES ('last_commentary_msg_id', %s)
-                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-                """, (str(new_msg_id),))
+                c.execute("INSERT INTO bot_settings (key, value) VALUES ('last_commentary_msg_id', %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (str(new_msg_id),))
                 conn.commit()
                 break
-            else:
+            else: 
                 time.sleep(2)
-        except:
+        except: 
             time.sleep(3)
 
-    try:
-        c.close()
-        release_db(conn)
-    except:
-        pass
+    try: c.close(); release_db(conn)
+    except: pass
 
 def sync_message_edit(msg, target_msg_id):
     try:
