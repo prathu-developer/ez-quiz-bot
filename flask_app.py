@@ -1793,7 +1793,7 @@ def generate_and_send_commentary():
         c.execute("SELECT name, exam_date, is_exact_date, display_date FROM upcoming_exams ORDER BY exam_date ASC")
         rows = c.fetchall()
 
-        # STEP 1: Collect ALL exams that hit a milestone today
+        # STEP 1: Collect ALL exams that hit a milestone today (both exact and tentative)
         for row in rows:
             try:
                 exam_name = row[0]
@@ -1802,12 +1802,22 @@ def generate_and_send_commentary():
                 display_date = row[3]
                 delta = (exam_date - current_ist.date()).days
 
-                # Urgent: Exam is today
-                if delta == 0:
-                    milestones_hit.append({"name": exam_name, "days": 0, "is_today": True})
-                # Milestone: 1, 7, 15, 30, 60, 90 days left (Excluding tentative placeholder dates)
-                elif is_exact_date and display_date.lower().strip() != "to be announced" and delta in [90, 60, 30, 15, 7, 1]:
-                    milestones_hit.append({"name": exam_name, "days": delta, "is_today": False})
+                # Ignore exams with absolutely no timeframe
+                if display_date.lower().strip() == "to be announced":
+                    continue
+
+                # Urgent: Exact Exam is today
+                if delta == 0 and is_exact_date:
+                    milestones_hit.append({
+                        "name": exam_name, "days": 0, "is_today": True, 
+                        "is_exact": True, "display_date": display_date
+                    })
+                # Milestone: 1, 7, 15, 30, 60, 90 days left (Works for placeholder tentative dates too!)
+                elif delta in [90, 60, 30, 15, 7, 1]:
+                    milestones_hit.append({
+                        "name": exam_name, "days": delta, "is_today": False, 
+                        "is_exact": is_exact_date, "display_date": display_date
+                    })
             except ValueError:
                 continue
     except Exception as e:
@@ -1827,16 +1837,23 @@ def generate_and_send_commentary():
     
     # The most urgent exam gets the AI commentary spotlight
     primary_exam = milestones_hit[0]
-    # Any other exams falling on the same day become Quick Insights
     secondary_exams = milestones_hit[1:]
 
-    # STEP 3: Formulate Contextual Prompt
+    # STEP 3: Formulate Contextual Prompt Based on Exact vs Tentative
     if primary_exam["is_today"]:
         prompt = (
             f"Create a short Telegram exam-day wishing message following this EXACT 3-line structure:\n"
             f"Line 1: 🚨 {primary_exam['name']} ➪ TODAY IS THE EXAM!\n"
             f"Line 2: [1 short, encouraging sentence wishing candidates best of luck and advising them to stay calm and confident]\n"
             f"Line 3: Best of luck to all candidates! 🚀🏆\n"
+            f"Rules: STRICTLY follow the 3-line format. No conversational filler. No hashtags. Keep it clean. ALWAYS use British English spelling."
+        )
+    elif not primary_exam["is_exact"]:
+        prompt = (
+            f"Create a short Telegram exam commentary message following this EXACT 3-line structure:\n"
+            f"Line 1: 🚨 {primary_exam['name']} ➪ Expected: {primary_exam['display_date']}!\n"
+            f"Line 2: [1 short, hype, action-oriented sentence reminding students that the exam timeframe is approaching fast]\n"
+            f"Line 3: [1 short motivational sign-off with emojis]\n"
             f"Rules: STRICTLY follow the 3-line format. No conversational filler. No hashtags. Keep it clean. ALWAYS use British English spelling."
         )
     else:
@@ -1869,7 +1886,6 @@ def generate_and_send_commentary():
                 ai_text = response.text.strip()
                 break
         except Exception:
-            # If a key fails (rate limit/quota), rotate to the next key and save it to the DB instantly
             db_key_index = (db_key_index + 1) % len(API_KEYS)
             try:
                 c.execute("INSERT INTO bot_settings (key, value) VALUES ('current_key_index', %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (str(db_key_index),))
@@ -1890,10 +1906,12 @@ def generate_and_send_commentary():
         for sec in secondary_exams:
             if sec["is_today"]:
                 final_message += f"• 🚨 **{sec['name']}** ➪ TODAY IS THE EXAM!\n"
+            elif not sec["is_exact"]:
+                final_message += f"• **{sec['name']}** ➪ Expected: {sec['display_date']}\n"
             else:
                 final_message += f"• **{sec['name']}** ➪ {sec['days']} Days Left\n"
 
-    # STEP 6: Delete the previous day's commentary message to keep the thread clean
+    # STEP 6: Delete the previous day's commentary message
     try:
         c.execute("SELECT value FROM bot_settings WHERE key='last_commentary_msg_id'")
         if last_msg := c.fetchone():
@@ -1905,7 +1923,7 @@ def generate_and_send_commentary():
     except: 
         pass
 
-    # STEP 7: Send the new message and save its ID for tomorrow's deletion
+    # STEP 7: Send the new message and save its ID
     for attempt in range(3):
         try:
             res = requests.post(
