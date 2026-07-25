@@ -2344,7 +2344,7 @@ Output EXACTLY in this format:
 💡 <Short, simple meaning in English>.
 (<Hindi meaning>)
 
-📰 <One natural editorial-style sentence using the expression naturally.>
+📰 <Write one short human scenario or reaction in clear, natural English (approximately CEFR B1–B2). It MUST strictly reflect the specific political, economic, or social theme of the article. Do NOT use generic dictionary examples or unrelated business scenarios, and it should help students naturally remember the word.>
 
 2️⃣ <Expression 2> (<Language of origin>)
 
@@ -2353,7 +2353,7 @@ Output EXACTLY in this format:
 💡 <Short, simple meaning in English>.
 (<Hindi meaning>)
 
-📰 <One natural editorial-style sentence using the expression naturally.>
+📰 <Write one short human scenario or reaction in clear, natural English (approximately CEFR B1–B2). It MUST strictly reflect the specific political, economic, or social theme of the article. Do NOT use generic dictionary examples or unrelated business scenarios, and it should help students naturally remember the word.>
 
 3️⃣ <Expression 3> (<Language of origin>)
 
@@ -2362,7 +2362,7 @@ Output EXACTLY in this format:
 💡 <Short, simple meaning in English>.
 (<Hindi meaning>)
 
-📰 <One natural editorial-style sentence using the expression naturally.>"""
+📰 <Write one short human scenario or reaction in clear, natural English (approximately CEFR B1–B2). It MUST strictly reflect the specific political, economic, or social theme of the article. Do NOT use generic dictionary examples or unrelated business scenarios, and it should help students naturally remember the word.>"""
 
         foreign_text = None
         
