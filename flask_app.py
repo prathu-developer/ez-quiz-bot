@@ -1802,17 +1802,14 @@ def generate_and_send_commentary():
                 display_date = row[3]
                 delta = (exam_date - current_ist.date()).days
 
-                # Ignore exams with absolutely no timeframe
                 if display_date.lower().strip() == "to be announced":
                     continue
 
-                # Urgent: Exact Exam is today
                 if delta == 0 and is_exact_date:
                     milestones_hit.append({
                         "name": exam_name, "days": 0, "is_today": True, 
                         "is_exact": True, "display_date": display_date
                     })
-                # Milestone: 1, 7, 15, 30, 60, 90 days left (Works for placeholder tentative dates too!)
                 elif delta in [90, 60, 30, 15, 7, 1]:
                     milestones_hit.append({
                         "name": exam_name, "days": delta, "is_today": False, 
@@ -1826,20 +1823,18 @@ def generate_and_send_commentary():
         except: pass
         return
 
-    # If no milestones are hit today, silently exit
     if not milestones_hit:
         try: c.close(); release_db(conn)
         except: pass
         return
 
-    # STEP 2: Sort exams by urgency (0 days first, then 1, 7, 15...)
+    # STEP 2: Sort exams by urgency
     milestones_hit.sort(key=lambda x: x["days"])
     
-    # The most urgent exam gets the AI commentary spotlight
     primary_exam = milestones_hit[0]
     secondary_exams = milestones_hit[1:]
 
-    # STEP 3: Formulate Contextual Prompt Based on Exact vs Tentative
+    # STEP 3: Formulate Contextual Prompt
     if primary_exam["is_today"]:
         prompt = (
             f"Create a short Telegram exam-day wishing message following this EXACT 3-line structure:\n"
@@ -1898,46 +1893,33 @@ def generate_and_send_commentary():
         except: pass
         return
 
-    # STEP 5: Construct the final message with Secondary Exams (Quick Insights)
-    final_message = f"🤖 **Daily Exam Insights**\n\n{ai_text}"
-    
-    if secondary_exams:
-        final_message += "\n\n━━━━━━━━━━━━━━━━━━━━\n📌 **Quick Insights:**\n"
-        for sec in secondary_exams:
-            if sec["is_today"]:
-                final_message += f"• 🚨 **{sec['name']}** ➪ TODAY IS THE EXAM!\n"
-            elif not sec["is_exact"]:
-                final_message += f"• **{sec['name']}** ➪ Expected: {sec['display_date']}\n"
-            else:
-                final_message += f"• **{sec['name']}** ➪ {sec['days']} Days Left\n"
-
-    # STEP 6: Delete the previous day's commentary message
+    # STEP 5: Delete YESTERDAY'S messages (Both AI Commentary and Quick Insights)
     try:
         c.execute("SELECT value FROM bot_settings WHERE key='last_commentary_msg_id'")
         if last_msg := c.fetchone():
-            requests.post(
-                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage", 
-                json={"chat_id": CHAT_ID, "message_id": int(last_msg[0])}, 
-                timeout=5
-            )
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage", json={"chat_id": CHAT_ID, "message_id": int(last_msg[0])}, timeout=5)
+            
+        c.execute("SELECT value FROM bot_settings WHERE key='last_quick_insights_msg_id'")
+        if last_insights_msg := c.fetchone():
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage", json={"chat_id": CHAT_ID, "message_id": int(last_insights_msg[0])}, timeout=5)
     except: 
         pass
 
-    # STEP 7: Send the new message and save its ID
+    # STEP 6: Send MESSAGE 1 (AI Commentary)
     for attempt in range(3):
         try:
-            res = requests.post(
+            res_main = requests.post(
                 f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
                 json={
                     "chat_id": CHAT_ID, 
                     "message_thread_id": COUNTDOWN_THREAD_ID, 
-                    "text": final_message, 
+                    "text": f"🤖 **Daily Exam Insights**\n\n{ai_text}", 
                     "parse_mode": "Markdown"
                 }, 
                 timeout=10
             )
-            if res.json().get("ok"):
-                new_msg_id = res.json()["result"]["message_id"]
+            if res_main.json().get("ok"):
+                new_msg_id = res_main.json()["result"]["message_id"]
                 c.execute("INSERT INTO bot_settings (key, value) VALUES ('last_commentary_msg_id', %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (str(new_msg_id),))
                 conn.commit()
                 break
@@ -1946,9 +1928,42 @@ def generate_and_send_commentary():
         except: 
             time.sleep(3)
 
+    # STEP 7: Send MESSAGE 2 (Quick Insights) - ONLY if there are secondary exams
+    if secondary_exams:
+        quick_insights_text = "📌 **Quick Insights:**\n\n"
+        for sec in secondary_exams:
+            if sec["is_today"]:
+                quick_insights_text += f"• 🚨 **{sec['name']}** ➪ TODAY IS THE EXAM!\n"
+            elif not sec["is_exact"]:
+                quick_insights_text += f"• **{sec['name']}** ➪ Expected: {sec['display_date']}\n"
+            else:
+                quick_insights_text += f"• **{sec['name']}** ➪ {sec['days']} Days Left\n"
+
+        for attempt in range(3):
+            try:
+                res_sec = requests.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
+                    json={
+                        "chat_id": CHAT_ID, 
+                        "message_thread_id": COUNTDOWN_THREAD_ID, 
+                        "text": quick_insights_text, 
+                        "parse_mode": "Markdown"
+                    }, 
+                    timeout=10
+                )
+                if res_sec.json().get("ok"):
+                    new_insights_id = res_sec.json()["result"]["message_id"]
+                    c.execute("INSERT INTO bot_settings (key, value) VALUES ('last_quick_insights_msg_id', %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (str(new_insights_id),))
+                    conn.commit()
+                    break
+                else: 
+                    time.sleep(2)
+            except: 
+                time.sleep(3)
+
     try: c.close(); release_db(conn)
     except: pass
-
+        
 def sync_message_edit(msg, target_msg_id):
     try:
         # If it's a standard text message
