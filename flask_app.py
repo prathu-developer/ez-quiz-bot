@@ -113,13 +113,17 @@ def add_poll():
     release_db(conn)
     return "Poll successfully saved to remote DB!", 200
 
-def process_answer(c, user_id, first_name, poll_id, chosen_option):
+# ✨ FIX: Add queue_id as the second parameter
+def process_answer(c, queue_id, user_id, first_name, poll_id, chosen_option): 
     max_retries = 3
     
     for attempt in range(max_retries):
         try:
             c.execute("SELECT 1 FROM user_answers WHERE user_id=%s AND poll_id=%s", (user_id, poll_id))
             if c.fetchone():
+                # If they already answered, delete the duplicate ticket from the queue
+                c.execute("DELETE FROM answer_queue WHERE id = %s", (queue_id,))
+                c.connection.commit()
                 return
 
             c.execute("SELECT correct_index, poll_day FROM polls WHERE poll_id=%s", (poll_id,))
@@ -167,25 +171,25 @@ def process_answer(c, user_id, first_name, poll_id, chosen_option):
                 WHERE user_id = %s
             """, (time.time(), user_id))
 
-            # ✨ FIX 1: Commit this exact user's success instantly
+            # ✨ FIX: Delete this specific answer from the queue ONLY because it succeeded!
+            c.execute("DELETE FROM answer_queue WHERE id = %s", (queue_id,))
+
+            # Commit the success and the deletion simultaneously
             c.connection.commit()
-            
-            # Success! Break out of the retry loop.
             break
 
         except Exception as db_err:
-            # ✨ FIX 2: Rollback instantly to clear the aborted state for the rest of the batch
+            # Rollback instantly to clear the aborted state
             c.connection.rollback()
             
             error_str = str(db_err).lower()
-            # ✨ FIX 3: Auto-retry gracefully if the Math Engine caused a deadlock
             if "deadlock" in error_str or "aborted" in error_str:
                 if attempt < max_retries - 1:
-                    time.sleep(1.5) # Wait for the Math Engine to release the database lock
+                    time.sleep(1.5)
                     continue
             
-            # If it's a real syntax error or we ran out of retries, log it and exit the loop
             print(f"🚨 Memory batch execution error for user {user_id} (Attempt {attempt + 1}): {db_err}")
+            # The loop breaks, but the answer STAYS in the queue for the next minute's cron job!
             break
 
 def update_live_leaderboard():
@@ -1199,7 +1203,7 @@ def run_queue_processor_background():
         conn = get_db()
         c = conn.cursor()
         
-        # ✨ FIX 1: Pick up both 'pending' AND stuck 'processing' answers from previous network drops
+        # Pick up pending and stuck answers
         c.execute("SELECT id, user_id, first_name, poll_id, chosen_option FROM answer_queue WHERE status IN ('pending', 'processing')")
         pending_answers = c.fetchall()
 
@@ -1209,20 +1213,18 @@ def run_queue_processor_background():
             conn.commit()
 
             for row in pending_answers:
-                process_answer(c, user_id=row[1], first_name=row[2], poll_id=row[3], chosen_option=row[4])
+                # ✨ FIX: We now pass the unique queue ID (row[0]) to the processor
+                process_answer(c, queue_id=row[0], user_id=row[1], first_name=row[2], poll_id=row[3], chosen_option=row[4])
 
-            conn.commit()
-            c.execute("DELETE FROM answer_queue WHERE status = 'processing'")
-            conn.commit()
+            # ✨ FIX: Removed the batch DELETE command from here entirely.
+            # If an answer fails, it stays in the queue indefinitely until it succeeds!
             
         c.close()
     except Exception as e:
         error_str = str(e).lower()
-        # ✨ FIX 2: Silently ignore harmless SSL/EOF network drops
         if "ssl" in error_str or "eof" in error_str or "closed" in error_str or "timeout" in error_str:
-            pass # The cron runs every 60 seconds; it will automatically pick up the dropped answers on the next run!
+            pass 
         else:
-            # If it is a real code error, alert the admin
             try:
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
                     "chat_id": "716496729",
