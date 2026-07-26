@@ -1172,7 +1172,8 @@ def run_queue_processor_background():
         conn = get_db()
         c = conn.cursor()
         
-        c.execute("SELECT id, user_id, first_name, poll_id, chosen_option FROM answer_queue WHERE status IN ('pending', 'processing')")
+        # ✨ FIX: Added 'ORDER BY user_id ASC' to guarantee sequential row locking
+        c.execute("SELECT id, user_id, first_name, poll_id, chosen_option FROM answer_queue WHERE status IN ('pending', 'processing') ORDER BY user_id ASC")
         pending_answers = c.fetchall()
 
         if pending_answers:
@@ -1187,7 +1188,6 @@ def run_queue_processor_background():
                     c.execute("DELETE FROM answer_queue WHERE id = %s", (q_id,))
                     conn.commit()
                 except Exception as row_err:
-                    # Clear the aborted transaction so it doesn't break the next user's answer!
                     conn.rollback()
                     c.execute("UPDATE answer_queue SET status = 'failed' WHERE id = %s", (q_id,))
                     conn.commit()
@@ -1488,7 +1488,9 @@ def recalculate_dynamic_scores():
             user_scores[u_id]["expected_wins"] += 1 / (1 + 10 ** ((val["elo"] - u_base) / 400.0))
             user_scores[u_id]["actual_wins"] += int(is_correct)
 
-        for u_id, totals in user_scores.items():
+        # ✨ FIX: Sort the dictionary by user_id so Postgres ALWAYS locks rows in the same order
+        for u_id in sorted(user_scores.keys()):
+            totals = user_scores[u_id]
             u_base = base_elos.get(u_id, 1000)
             new_live_elo = max(500.0, u_base + 0.5 * (totals["actual_wins"] - totals["expected_wins"]))
             
@@ -1498,7 +1500,6 @@ def recalculate_dynamic_scores():
             final_weekly = totals["weekly"] + total_sweetener
             final_daily = totals["daily"] + total_sweetener if totals["played_today"] else 0
 
-            # Execute the update with weekly_attempts tied to the true mathematical count
             c.execute("UPDATE users SET weekly_score=%s, daily_score=%s, weekly_correct=%s, weekly_attempts=%s, live_elo=%s WHERE user_id=%s",
                       (final_weekly, final_daily, totals["weekly_correct"], totals["weekly_attempts"], new_live_elo, u_id))
 
@@ -1509,8 +1510,10 @@ def recalculate_dynamic_scores():
                     ON CONFLICT (user_id, day_label) DO UPDATE SET 
                         score = EXCLUDED.score, attempts = EXCLUDED.attempts, correct_answers = EXCLUDED.correct_answers
                 """, (u_id, day, day_data["score"], day_data["attempts"], day_data["correct"]))
+            
+            # ✨ FIX: Commit inside the loop to release the row lock instantly!
+            conn.commit()
 
-        conn.commit()
         c.close()
         release_db(conn)
     except Exception as e:
