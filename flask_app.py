@@ -1414,7 +1414,7 @@ def recalculate_dynamic_scores():
         
         # Reset attempts along with the scores
         c.execute("UPDATE users SET weekly_score = 0, daily_score = 0, weekly_attempts = 0, weekly_correct = 0")
-        # Removed DELETE FROM precise_scores to prevent race conditions during Mini App fetching
+        c.execute("DELETE FROM precise_scores")
 
         c.execute("SELECT poll_id, poll_day FROM polls")
         active_polls = c.fetchall()
@@ -1428,6 +1428,7 @@ def recalculate_dynamic_scores():
             total_attempts = result[0]
             total_correct = result[1] if result[1] else 0
 
+            # Fix 1: Properly register 0-attempt quizzes so they don't block users
             if total_attempts == 0:
                 pts, pen, q_elo = 3.0, -0.75, 1200
                 poll_values[p_id] = {"pts": pts, "pen": pen, "day": p_day, "elo": q_elo}
@@ -1459,17 +1460,15 @@ def recalculate_dynamic_scores():
         current_day_str = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%a')
         
         user_scores = {}
-        user_seen_polls = {} # Added to deduplicate network retries
+        user_seen_polls = {} # Fix 2: Network deduplication tracker
 
         for ans in all_answers:
             u_id, p_id, is_correct, p_day = ans
             if p_id not in poll_values: continue
 
-            # Initialize tracking for deduplication
+            # Safely skip duplicate network retries without crashing
             if u_id not in user_seen_polls:
                 user_seen_polls[u_id] = set()
-
-            # Skip duplicate answers for the same poll
             if p_id in user_seen_polls[u_id]:
                 continue
             user_seen_polls[u_id].add(p_id)
@@ -1478,7 +1477,6 @@ def recalculate_dynamic_scores():
             points_awarded = val["pts"] if is_correct else val["pen"]
             
             if u_id not in user_scores:
-                # Added weekly_attempts to the tracker here
                 user_scores[u_id] = {"weekly": 0, "daily": 0, "weekly_correct": 0, "weekly_attempts": 0, "expected_wins": 0.0, "actual_wins": 0, "precise": {}, "tier_bonus": 0.0, "played_today": False}
 
             user_scores[u_id]["weekly"] += points_awarded
@@ -1501,7 +1499,6 @@ def recalculate_dynamic_scores():
             user_scores[u_id]["expected_wins"] += 1 / (1 + 10 ** ((val["elo"] - u_base) / 400.0))
             user_scores[u_id]["actual_wins"] += int(is_correct)
 
-        # ✨ FIX: Sort the dictionary by user_id so Postgres ALWAYS locks rows in the same order
         for u_id in sorted(user_scores.keys()):
             totals = user_scores[u_id]
             u_base = base_elos.get(u_id, 1000)
@@ -1524,14 +1521,13 @@ def recalculate_dynamic_scores():
                         score = EXCLUDED.score, attempts = EXCLUDED.attempts, correct_answers = EXCLUDED.correct_answers
                 """, (u_id, day, day_data["score"], day_data["attempts"], day_data["correct"]))
             
-            # ✨ FIX: Commit inside the loop to release the row lock instantly!
             conn.commit()
 
         c.close()
         release_db(conn)
     except Exception as e:
         print(f"🚨 Math Engine Error: {e}")
-
+        
 # ==========================================
 # BACKGROUND WORKER: SUNDAY ANNOUNCEMENT RESTORED
 # ==========================================
