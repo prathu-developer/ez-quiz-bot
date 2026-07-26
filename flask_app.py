@@ -1433,6 +1433,7 @@ def dispatch_practice_sets():
     notify_prathu("✅ **Grammar Practice Sets** generated and dispatched!")
 
 def recalculate_dynamic_scores():
+    conn = None
     try:
         conn = get_db()
         c = conn.cursor()
@@ -1531,10 +1532,17 @@ def recalculate_dynamic_scores():
                 """, (u_id, day, day_data["score"], day_data["attempts"], day_data["correct"]))
 
         conn.commit()
-        c.close()
-        release_db(conn)
     except Exception as e:
         print(f"🚨 Math Engine Error: {e}")
+        if conn:
+            conn.rollback() # ✨ FIX: Clears the aborted state so the connection is safe to reuse
+    finally:
+        if conn:
+            try:
+                c.close()
+            except:
+                pass
+            release_db(conn) # ✨ FIX: Returns the connection to the pool to prevent SIGKILL crashes
 
 # ==========================================
 # BACKGROUND WORKER: SUNDAY ANNOUNCEMENT RESTORED
