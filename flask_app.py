@@ -1121,6 +1121,74 @@ def run_weekly_reset_background():
 
     except Exception as e: notify_prathu(f"🚨 **ERROR (Weekly Debrief):** Failed to compile or send the Admin Debrief!\n`{e}`")
 
+    # ==========================================
+    # 🩸 PRIVATE DM: ELO BLEED LEADERBOARD
+    # ==========================================
+    try:
+        # 1. Fetch the Top 10 users with the most negative Elo Bleed
+        c.execute("""
+            SELECT user_id, first_name, COALESCE(base_elo, 1000), live_elo, weekly_attempts, weekly_correct
+            FROM users 
+            WHERE weekly_attempts > 0 AND live_elo < COALESCE(base_elo, 1000)
+            ORDER BY (live_elo - COALESCE(base_elo, 1000)) ASC
+            LIMIT 10
+        """)
+        bleeders = c.fetchall()
+
+        if bleeders:
+            bleed_text = "🩸 **ELO BLEED LEADERBOARD**\n\n"
+            
+            for idx, w in enumerate(bleeders):
+                w_id, w_name, w_base, w_live, w_att, w_cor = w
+                
+                # Calculate True Elo Bleed
+                bleed_amount = round(w_live - w_base, 1)
+                
+                # 2. Replicate the Mini App 'Lifetime Growth' Formula
+                curr_acc = (w_cor / w_att) * 100 if w_att > 0 else 0
+                c.execute("SELECT attempts, correct FROM weekly_rank_history WHERE user_id = %s ORDER BY week_num ASC", (w_id,))
+                hist = c.fetchall()
+                
+                raw_growth = 0.0
+                if len(hist) > 0:
+                    if len(hist) == 1:
+                        base_att = hist[0][0]
+                        base_corr = hist[0][1] if hist[0][1] is not None else 0
+                    else:
+                        base_att = hist[0][0] + hist[1][0]
+                        base_corr = (hist[0][1] if hist[0][1] is not None else 0) + (hist[1][1] if hist[1][1] is not None else 0)
+                    
+                    base_acc = (base_corr / base_att) * 100 if base_att > 0 else 0
+                    accuracy_shift = curr_acc - base_acc
+                    elo_factor = (w_live - 1000) / 10.0
+                    consistency_multiplier = 1.0 + (len(hist) * 0.05)
+                    raw_growth = (accuracy_shift + elo_factor) * consistency_multiplier
+
+                clean_growth = round(raw_growth, 1)
+
+                # 3. Apply Design Emojis & Formatting
+                if clean_growth > 2.0:
+                    growth_icon = f"🟢 +{clean_growth}%"
+                elif clean_growth < -2.0:
+                    growth_icon = f"🔴 {clean_growth}%"
+                else:
+                    growth_icon = f"🟡 {'+' if clean_growth > 0 else ''}{clean_growth}%"
+
+                # 4. Construct Mention Feature Line
+                bleed_text += f"{idx + 1}. [{w_name}](tg://user?id={w_id}) ➪ {bleed_amount} Elo    {growth_icon}\n"
+
+            # 5. Append Legend
+            bleed_text += "\n🟢 Positive growth\n🟡 Almost unchanged\n🔴 Negative growth"
+
+            # 6. Dispatch directly to Admin Prathu
+            requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
+                json={"chat_id": "716496729", "text": bleed_text, "parse_mode": "Markdown"}, 
+                timeout=5
+            )
+    except Exception as e:
+        print(f"🚨 Error generating Elo Bleed DM: {e}")
+
     # --- THE GREAT WIPE ---
     c.execute("UPDATE users SET faction = NULL WHERE weekly_score < %s", (target_average,))
     c.execute("UPDATE users SET base_elo = live_elo, weekly_score = 0, weekly_attempts = 0, is_captain = 0")
