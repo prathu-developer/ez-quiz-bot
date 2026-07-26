@@ -114,52 +114,58 @@ def add_poll():
     return "Poll successfully saved to remote DB!", 200
 
 def process_answer(c, user_id, first_name, poll_id, chosen_option):
-    c.execute("SELECT 1 FROM user_answers WHERE user_id=%s AND poll_id=%s", (user_id, poll_id))
-    if c.fetchone():
-        return
+    try:
+        c.execute("SELECT 1 FROM user_answers WHERE user_id=%s AND poll_id=%s", (user_id, poll_id))
+        if c.fetchone():
+            return
 
-    c.execute("SELECT correct_index, poll_day FROM polls WHERE poll_id=%s", (poll_id,))
-    poll_data = c.fetchone()
-    if not poll_data:
-        return
+        c.execute("SELECT correct_index, poll_day FROM polls WHERE poll_id=%s", (poll_id,))
+        poll_data = c.fetchone()
+        if not poll_data:
+            return
 
-    correct_index = poll_data[0]
-    current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
-    poll_day = poll_data[1] if poll_data[1] else current_ist.strftime('%a')
-    is_correct = (chosen_option == correct_index)
+        correct_index = poll_data[0]
+        current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+        poll_day = poll_data[1] if poll_data[1] else current_ist.strftime('%a')
+        is_correct = (chosen_option == correct_index)
 
-    c.execute("""
-        INSERT INTO users (user_id, first_name) VALUES (%s, %s)
-        ON CONFLICT (user_id) DO UPDATE SET first_name = EXCLUDED.first_name
-    """, (user_id, first_name))
+        c.execute("""
+            INSERT INTO users (user_id, first_name) VALUES (%s, %s)
+            ON CONFLICT (user_id) DO UPDATE SET first_name = EXCLUDED.first_name
+        """, (user_id, first_name))
 
-    c.execute("SELECT faction FROM users WHERE user_id=%s", (user_id,))
-    current_faction_row = c.fetchone()
-    current_faction = current_faction_row[0] if current_faction_row else None
+        c.execute("SELECT faction FROM users WHERE user_id=%s", (user_id,))
+        current_faction_row = c.fetchone()
+        current_faction = current_faction_row[0] if current_faction_row else None
 
-    if current_faction is None:
-        houses = ['Gryffindor 🦁🔥', 'Slytherin 🐍💧', 'Ravenclaw 🦅💨', 'Hufflepuff 🦡🌍']
-        counts = {}
-        for h in houses:
-            c.execute("SELECT COUNT(*) FROM users WHERE faction=%s", (h,))
-            counts[h] = c.fetchone()[0]
-        assigned_faction = min(counts, key=counts.get)
-        c.execute("UPDATE users SET faction=%s WHERE user_id=%s", (assigned_faction, user_id))
+        if current_faction is None:
+            houses = ['Gryffindor 🦁🔥', 'Slytherin 🐍💧', 'Ravenclaw 🦅💨', 'Hufflepuff 🦡🌍']
+            counts = {}
+            for h in houses:
+                c.execute("SELECT COUNT(*) FROM users WHERE faction=%s", (h,))
+                counts[h] = c.fetchone()[0]
+            assigned_faction = min(counts, key=counts.get)
+            c.execute("UPDATE users SET faction=%s WHERE user_id=%s", (assigned_faction, user_id))
 
-    c.execute("""
-        INSERT INTO user_answers (user_id, poll_id, is_correct, poll_day, chosen_option)
-        VALUES (%s, %s, %s, %s, %s)
-        ON CONFLICT (user_id, poll_id) DO UPDATE SET 
-            is_correct = EXCLUDED.is_correct, 
-            poll_day = EXCLUDED.poll_day, 
-            chosen_option = EXCLUDED.chosen_option
-    """, (user_id, poll_id, int(is_correct), poll_day, chosen_option))
+        c.execute("""
+            INSERT INTO user_answers (user_id, poll_id, is_correct, poll_day, chosen_option)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (user_id, poll_id) DO UPDATE SET 
+                is_correct = EXCLUDED.is_correct, 
+                poll_day = EXCLUDED.poll_day, 
+                chosen_option = EXCLUDED.chosen_option
+        """, (user_id, poll_id, int(is_correct), poll_day, chosen_option))
 
-    c.execute("""
-        UPDATE users
-        SET last_updated = %s
-        WHERE user_id = %s
-    """, (time.time(), user_id))
+        c.execute("""
+            UPDATE users
+            SET weekly_attempts = weekly_attempts + 1,
+                daily_attempts = daily_attempts + 1,
+                last_updated = %s
+            WHERE user_id = %s
+        """, (time.time(), user_id))
+
+    except Exception as db_err:
+        print(f"🚨 Memory batch execution error for user {user_id}: {db_err}")
 
 def update_live_leaderboard():
     conn = get_db()
@@ -1172,32 +1178,30 @@ def run_queue_processor_background():
         conn = get_db()
         c = conn.cursor()
         
-        # ✨ FIX: Added 'ORDER BY user_id ASC' to guarantee sequential row locking
-        c.execute("SELECT id, user_id, first_name, poll_id, chosen_option FROM answer_queue WHERE status IN ('pending', 'processing') ORDER BY user_id ASC")
+        # ✨ FIX 1: Pick up both 'pending' AND stuck 'processing' answers from previous network drops
+        c.execute("SELECT id, user_id, first_name, poll_id, chosen_option FROM answer_queue WHERE status IN ('pending', 'processing')")
         pending_answers = c.fetchall()
 
         if pending_answers:
             for row in pending_answers:
-                q_id, u_id, f_name, p_id, c_opt = row
-                try:
-                    c.execute("UPDATE answer_queue SET status = 'processing' WHERE id = %s", (q_id,))
-                    conn.commit()
-                    
-                    process_answer(c, user_id=u_id, first_name=f_name, poll_id=p_id, chosen_option=c_opt)
-                    
-                    c.execute("DELETE FROM answer_queue WHERE id = %s", (q_id,))
-                    conn.commit()
-                except Exception as row_err:
-                    conn.rollback()
-                    c.execute("UPDATE answer_queue SET status = 'failed' WHERE id = %s", (q_id,))
-                    conn.commit()
-                    
+                c.execute("UPDATE answer_queue SET status = 'processing' WHERE id = %s", (row[0],))
+            conn.commit()
+
+            for row in pending_answers:
+                process_answer(c, user_id=row[1], first_name=row[2], poll_id=row[3], chosen_option=row[4])
+
+            conn.commit()
+            c.execute("DELETE FROM answer_queue WHERE status = 'processing'")
+            conn.commit()
+            
         c.close()
     except Exception as e:
         error_str = str(e).lower()
+        # ✨ FIX 2: Silently ignore harmless SSL/EOF network drops
         if "ssl" in error_str or "eof" in error_str or "closed" in error_str or "timeout" in error_str:
-            pass 
+            pass # The cron runs every 60 seconds; it will automatically pick up the dropped answers on the next run!
         else:
+            # If it is a real code error, alert the admin
             try:
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
                     "chat_id": "716496729",
@@ -1208,7 +1212,7 @@ def run_queue_processor_background():
     finally:
         if conn:
             release_db(conn)
-            
+
 @app.route('/cron/process_leaderboard_0508', methods=['GET', 'POST'])
 def cron_process_leaderboard():
     # 🔒 SECURITY GATE
@@ -1411,9 +1415,7 @@ def recalculate_dynamic_scores():
     try:
         conn = get_db()
         c = conn.cursor()
-        
-        # Reset attempts along with the scores
-        c.execute("UPDATE users SET weekly_score = 0, daily_score = 0, weekly_attempts = 0, weekly_correct = 0")
+        c.execute("UPDATE users SET weekly_score = 0, daily_score = 0")
         c.execute("DELETE FROM precise_scores")
 
         c.execute("SELECT poll_id, poll_day FROM polls")
@@ -1465,12 +1467,10 @@ def recalculate_dynamic_scores():
             points_awarded = val["pts"] if is_correct else val["pen"]
             
             if u_id not in user_scores:
-                # Added weekly_attempts to the tracker here
-                user_scores[u_id] = {"weekly": 0, "daily": 0, "weekly_correct": 0, "weekly_attempts": 0, "expected_wins": 0.0, "actual_wins": 0, "precise": {}, "tier_bonus": 0.0, "played_today": False}
+                user_scores[u_id] = {"weekly": 0, "daily": 0, "weekly_correct": 0, "expected_wins": 0.0, "actual_wins": 0, "precise": {}, "tier_bonus": 0.0, "played_today": False}
 
             user_scores[u_id]["weekly"] += points_awarded
             user_scores[u_id]["weekly_correct"] += int(is_correct)
-            user_scores[u_id]["weekly_attempts"] += 1
 
             if p_day == current_day_str:
                 user_scores[u_id]["daily"] += points_awarded
@@ -1488,9 +1488,7 @@ def recalculate_dynamic_scores():
             user_scores[u_id]["expected_wins"] += 1 / (1 + 10 ** ((val["elo"] - u_base) / 400.0))
             user_scores[u_id]["actual_wins"] += int(is_correct)
 
-        # ✨ FIX: Sort the dictionary by user_id so Postgres ALWAYS locks rows in the same order
-        for u_id in sorted(user_scores.keys()):
-            totals = user_scores[u_id]
+        for u_id, totals in user_scores.items():
             u_base = base_elos.get(u_id, 1000)
             new_live_elo = max(500.0, u_base + 0.5 * (totals["actual_wins"] - totals["expected_wins"]))
             
@@ -1500,8 +1498,8 @@ def recalculate_dynamic_scores():
             final_weekly = totals["weekly"] + total_sweetener
             final_daily = totals["daily"] + total_sweetener if totals["played_today"] else 0
 
-            c.execute("UPDATE users SET weekly_score=%s, daily_score=%s, weekly_correct=%s, weekly_attempts=%s, live_elo=%s WHERE user_id=%s",
-                      (final_weekly, final_daily, totals["weekly_correct"], totals["weekly_attempts"], new_live_elo, u_id))
+            c.execute("UPDATE users SET weekly_score=%s, daily_score=%s, weekly_correct=%s, live_elo=%s WHERE user_id=%s",
+                      (final_weekly, final_daily, totals["weekly_correct"], new_live_elo, u_id))
 
             for day, day_data in totals["precise"].items():
                 c.execute("""
@@ -1510,10 +1508,8 @@ def recalculate_dynamic_scores():
                     ON CONFLICT (user_id, day_label) DO UPDATE SET 
                         score = EXCLUDED.score, attempts = EXCLUDED.attempts, correct_answers = EXCLUDED.correct_answers
                 """, (u_id, day, day_data["score"], day_data["attempts"], day_data["correct"]))
-            
-            # ✨ FIX: Commit inside the loop to release the row lock instantly!
-            conn.commit()
 
+        conn.commit()
         c.close()
         release_db(conn)
     except Exception as e:
@@ -1789,94 +1785,35 @@ def update_exam_countdown():
 
 def generate_and_send_commentary():
     current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
-    milestones_hit = []
-    
+    target_exam, days_left = None, 0
     try:
         conn = get_db()
         c = conn.cursor()
-        c.execute("SELECT name, exam_date, is_exact_date, display_date FROM upcoming_exams ORDER BY exam_date ASC")
-        rows = c.fetchall()
-
-        # STEP 1: Collect ALL exams that hit a milestone today (both exact and tentative)
-        for row in rows:
+        # ✨ Added ORDER BY so the most urgent/closest exams are always evaluated first
+        c.execute("SELECT name, exam_date FROM upcoming_exams ORDER BY exam_date ASC")
+        for row in c.fetchall():
             try:
-                exam_name = row[0]
-                exam_date = datetime.strptime(row[1], "%Y-%m-%d").date()
-                is_exact_date = bool(row[2])
-                display_date = row[3]
-                delta = (exam_date - current_ist.date()).days
-
-                if display_date.lower().strip() == "to be announced":
-                    continue
-
-                if delta == 0 and is_exact_date:
-                    milestones_hit.append({
-                        "name": exam_name, "days": 0, "is_today": True, 
-                        "is_exact": True, "display_date": display_date
-                    })
-                elif delta in [90, 60, 30, 15, 7, 1]:
-                    milestones_hit.append({
-                        "name": exam_name, "days": delta, "is_today": False, 
-                        "is_exact": is_exact_date, "display_date": display_date
-                    })
-            except ValueError:
-                continue
-    except Exception as e:
-        print(f"⚠️ Error fetching exam commentary target: {e}")
-        try: c.close(); release_db(conn)
-        except: pass
-        return
-
-    if not milestones_hit:
-        try: c.close(); release_db(conn)
-        except: pass
-        return
-
-    # STEP 2: Sort exams by urgency
-    milestones_hit.sort(key=lambda x: x["days"])
+                delta = (datetime.strptime(row[1], "%Y-%m-%d").date() - current_ist.date()).days
+                # The bot only speaks on these exact milestone days
+                if delta in [90, 60, 30, 15, 7, 1]: target_exam, days_left = row[0], delta; break
+            except ValueError: continue
+    except: pass
     
-    primary_exam = milestones_hit[0]
-    secondary_exams = milestones_hit[1:]
-
-    # STEP 3: Formulate Contextual Prompt
-    if primary_exam["is_today"]:
-        prompt = (
-            f"Create a short Telegram exam-day wishing message following this EXACT 3-line structure:\n"
-            f"Line 1: 🚨 {primary_exam['name']} ➪ TODAY IS THE EXAM!\n"
-            f"Line 2: [1 short, encouraging sentence wishing candidates best of luck and advising them to stay calm and confident]\n"
-            f"Line 3: Best of luck to all candidates! 🚀🏆\n"
-            f"Rules: STRICTLY follow the 3-line format. No conversational filler. No hashtags. Keep it clean. ALWAYS use British English spelling."
-        )
-    elif not primary_exam["is_exact"]:
-        prompt = (
-            f"Create a short Telegram exam commentary message following this EXACT 3-line structure:\n"
-            f"Line 1: 🚨 {primary_exam['name']} ➪ Expected: {primary_exam['display_date']}!\n"
-            f"Line 2: [1 short, hype, action-oriented sentence reminding students that the exam timeframe is approaching fast]\n"
-            f"Line 3: [1 short motivational sign-off with emojis]\n"
-            f"Rules: STRICTLY follow the 3-line format. No conversational filler. No hashtags. Keep it clean. ALWAYS use British English spelling."
-        )
-    else:
-        prompt = (
-            f"Create a short Telegram exam commentary message following this EXACT 3-line structure:\n"
-            f"Line 1: 🚨 {primary_exam['name']} ➪ {primary_exam['days']} Days Left!\n"
-            f"Line 2: [1 short, hype, action-oriented sentence about studying/preparing]\n"
-            f"Line 3: [1 short motivational sign-off with emojis]\n"
-            f"Rules: STRICTLY follow the 3-line format. No conversational filler. No hashtags. Keep it clean. ALWAYS use British English spelling."
-        )
-
-    # STEP 4: Database-Backed Key Rotation
-    ai_text = None
-    try:
-        c.execute("SELECT value FROM bot_settings WHERE key='current_key_index'")
-        key_row = c.fetchone()
-        db_key_index = int(key_row[0]) if key_row else 0
-    except:
-        db_key_index = 0
-
-    for attempt in range(len(API_KEYS)):
+    if not target_exam: 
         try:
-            active_key = API_KEYS[db_key_index]
-            temp_client = genai.Client(api_key=active_key)
+            c.close()
+            release_db(conn)
+        except: pass
+        return
+
+    prompt = f"Create a short Telegram exam commentary message following this EXACT 3-line structure:\nLine 1: [Urgency Emoji] {target_exam} ➪ {days_left} Days Left!\nLine 2: [1 short, hype, action-oriented sentence about studying/preparing]\nLine 3: [1 short motivational sign-off with emojis]\nRules: STRICTLY follow the 3-line format. No conversational filler. No hashtags. Keep it clean. ALWAYS use British English spelling."
+
+    ai_text = None
+    
+    # 🔄 ✨ UPGRADE: Loop through all available API keys to prevent the silent crash!
+    for key in API_KEYS:
+        try:
+            temp_client = genai.Client(api_key=key)
             response = temp_client.models.generate_content(
                 model='gemini-3.6-flash',
                 contents=prompt
@@ -1884,90 +1821,61 @@ def generate_and_send_commentary():
             if response.text:
                 ai_text = response.text.strip()
                 break
-        except Exception:
-            db_key_index = (db_key_index + 1) % len(API_KEYS)
-            try:
-                c.execute("INSERT INTO bot_settings (key, value) VALUES ('current_key_index', %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (str(db_key_index),))
-                conn.commit()
-            except: pass
+        except Exception as e:
             continue
 
-    if not ai_text:
-        try: c.close(); release_db(conn)
+    if not ai_text: 
+        try:
+            c.close()
+            release_db(conn)
         except: pass
         return
 
-    # STEP 5: Delete YESTERDAY'S messages (Both AI Commentary and Quick Insights)
     try:
         c.execute("SELECT value FROM bot_settings WHERE key='last_commentary_msg_id'")
-        if last_msg := c.fetchone():
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage", json={"chat_id": CHAT_ID, "message_id": int(last_msg[0])}, timeout=5)
-            
-        c.execute("SELECT value FROM bot_settings WHERE key='last_quick_insights_msg_id'")
-        if last_insights_msg := c.fetchone():
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage", json={"chat_id": CHAT_ID, "message_id": int(last_insights_msg[0])}, timeout=5)
-    except: 
-        pass
+        if last_msg := c.fetchone(): requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage", json={"chat_id": CHAT_ID, "message_id": int(last_msg[0])}, timeout=5)
+    except: pass
 
-    # STEP 6: Send MESSAGE 1 (AI Commentary)
     for attempt in range(3):
         try:
-            res_main = requests.post(
-                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
-                json={
-                    "chat_id": CHAT_ID, 
-                    "message_thread_id": COUNTDOWN_THREAD_ID, 
-                    "text": f"🤖 **Daily Exam Insights**\n\n{ai_text}", 
-                    "parse_mode": "Markdown"
-                }, 
-                timeout=10
-            )
-            if res_main.json().get("ok"):
-                new_msg_id = res_main.json()["result"]["message_id"]
-                c.execute("INSERT INTO bot_settings (key, value) VALUES ('last_commentary_msg_id', %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (str(new_msg_id),))
+            res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": COUNTDOWN_THREAD_ID, "text": f"🤖 **Daily Exam Insights**\n\n{ai_text}", "parse_mode": "Markdown"}, timeout=10)
+            if res.json().get("ok"):
+                new_msg_id = res.json()["result"]["message_id"]
+                c.execute("""
+                    INSERT INTO bot_settings (key, value) VALUES ('last_commentary_msg_id', %s)
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                """, (str(new_msg_id),))
                 conn.commit()
                 break
-            else: 
-                time.sleep(2)
-        except: 
-            time.sleep(3)
-
-    # STEP 7: Send MESSAGE 2 (Quick Insights) - ONLY if there are secondary exams
-    if secondary_exams:
-        quick_insights_text = "📌 **Quick Insights:**\n\n"
-        for sec in secondary_exams:
-            if sec["is_today"]:
-                quick_insights_text += f"• 🚨 **{sec['name']}** ➪ TODAY IS THE EXAM!\n"
-            elif not sec["is_exact"]:
-                quick_insights_text += f"• **{sec['name']}** ➪ Expected: {sec['display_date']}\n"
-            else:
-                quick_insights_text += f"• **{sec['name']}** ➪ {sec['days']} Days Left\n"
-
-        for attempt in range(3):
-            try:
-                res_sec = requests.post(
-                    f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
-                    json={
-                        "chat_id": CHAT_ID, 
-                        "message_thread_id": COUNTDOWN_THREAD_ID, 
-                        "text": quick_insights_text, 
-                        "parse_mode": "Markdown"
-                    }, 
-                    timeout=10
-                )
-                if res_sec.json().get("ok"):
-                    new_insights_id = res_sec.json()["result"]["message_id"]
-                    c.execute("INSERT INTO bot_settings (key, value) VALUES ('last_quick_insights_msg_id', %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (str(new_insights_id),))
-                    conn.commit()
-                    break
-                else: 
-                    time.sleep(2)
-            except: 
-                time.sleep(3)
-
-    try: c.close(); release_db(conn)
+            else: time.sleep(2)
+        except: time.sleep(3)
+        
+    try:
+        c.close()
+        release_db(conn)
     except: pass
         
+def relay_message(message_id, target_thread_id):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/copyMessage"
+    payload = {"chat_id": CHAT_ID, "from_chat_id": SOURCE_CHAT_ID, "message_id": message_id, "message_thread_id": target_thread_id}
+    for attempt in range(5):
+        try:
+            res = requests.post(url, json=payload, timeout=10)
+            if res.status_code == 200:
+                try:
+                    conn = get_db()
+                    c = conn.cursor()
+                    c.execute("""
+                        INSERT INTO message_links (source_msg_id, target_msg_id) VALUES (%s, %s)
+                        ON CONFLICT (source_msg_id) DO UPDATE SET target_msg_id = EXCLUDED.target_msg_id
+                    """, (message_id, res.json()["result"]["message_id"]))
+                    conn.commit()
+                    c.close()
+                    release_db(conn)
+                except: pass
+                return
+        except: time.sleep(3)
+
 def sync_message_edit(msg, target_msg_id):
     try:
         # If it's a standard text message
