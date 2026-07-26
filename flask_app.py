@@ -1489,10 +1489,14 @@ def recalculate_dynamic_scores():
             points_awarded = val["pts"] if is_correct else val["pen"]
             
             if u_id not in user_scores:
-                user_scores[u_id] = {"weekly": 0, "daily": 0, "weekly_correct": 0, "expected_wins": 0.0, "actual_wins": 0, "precise": {}, "tier_bonus": 0.0, "played_today": False}
+                # ✨ FIX 1: Added 'weekly_attempts' to the tracker
+                user_scores[u_id] = {"weekly": 0, "daily": 0, "weekly_correct": 0, "weekly_attempts": 0, "expected_wins": 0.0, "actual_wins": 0, "precise": {}, "tier_bonus": 0.0, "played_today": False}
 
             user_scores[u_id]["weekly"] += points_awarded
             user_scores[u_id]["weekly_correct"] += int(is_correct)
+            
+            # ✨ FIX 2: Manually count the attempts based on the true user_answers table!
+            user_scores[u_id]["weekly_attempts"] += 1 
 
             if p_day == current_day_str:
                 user_scores[u_id]["daily"] += points_awarded
@@ -1520,8 +1524,9 @@ def recalculate_dynamic_scores():
             final_weekly = totals["weekly"] + total_sweetener
             final_daily = totals["daily"] + total_sweetener if totals["played_today"] else 0
 
-            c.execute("UPDATE users SET weekly_score=%s, daily_score=%s, weekly_correct=%s, live_elo=%s WHERE user_id=%s",
-                      (final_weekly, final_daily, totals["weekly_correct"], new_live_elo, u_id))
+            # ✨ FIX 3: Force the database to update the broken weekly_attempts counter
+            c.execute("UPDATE users SET weekly_score=%s, daily_score=%s, weekly_correct=%s, weekly_attempts=%s, live_elo=%s WHERE user_id=%s",
+                      (final_weekly, final_daily, totals["weekly_correct"], totals["weekly_attempts"], new_live_elo, u_id))
 
             for day, day_data in totals["precise"].items():
                 c.execute("""
@@ -1535,14 +1540,14 @@ def recalculate_dynamic_scores():
     except Exception as e:
         print(f"🚨 Math Engine Error: {e}")
         if conn:
-            conn.rollback() # ✨ FIX: Clears the aborted state so the connection is safe to reuse
+            conn.rollback() # ✨ FIX 4: Clear the deadlocks so the server doesn't crash
     finally:
         if conn:
             try:
                 c.close()
             except:
                 pass
-            release_db(conn) # ✨ FIX: Returns the connection to the pool to prevent SIGKILL crashes
+            release_db(conn)
 
 # ==========================================
 # BACKGROUND WORKER: SUNDAY ANNOUNCEMENT RESTORED
