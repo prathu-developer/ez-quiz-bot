@@ -1412,8 +1412,8 @@ def recalculate_dynamic_scores():
         conn = get_db()
         c = conn.cursor()
         
-        # Reset attempts along with the scores
-        c.execute("UPDATE users SET weekly_score = 0, daily_score = 0, weekly_attempts = 0, weekly_correct = 0")
+        # ✨ FIX 1: Removed the destructive global UPDATE wipe that caused the disappearing members!
+        # We also safely wipe precise_scores because only this specific cron job ever reads or writes to it.
         c.execute("DELETE FROM precise_scores")
 
         c.execute("SELECT poll_id, poll_day FROM polls")
@@ -1465,7 +1465,6 @@ def recalculate_dynamic_scores():
             points_awarded = val["pts"] if is_correct else val["pen"]
             
             if u_id not in user_scores:
-                # Added weekly_attempts to the tracker here
                 user_scores[u_id] = {"weekly": 0, "daily": 0, "weekly_correct": 0, "weekly_attempts": 0, "expected_wins": 0.0, "actual_wins": 0, "precise": {}, "tier_bonus": 0.0, "played_today": False}
 
             user_scores[u_id]["weekly"] += points_awarded
@@ -1488,35 +1487,47 @@ def recalculate_dynamic_scores():
             user_scores[u_id]["expected_wins"] += 1 / (1 + 10 ** ((val["elo"] - u_base) / 400.0))
             user_scores[u_id]["actual_wins"] += int(is_correct)
 
-        # ✨ FIX: Sort the dictionary by user_id so Postgres ALWAYS locks rows in the same order
-        for u_id in sorted(user_scores.keys()):
-            totals = user_scores[u_id]
-            u_base = base_elos.get(u_id, 1000)
-            new_live_elo = max(500.0, u_base + 0.5 * (totals["actual_wins"] - totals["expected_wins"]))
-            
-            elo_fraction = max(0.0, min(1.0, (new_live_elo - 500) / 2000.0))
-            total_sweetener = round(min(0.24, (elo_fraction * 0.12) + totals["tier_bonus"]), 2)
+        # ✨ FIX 2: Identify any students who had points but should now be 0
+        c.execute("SELECT user_id FROM users WHERE weekly_attempts > 0")
+        active_users = set(row[0] for row in c.fetchall())
+        all_uids_to_update = set(user_scores.keys()).union(active_users)
 
-            final_weekly = totals["weekly"] + total_sweetener
-            final_daily = totals["daily"] + total_sweetener if totals["played_today"] else 0
+        # ✨ FIX 3: Update sequentially without blocking the whole table
+        for u_id in sorted(all_uids_to_update):
+            if u_id in user_scores:
+                totals = user_scores[u_id]
+                u_base = base_elos.get(u_id, 1000)
+                new_live_elo = max(500.0, u_base + 0.5 * (totals["actual_wins"] - totals["expected_wins"]))
+                
+                elo_fraction = max(0.0, min(1.0, (new_live_elo - 500) / 2000.0))
+                total_sweetener = round(min(0.24, (elo_fraction * 0.12) + totals["tier_bonus"]), 2)
 
-            c.execute("UPDATE users SET weekly_score=%s, daily_score=%s, weekly_correct=%s, weekly_attempts=%s, live_elo=%s WHERE user_id=%s",
-                      (final_weekly, final_daily, totals["weekly_correct"], totals["weekly_attempts"], new_live_elo, u_id))
+                final_weekly = totals["weekly"] + total_sweetener
+                final_daily = totals["daily"] + total_sweetener if totals["played_today"] else 0
 
-            for day, day_data in totals["precise"].items():
-                c.execute("""
-                    INSERT INTO precise_scores (user_id, day_label, score, attempts, correct_answers) 
-                    VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT (user_id, day_label) DO UPDATE SET 
-                        score = EXCLUDED.score, attempts = EXCLUDED.attempts, correct_answers = EXCLUDED.correct_answers
-                """, (u_id, day, day_data["score"], day_data["attempts"], day_data["correct"]))
-            
-            # ✨ FIX: Commit inside the loop to release the row lock instantly!
-            conn.commit()
+                c.execute("UPDATE users SET weekly_score=%s, daily_score=%s, weekly_correct=%s, weekly_attempts=%s, live_elo=%s WHERE user_id=%s",
+                          (final_weekly, final_daily, totals["weekly_correct"], totals["weekly_attempts"], new_live_elo, u_id))
+
+                for day, day_data in totals["precise"].items():
+                    c.execute("""
+                        INSERT INTO precise_scores (user_id, day_label, score, attempts, correct_answers) 
+                        VALUES (%s, %s, %s, %s, %s)
+                        ON CONFLICT (user_id, day_label) DO UPDATE SET 
+                            score = EXCLUDED.score, attempts = EXCLUDED.attempts, correct_answers = EXCLUDED.correct_answers
+                    """, (u_id, day, day_data["score"], day_data["attempts"], day_data["correct"]))
+            else:
+                # The user is no longer active in the calculation, wipe them to 0 safely individually
+                c.execute("UPDATE users SET weekly_score=0, daily_score=0, weekly_correct=0, weekly_attempts=0 WHERE user_id=%s", (u_id,))
+
+        # ✨ FIX 4: Commit ONCE at the absolute end. If it crashes, NO ONE gets wiped!
+        conn.commit()
 
         c.close()
         release_db(conn)
     except Exception as e:
+        # If a crash happens, safely throw away the aborted transaction
+        if conn:
+            conn.rollback()
         print(f"🚨 Math Engine Error: {e}")
 
 # ==========================================
