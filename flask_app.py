@@ -114,58 +114,79 @@ def add_poll():
     return "Poll successfully saved to remote DB!", 200
 
 def process_answer(c, user_id, first_name, poll_id, chosen_option):
-    try:
-        c.execute("SELECT 1 FROM user_answers WHERE user_id=%s AND poll_id=%s", (user_id, poll_id))
-        if c.fetchone():
-            return
+    max_retries = 3
+    
+    for attempt in range(max_retries):
+        try:
+            c.execute("SELECT 1 FROM user_answers WHERE user_id=%s AND poll_id=%s", (user_id, poll_id))
+            if c.fetchone():
+                return
 
-        c.execute("SELECT correct_index, poll_day FROM polls WHERE poll_id=%s", (poll_id,))
-        poll_data = c.fetchone()
-        if not poll_data:
-            return
+            c.execute("SELECT correct_index, poll_day FROM polls WHERE poll_id=%s", (poll_id,))
+            poll_data = c.fetchone()
+            if not poll_data:
+                return
 
-        correct_index = poll_data[0]
-        current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
-        poll_day = poll_data[1] if poll_data[1] else current_ist.strftime('%a')
-        is_correct = (chosen_option == correct_index)
+            correct_index = poll_data[0]
+            current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+            poll_day = poll_data[1] if poll_data[1] else current_ist.strftime('%a')
+            is_correct = (chosen_option == correct_index)
 
-        c.execute("""
-            INSERT INTO users (user_id, first_name) VALUES (%s, %s)
-            ON CONFLICT (user_id) DO UPDATE SET first_name = EXCLUDED.first_name
-        """, (user_id, first_name))
+            c.execute("""
+                INSERT INTO users (user_id, first_name) VALUES (%s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET first_name = EXCLUDED.first_name
+            """, (user_id, first_name))
 
-        c.execute("SELECT faction FROM users WHERE user_id=%s", (user_id,))
-        current_faction_row = c.fetchone()
-        current_faction = current_faction_row[0] if current_faction_row else None
+            c.execute("SELECT faction FROM users WHERE user_id=%s", (user_id,))
+            current_faction_row = c.fetchone()
+            current_faction = current_faction_row[0] if current_faction_row else None
 
-        if current_faction is None:
-            houses = ['Gryffindor 🦁🔥', 'Slytherin 🐍💧', 'Ravenclaw 🦅💨', 'Hufflepuff 🦡🌍']
-            counts = {}
-            for h in houses:
-                c.execute("SELECT COUNT(*) FROM users WHERE faction=%s", (h,))
-                counts[h] = c.fetchone()[0]
-            assigned_faction = min(counts, key=counts.get)
-            c.execute("UPDATE users SET faction=%s WHERE user_id=%s", (assigned_faction, user_id))
+            if current_faction is None:
+                houses = ['Gryffindor 🦁🔥', 'Slytherin 🐍💧', 'Ravenclaw 🦅💨', 'Hufflepuff 🦡🌍']
+                counts = {}
+                for h in houses:
+                    c.execute("SELECT COUNT(*) FROM users WHERE faction=%s", (h,))
+                    counts[h] = c.fetchone()[0]
+                assigned_faction = min(counts, key=counts.get)
+                c.execute("UPDATE users SET faction=%s WHERE user_id=%s", (assigned_faction, user_id))
 
-        c.execute("""
-            INSERT INTO user_answers (user_id, poll_id, is_correct, poll_day, chosen_option)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (user_id, poll_id) DO UPDATE SET 
-                is_correct = EXCLUDED.is_correct, 
-                poll_day = EXCLUDED.poll_day, 
-                chosen_option = EXCLUDED.chosen_option
-        """, (user_id, poll_id, int(is_correct), poll_day, chosen_option))
+            c.execute("""
+                INSERT INTO user_answers (user_id, poll_id, is_correct, poll_day, chosen_option)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (user_id, poll_id) DO UPDATE SET 
+                    is_correct = EXCLUDED.is_correct, 
+                    poll_day = EXCLUDED.poll_day, 
+                    chosen_option = EXCLUDED.chosen_option
+            """, (user_id, poll_id, int(is_correct), poll_day, chosen_option))
 
-        c.execute("""
-            UPDATE users
-            SET weekly_attempts = weekly_attempts + 1,
-                daily_attempts = daily_attempts + 1,
-                last_updated = %s
-            WHERE user_id = %s
-        """, (time.time(), user_id))
+            c.execute("""
+                UPDATE users
+                SET weekly_attempts = weekly_attempts + 1,
+                    daily_attempts = daily_attempts + 1,
+                    last_updated = %s
+                WHERE user_id = %s
+            """, (time.time(), user_id))
 
-    except Exception as db_err:
-        print(f"🚨 Memory batch execution error for user {user_id}: {db_err}")
+            # ✨ FIX 1: Commit this exact user's success instantly
+            c.connection.commit()
+            
+            # Success! Break out of the retry loop.
+            break
+
+        except Exception as db_err:
+            # ✨ FIX 2: Rollback instantly to clear the aborted state for the rest of the batch
+            c.connection.rollback()
+            
+            error_str = str(db_err).lower()
+            # ✨ FIX 3: Auto-retry gracefully if the Math Engine caused a deadlock
+            if "deadlock" in error_str or "aborted" in error_str:
+                if attempt < max_retries - 1:
+                    time.sleep(1.5) # Wait for the Math Engine to release the database lock
+                    continue
+            
+            # If it's a real syntax error or we ran out of retries, log it and exit the loop
+            print(f"🚨 Memory batch execution error for user {user_id} (Attempt {attempt + 1}): {db_err}")
+            break
 
 def update_live_leaderboard():
     conn = get_db()
