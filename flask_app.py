@@ -1414,7 +1414,7 @@ def recalculate_dynamic_scores():
         
         # Reset attempts along with the scores
         c.execute("UPDATE users SET weekly_score = 0, daily_score = 0, weekly_attempts = 0, weekly_correct = 0")
-        # Removed DELETE FROM precise_scores to prevent race conditions during Mini App fetching
+        c.execute("DELETE FROM precise_scores")
 
         c.execute("SELECT poll_id, poll_day FROM polls")
         active_polls = c.fetchall()
@@ -1429,8 +1429,6 @@ def recalculate_dynamic_scores():
             total_correct = result[1] if result[1] else 0
 
             if total_attempts == 0:
-                pts, pen, q_elo = 3.0, -0.75, 1200
-                poll_values[p_id] = {"pts": pts, "pen": pen, "day": p_day, "elo": q_elo}
                 total_max_points += 3.0
                 continue
 
@@ -1457,22 +1455,11 @@ def recalculate_dynamic_scores():
         c.execute("SELECT user_id, poll_id, is_correct, poll_day FROM user_answers")
         all_answers = c.fetchall()
         current_day_str = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%a')
-        
         user_scores = {}
-        user_seen_polls = {} # Added to deduplicate network retries
 
         for ans in all_answers:
             u_id, p_id, is_correct, p_day = ans
             if p_id not in poll_values: continue
-
-            # Initialize tracking for deduplication
-            if u_id not in user_seen_polls:
-                user_seen_polls[u_id] = set()
-
-            # Skip duplicate answers for the same poll
-            if p_id in user_seen_polls[u_id]:
-                continue
-            user_seen_polls[u_id].add(p_id)
 
             val = poll_values[p_id]
             points_awarded = val["pts"] if is_correct else val["pen"]
