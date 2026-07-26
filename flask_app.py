@@ -114,58 +114,52 @@ def add_poll():
     return "Poll successfully saved to remote DB!", 200
 
 def process_answer(c, user_id, first_name, poll_id, chosen_option):
-    try:
-        c.execute("SELECT 1 FROM user_answers WHERE user_id=%s AND poll_id=%s", (user_id, poll_id))
-        if c.fetchone():
-            return
+    c.execute("SELECT 1 FROM user_answers WHERE user_id=%s AND poll_id=%s", (user_id, poll_id))
+    if c.fetchone():
+        return
 
-        c.execute("SELECT correct_index, poll_day FROM polls WHERE poll_id=%s", (poll_id,))
-        poll_data = c.fetchone()
-        if not poll_data:
-            return
+    c.execute("SELECT correct_index, poll_day FROM polls WHERE poll_id=%s", (poll_id,))
+    poll_data = c.fetchone()
+    if not poll_data:
+        return
 
-        correct_index = poll_data[0]
-        current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
-        poll_day = poll_data[1] if poll_data[1] else current_ist.strftime('%a')
-        is_correct = (chosen_option == correct_index)
+    correct_index = poll_data[0]
+    current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    poll_day = poll_data[1] if poll_data[1] else current_ist.strftime('%a')
+    is_correct = (chosen_option == correct_index)
 
-        c.execute("""
-            INSERT INTO users (user_id, first_name) VALUES (%s, %s)
-            ON CONFLICT (user_id) DO UPDATE SET first_name = EXCLUDED.first_name
-        """, (user_id, first_name))
+    c.execute("""
+        INSERT INTO users (user_id, first_name) VALUES (%s, %s)
+        ON CONFLICT (user_id) DO UPDATE SET first_name = EXCLUDED.first_name
+    """, (user_id, first_name))
 
-        c.execute("SELECT faction FROM users WHERE user_id=%s", (user_id,))
-        current_faction_row = c.fetchone()
-        current_faction = current_faction_row[0] if current_faction_row else None
+    c.execute("SELECT faction FROM users WHERE user_id=%s", (user_id,))
+    current_faction_row = c.fetchone()
+    current_faction = current_faction_row[0] if current_faction_row else None
 
-        if current_faction is None:
-            houses = ['Gryffindor 🦁🔥', 'Slytherin 🐍💧', 'Ravenclaw 🦅💨', 'Hufflepuff 🦡🌍']
-            counts = {}
-            for h in houses:
-                c.execute("SELECT COUNT(*) FROM users WHERE faction=%s", (h,))
-                counts[h] = c.fetchone()[0]
-            assigned_faction = min(counts, key=counts.get)
-            c.execute("UPDATE users SET faction=%s WHERE user_id=%s", (assigned_faction, user_id))
+    if current_faction is None:
+        houses = ['Gryffindor 🦁🔥', 'Slytherin 🐍💧', 'Ravenclaw 🦅💨', 'Hufflepuff 🦡🌍']
+        counts = {}
+        for h in houses:
+            c.execute("SELECT COUNT(*) FROM users WHERE faction=%s", (h,))
+            counts[h] = c.fetchone()[0]
+        assigned_faction = min(counts, key=counts.get)
+        c.execute("UPDATE users SET faction=%s WHERE user_id=%s", (assigned_faction, user_id))
 
-        c.execute("""
-            INSERT INTO user_answers (user_id, poll_id, is_correct, poll_day, chosen_option)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (user_id, poll_id) DO UPDATE SET 
-                is_correct = EXCLUDED.is_correct, 
-                poll_day = EXCLUDED.poll_day, 
-                chosen_option = EXCLUDED.chosen_option
-        """, (user_id, poll_id, int(is_correct), poll_day, chosen_option))
+    c.execute("""
+        INSERT INTO user_answers (user_id, poll_id, is_correct, poll_day, chosen_option)
+        VALUES (%s, %s, %s, %s, %s)
+        ON CONFLICT (user_id, poll_id) DO UPDATE SET 
+            is_correct = EXCLUDED.is_correct, 
+            poll_day = EXCLUDED.poll_day, 
+            chosen_option = EXCLUDED.chosen_option
+    """, (user_id, poll_id, int(is_correct), poll_day, chosen_option))
 
-        c.execute("""
-            UPDATE users
-            SET weekly_attempts = weekly_attempts + 1,
-                daily_attempts = daily_attempts + 1,
-                last_updated = %s
-            WHERE user_id = %s
-        """, (time.time(), user_id))
-
-    except Exception as db_err:
-        print(f"🚨 Memory batch execution error for user {user_id}: {db_err}")
+    c.execute("""
+        UPDATE users
+        SET last_updated = %s
+        WHERE user_id = %s
+    """, (time.time(), user_id))
 
 def update_live_leaderboard():
     conn = get_db()
@@ -1178,30 +1172,32 @@ def run_queue_processor_background():
         conn = get_db()
         c = conn.cursor()
         
-        # ✨ FIX 1: Pick up both 'pending' AND stuck 'processing' answers from previous network drops
         c.execute("SELECT id, user_id, first_name, poll_id, chosen_option FROM answer_queue WHERE status IN ('pending', 'processing')")
         pending_answers = c.fetchall()
 
         if pending_answers:
             for row in pending_answers:
-                c.execute("UPDATE answer_queue SET status = 'processing' WHERE id = %s", (row[0],))
-            conn.commit()
-
-            for row in pending_answers:
-                process_answer(c, user_id=row[1], first_name=row[2], poll_id=row[3], chosen_option=row[4])
-
-            conn.commit()
-            c.execute("DELETE FROM answer_queue WHERE status = 'processing'")
-            conn.commit()
-            
+                q_id, u_id, f_name, p_id, c_opt = row
+                try:
+                    c.execute("UPDATE answer_queue SET status = 'processing' WHERE id = %s", (q_id,))
+                    conn.commit()
+                    
+                    process_answer(c, user_id=u_id, first_name=f_name, poll_id=p_id, chosen_option=c_opt)
+                    
+                    c.execute("DELETE FROM answer_queue WHERE id = %s", (q_id,))
+                    conn.commit()
+                except Exception as row_err:
+                    # Clear the aborted transaction so it doesn't break the next user's answer!
+                    conn.rollback()
+                    c.execute("UPDATE answer_queue SET status = 'failed' WHERE id = %s", (q_id,))
+                    conn.commit()
+                    
         c.close()
     except Exception as e:
         error_str = str(e).lower()
-        # ✨ FIX 2: Silently ignore harmless SSL/EOF network drops
         if "ssl" in error_str or "eof" in error_str or "closed" in error_str or "timeout" in error_str:
-            pass # The cron runs every 60 seconds; it will automatically pick up the dropped answers on the next run!
+            pass 
         else:
-            # If it is a real code error, alert the admin
             try:
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
                     "chat_id": "716496729",
@@ -1212,7 +1208,7 @@ def run_queue_processor_background():
     finally:
         if conn:
             release_db(conn)
-
+            
 @app.route('/cron/process_leaderboard_0508', methods=['GET', 'POST'])
 def cron_process_leaderboard():
     # 🔒 SECURITY GATE
@@ -1415,7 +1411,9 @@ def recalculate_dynamic_scores():
     try:
         conn = get_db()
         c = conn.cursor()
-        c.execute("UPDATE users SET weekly_score = 0, daily_score = 0")
+        
+        # Reset attempts along with the scores
+        c.execute("UPDATE users SET weekly_score = 0, daily_score = 0, weekly_attempts = 0, weekly_correct = 0")
         c.execute("DELETE FROM precise_scores")
 
         c.execute("SELECT poll_id, poll_day FROM polls")
@@ -1467,10 +1465,12 @@ def recalculate_dynamic_scores():
             points_awarded = val["pts"] if is_correct else val["pen"]
             
             if u_id not in user_scores:
-                user_scores[u_id] = {"weekly": 0, "daily": 0, "weekly_correct": 0, "expected_wins": 0.0, "actual_wins": 0, "precise": {}, "tier_bonus": 0.0, "played_today": False}
+                # Added weekly_attempts to the tracker here
+                user_scores[u_id] = {"weekly": 0, "daily": 0, "weekly_correct": 0, "weekly_attempts": 0, "expected_wins": 0.0, "actual_wins": 0, "precise": {}, "tier_bonus": 0.0, "played_today": False}
 
             user_scores[u_id]["weekly"] += points_awarded
             user_scores[u_id]["weekly_correct"] += int(is_correct)
+            user_scores[u_id]["weekly_attempts"] += 1
 
             if p_day == current_day_str:
                 user_scores[u_id]["daily"] += points_awarded
@@ -1498,8 +1498,9 @@ def recalculate_dynamic_scores():
             final_weekly = totals["weekly"] + total_sweetener
             final_daily = totals["daily"] + total_sweetener if totals["played_today"] else 0
 
-            c.execute("UPDATE users SET weekly_score=%s, daily_score=%s, weekly_correct=%s, live_elo=%s WHERE user_id=%s",
-                      (final_weekly, final_daily, totals["weekly_correct"], new_live_elo, u_id))
+            # Execute the update with weekly_attempts tied to the true mathematical count
+            c.execute("UPDATE users SET weekly_score=%s, daily_score=%s, weekly_correct=%s, weekly_attempts=%s, live_elo=%s WHERE user_id=%s",
+                      (final_weekly, final_daily, totals["weekly_correct"], totals["weekly_attempts"], new_live_elo, u_id))
 
             for day, day_data in totals["precise"].items():
                 c.execute("""
