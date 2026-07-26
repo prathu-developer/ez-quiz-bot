@@ -956,27 +956,28 @@
                     return;
                 }
 
+                // ✨ FIX: Set ADMIN status securely using Number() before checking the leaderboard
+                const tgUserId = Number(tg.initDataUnsafe?.user?.id) || 0;
+                const ADMIN_IDS = [716496729, 5103843488, 6251430317];
+                const isAdmin = ADMIN_IDS.includes(tgUserId);
+
                 // NEW: Build the current_user data on the client side to save server CPU!
                 let myPersonalData = {
-                    "rank": "N/A", "score": 0, "house": "🏳️ Unsorted", "name": "You", "is_captain": 0, "league": 0, "is_admin": false,
+                    "rank": "N/A", "score": 0, "house": "🏳️ Unsorted", "name": "You", "is_captain": 0, "league": 0, 
+                    "is_admin": isAdmin, // <-- Safely assigned unconditionally!
                     "rank_history": [], "history": {"labels": [], "scores": [], "accuracy": 0, "correct": 0, "wrong": 0}
                 };
 
-                if (userId) {
-                    let matchedUser = data.leaderboard.find(student => student.id === userId);
+                if (tgUserId) {
+                    let matchedUser = data.leaderboard.find(student => Number(student.id) === tgUserId);
                     if (matchedUser) {
-                        const ADMIN_IDS = [716496729, 5103843488, 6251430317];
                         myPersonalData = {
-                            "id": userId, "rank": matchedUser.rank, "score": matchedUser.score,
-                            "house": matchedUser.house, "name": matchedUser.name,
-                            "is_captain": matchedUser.is_captain, "league": matchedUser.league,
-                            "is_admin": ADMIN_IDS.includes(userId),
-                            "rank_history": matchedUser.rank_history, "history": matchedUser.history,
-                            "elo": matchedUser.elo
+                            ...matchedUser,
+                            "is_admin": isAdmin // <-- Enforces the admin override
                         };
                     }
                 }
-                data.current_user = myPersonalData; // Inject it back into the payload so the rest of the code works normally
+                data.current_user = myPersonalData; 
 
                 localStorage.setItem(cacheKey, JSON.stringify(data));
                 renderLeaderboardData(data);
