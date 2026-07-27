@@ -703,19 +703,14 @@ def webhook():
         MINI_APP_URL = "https://your-app-name.onrender.com/captcha"
         
         if query_id:
-            # ✨ THE MAGIC NATIVE POP-UP (Bot API 7.5+)
+            # ✨ THE MAGIC NATIVE POP-UP (Strictly enforced)
             requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendChatJoinRequestWebApp", json={
                 "chat_join_request_query_id": query_id,
                 "web_app_url": MINI_APP_URL
             })
         else:
-            # Fallback (Just in case Telegram's servers glitch and forget the query_id)
-            markup = {"inline_keyboard": [[{"text": "📝 Start Entrance Trial", "web_app": {"url": MINI_APP_URL}}]]}
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
-                "chat_id": user_id,
-                "text": "🪄 Welcome! Tap below to start your Entrance Trial to prove you are human.",
-                "reply_markup": markup
-            })
+            # 🚨 If query_id is missing, the Telegram setup above isn't finished!
+            print(f"⚠️ Telegram blocked the native pop-up for user {user_id} because the bot isn't assigned as a Verification Bot yet.")
             
         return 'OK', 200
 
@@ -2815,6 +2810,7 @@ Output EXACTLY in this format:
 def trigger_word_of_the_day():
     threading.Thread(target=run_word_of_the_day).start()
     return "Word of the Day triggered!", 200
+    
 @app.route('/captcha')
 def serve_captcha():
     return render_template('captcha.html')
