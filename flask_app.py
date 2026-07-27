@@ -2614,10 +2614,19 @@ def bake_miniapp_cache():
     release_db(conn)
 
 from flask import Response
+
 @app.route('/api/leaderboard', methods=['GET'])
 def get_mini_app_leaderboard():
     global RAM_CACHE
     
+    # If RAM cache is empty after a restart or deployment, bake it immediately!
+    if not RAM_CACHE["miniapp_snapshot"]:
+        try:
+            bake_miniapp_cache()
+        except Exception as e:
+            print(f"Error building initial RAM cache: {e}")
+
+    # Serve the fresh JSON snapshot from RAM
     if RAM_CACHE["miniapp_snapshot"]:
         return Response(RAM_CACHE["miniapp_snapshot"], mimetype='application/json')
         
