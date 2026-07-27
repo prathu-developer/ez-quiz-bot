@@ -694,6 +694,34 @@ def webhook():
             threading.Thread(target=process_read_receipt, args=(cb_id, user_id, first_name, target_msg_id)).start()
             return 'OK', 200
 
+    if 'chat_join_request' in update:
+        join_req = update['chat_join_request']
+        user_id = join_req['from']['id']
+        first_name = join_req['from'].get('first_name', 'Student')
+        
+        # NOTE: You MUST replace 'your-app-name' with your actual Render URL!
+        MINI_APP_URL = "https://your-app-name.onrender.com/captcha"
+        
+        markup = {
+            "inline_keyboard": [[
+                {"text": "📝 Start Entrance Trial", "web_app": {"url": MINI_APP_URL}}
+            ]]
+        }
+        
+        welcome_text = (
+            f"Welcome to **Ez Editorials**, {first_name}! 🪄\n\n"
+            f"To prove you are human and gain entry to the Great Hall, please complete this quick 10-question English trial.\n\n"
+            f"Tap the button below to begin!"
+        )
+        
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
+            "chat_id": user_id,
+            "text": welcome_text,
+            "parse_mode": "Markdown",
+            "reply_markup": markup
+        })
+        return 'OK', 200
+
     if 'poll_answer' in update:
         ans = update['poll_answer']
         user_info = ans['user']
@@ -2790,6 +2818,37 @@ Output EXACTLY in this format:
 def trigger_word_of_the_day():
     threading.Thread(target=run_word_of_the_day).start()
     return "Word of the Day triggered!", 200
+@app.route('/captcha')
+def serve_captcha():
+    return render_template('captcha.html')
+
+@app.route('/api/approve_captcha', methods=['POST'])
+def approve_captcha():
+    data = request.get_json()
+    user_id = data.get('user_id')
+    
+    if not user_id:
+        return jsonify({"error": "No user ID provided"}), 400
+
+    # The moment they finish 10 clicks, the bot magically approves their join request!
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/approveChatJoinRequest"
+    payload = {
+        "chat_id": CHAT_ID,
+        "user_id": user_id
+    }
+    
+    try:
+        requests.post(url, json=payload, timeout=5)
+        # Optional: Send them a welcome DM right after they are approved
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
+            "chat_id": user_id,
+            "text": "🎉 **Trial Complete!**\n\nYou have been approved. Welcome to the Great Hall of Ez Editorials! 🪄",
+            "parse_mode": "Markdown"
+        }, timeout=5)
+    except Exception as e:
+        print(f"Error approving join request: {e}")
+
+    return jsonify({"status": "success"}), 200
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
