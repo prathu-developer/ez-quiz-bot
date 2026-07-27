@@ -2067,7 +2067,28 @@ def generate_and_send_commentary():
 
     try: c.close(); release_db(conn)
     except: pass
-        
+
+def relay_message(message_id, target_thread_id):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/copyMessage"
+    payload = {"chat_id": CHAT_ID, "from_chat_id": SOURCE_CHAT_ID, "message_id": message_id, "message_thread_id": target_thread_id}
+    for attempt in range(5):
+        try:
+            res = requests.post(url, json=payload, timeout=10)
+            if res.status_code == 200:
+                try:
+                    conn = get_db()
+                    c = conn.cursor()
+                    c.execute("""
+                        INSERT INTO message_links (source_msg_id, target_msg_id) VALUES (%s, %s)
+                        ON CONFLICT (source_msg_id) DO UPDATE SET target_msg_id = EXCLUDED.target_msg_id
+                    """, (message_id, res.json()["result"]["message_id"]))
+                    conn.commit()
+                    c.close()
+                    release_db(conn)
+                except: pass
+                return
+        except: time.sleep(3)
+
 def sync_message_edit(msg, target_msg_id):
     try:
         # If it's a standard text message
