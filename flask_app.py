@@ -2323,20 +2323,19 @@ def process_ranking_command(chat_id, user_id, message_id, thread_id):
         except Exception as e:
             pass
 
-        conn = get_db()
-        c = conn.cursor()
+        # 2. ⚡ READ DIRECTLY FROM RAM CACHE (No DB Query)
+        global RAM_CACHE
+        if not RAM_CACHE["miniapp_snapshot"]:
+            try:
+                bake_miniapp_cache()
+            except Exception as e:
+                print(f"Error auto-baking cache for /rank: {e}")
 
-        # 2. ⚡ CACHE TURBOCHARGER: Read everything instantly from the pre-baked JSON
-        c.execute("SELECT json_data FROM global_cache WHERE cache_key = 'miniapp_snapshot'")
-        cache_row = c.fetchone()
-        c.close()
-        release_db(conn)
-
-        if not cache_row:
+        if not RAM_CACHE["miniapp_snapshot"]:
             return
 
-        # Parse the JSON cache
-        cache_data = json.loads(cache_row[0])
+        # Parse the JSON cache directly from memory
+        cache_data = json.loads(RAM_CACHE["miniapp_snapshot"])
         leaderboard = cache_data.get('leaderboard', [])
         elo_ranking = cache_data.get('elo_ranking', [])
         total_quizzes = cache_data.get('total_quizzes', 0)
@@ -2619,16 +2618,20 @@ from flask import Response
 def get_mini_app_leaderboard():
     global RAM_CACHE
     
-    # If RAM cache is empty after a restart or deployment, bake it immediately!
+    # Auto-bake RAM cache if empty after a deployment or server restart
     if not RAM_CACHE["miniapp_snapshot"]:
         try:
             bake_miniapp_cache()
         except Exception as e:
             print(f"Error building initial RAM cache: {e}")
 
-    # Serve the fresh JSON snapshot from RAM
     if RAM_CACHE["miniapp_snapshot"]:
-        return Response(RAM_CACHE["miniapp_snapshot"], mimetype='application/json')
+        res = Response(RAM_CACHE["miniapp_snapshot"], mimetype='application/json')
+        # Prevent Telegram WebApp from caching responses locally on students' phones
+        res.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+        res.headers["Pragma"] = "no-cache"
+        res.headers["Expires"] = "0"
+        return res
         
     return jsonify({"error": "Syncing..."}), 503
 
