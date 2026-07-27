@@ -948,7 +948,7 @@
         }
 
         // STEP 2: Fetch fresh data in the background and seamlessly synchronise
-        fetch(`/api/leaderboard?user_id=${userId}`)
+        fetch(`/api/leaderboard?user_id=${userId}&t=${Date.now()}`)
             .then(response => response.json())
             .then(data => {
                 if (data.locked || data.error) {
