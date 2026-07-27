@@ -777,60 +777,87 @@ def run_midnight_purge_background():
         conn = get_db()
         c = conn.cursor()
         
-        # Exactly 30 days of seconds
-        thirty_days_ago = time.time() - (30 * 24 * 60 * 60)
+        # Define the exact 30-day rolling window
+        current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+        thirty_days_ago_date = (current_ist - timedelta(days=30)).strftime('%Y-%m-%d')
+        thirty_days_ago_ts = time.time() - (30 * 24 * 60 * 60)
+        
         admin_ids = [716496729, 6251430317, 5103843488]
         
-        # Fetch anyone whose timestamp proves they haven't tapped anything in 30 days
+        # 🧠 THE MASTER QUERY: 
+        # Calculates 30-day Quizzes and 30-day Editorials, strictly ignoring new students!
         c.execute("""
-            SELECT user_id, first_name 
-            FROM users 
-            WHERE last_updated IS NOT NULL AND last_updated < %s
-        """, (thirty_days_ago,))
+            SELECT 
+                u.user_id, 
+                u.first_name,
+                COALESCE(SUM(dh.attempts), 0) + u.daily_attempts AS total_quizzes,
+                COALESCE(rr.read_count, 0) AS total_reads
+            FROM users u
+            LEFT JOIN daily_history dh ON u.user_id = dh.user_id AND dh.date_str >= %s
+            LEFT JOIN (
+                SELECT user_id, COUNT(*) as read_count 
+                FROM read_receipts 
+                WHERE created_at >= to_timestamp(%s) 
+                GROUP BY user_id
+            ) rr ON u.user_id = rr.user_id
+            WHERE u.joined_at < to_timestamp(%s)
+            GROUP BY u.user_id, u.first_name, u.daily_attempts, rr.read_count
+        """, (thirty_days_ago_date, thirty_days_ago_ts, thirty_days_ago_ts))
         
-        inactive_users = c.fetchall()
+        all_users = c.fetchall()
         purged_count = 0
         
-        if inactive_users:
-            for u in inactive_users:
+        if all_users:
+            for u in all_users:
                 uid = u[0]
+                total_quizzes = u[2]
+                total_reads = u[3]
+                
                 if uid in admin_ids:
                     continue # Never purge an admin
                     
-                # 1. Soft-Ban to remove from group
-                res_ban = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/banChatMember", json={
-                    "chat_id": CHAT_ID, "user_id": uid
-                }, timeout=5)
-                
-                if res_ban.status_code == 200 and res_ban.json().get('ok'):
+                # ⚖️ THE EXECUTION CRITERIA: 
+                # If they failed to read 4 editorials AND failed to solve 50 quizzes
+                if total_reads < 4 and total_quizzes < 50:
                     
-                    # 2. BULLETPROOF UNBAN: Try up to 5 times to guarantee they are off the blacklist!
-                    for _ in range(5):
-                        res_unban = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/unbanChatMember", json={
-                            "chat_id": CHAT_ID, "user_id": uid, "only_if_banned": True
-                        }, timeout=5)
+                    # 1. Soft-Ban to remove from group
+                    res_ban = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/banChatMember", json={
+                        "chat_id": CHAT_ID, "user_id": uid
+                    }, timeout=5)
+                    
+                    if res_ban.status_code == 200 and res_ban.json().get('ok'):
+                        # 2. BULLETPROOF UNBAN
+                        for _ in range(5):
+                            res_unban = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/unbanChatMember", json={
+                                "chat_id": CHAT_ID, "user_id": uid, "only_if_banned": True
+                            }, timeout=5)
+                            if res_unban.status_code == 200:
+                                break
+                            time.sleep(1)
                         
-                        # If the unban succeeds, break out of the loop immediately
-                        if res_unban.status_code == 200:
-                            break
-                        time.sleep(1) # Wait 1 second and try again if it failed
-                    
-                    # 3. Erase from DB to restore class averages
-                    c.execute("DELETE FROM users WHERE user_id = %s", (uid,))
-                    conn.commit()
-                    purged_count += 1
-                    
-                # 🛡️ THROTTLE: Wait 2 seconds to avoid Telegram Rate Limit bans
-                time.sleep(2)
+                        # 3. Erase from DB
+                        c.execute("DELETE FROM users WHERE user_id = %s", (uid,))
+                        conn.commit()
+                        purged_count += 1
+                        
+                    # 🛡️ Throttle to avoid Telegram Rate Limits
+                    time.sleep(2)
         
         c.close()
-        notify_prathu(f"🧹 **Midnight Purge Complete!**\n\nIdentified Inactive: {len(inactive_users)}\nSuccessfully Purged: {purged_count}")
+        
+        # 📩 DM TO ADMIN PRATHU
+        # Your existing notify_prathu function is already hardcoded to send to ID: 716496729!
+        notify_prathu(
+            f"🧹 **Midnight Purge Complete!**\n\n"
+            f"🎯 **Criteria:** < 4 Editorials & < 50 Quizzes\n"
+            f"🚪 **Members Removed:** {purged_count}"
+        )
         
     except Exception as e:
         notify_prathu(f"🚨 **Purge Error:**\n`{e}`")
     finally:
         if conn: release_db(conn)
-
+            
 @app.route('/cron/daily_purge_0508', methods=['GET', 'POST'])
 def trigger_daily_purge():
     # Locked behind your master key
