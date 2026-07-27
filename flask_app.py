@@ -1397,12 +1397,18 @@ def run_weekly_reset_background():
     rav_cap = f"[{top_ravenclaw[1]}](tg://user?id={top_ravenclaw[0]})" if top_ravenclaw else "None"
     huff_cap = f"[{top_hufflepuff[1]}](tg://user?id={top_hufflepuff[0]})" if top_hufflepuff else "None"
 
+    winner_house = sorted_finals[0][0]
+    winner_score = sorted_finals[0][1]
+    second_score = sorted_finals[1][1] if len(sorted_finals) > 1 else 0
+
     winning_banner = ""
-    if winner_score > sorted_finals[1][1]:
+    if winner_score > second_score:
         house_name, emoji = winner_house.split()[0].upper(), winner_house.split()[1]
-        winning_banner = f"🥇 **TEAM {house_name} WINS!** {emoji}\nSecuring the top spot with **{winner_score}** points! Your reigning Team Captains for this new week are:\n\n"
-    elif winner_score > 0 and winner_score == sorted_finals[1][1]:
-        winning_banner = f"⚖️ **TEAM TIE!**\nThe top teams tied with **{winner_score}** points. Your reigning Team Captains for this new week are:\n\n"
+        clean_win_score = int(winner_score) if winner_score % 1 == 0 else round(winner_score, 2)
+        winning_banner = f"🥇 **TEAM {house_name} WINS!** {emoji}\nSecuring the top spot with **{clean_win_score}** points! Your reigning Team Captains for this new week are:\n\n"
+    elif winner_score > 0 and winner_score == second_score:
+        clean_win_score = int(winner_score) if winner_score % 1 == 0 else round(winner_score, 2)
+        winning_banner = f"⚖️ **TEAM TIE!**\nThe top teams tied with **{clean_win_score}** points. Your reigning Team Captains for this new week are:\n\n"
     else:
         winning_banner = "⚖️ **THE WEEK HAS ENDED!**\nNo points were earned this week. Your reigning Team Captains for this new week are:\n\n"
 
