@@ -57,6 +57,11 @@ API_KEYS = [
 current_key_index = 0
 app = Flask(__name__)
 
+# --- IN-MEMORY CACHE TO SAVE BANDWIDTH ---
+RAM_CACHE = {
+    "miniapp_snapshot": None
+}
+
 TELEGRAM_TOKEN = "8730359477:AAE4D3_koGNb6EHv40muYod79mV03JEntOQ"
 CHAT_ID = "-1003875580290"
 LIVE_MESSAGE_ID = 2662 
@@ -2599,11 +2604,11 @@ def bake_miniapp_cache():
 
     json_string = json.dumps({"current_week": current_week_val, "total_quizzes": total_quizzes_val, "leaderboard": leaderboard_list, "topper_history": topper_history_dict, "class_avg_history": class_avg_history_dict, "elo_ranking": elo_leaderboard})
     
-    c.execute("""
-        INSERT INTO global_cache (cache_key, json_data) VALUES ('miniapp_snapshot', %s)
-        ON CONFLICT (cache_key) DO UPDATE SET json_data = EXCLUDED.json_data
-    """, (json_string,))
+    # Save to Python's RAM instead of the remote database
+    global RAM_CACHE
+    RAM_CACHE["miniapp_snapshot"] = json_string
     
+    # Still close the connection properly
     conn.commit()
     c.close()
     release_db(conn)
@@ -2611,13 +2616,11 @@ def bake_miniapp_cache():
 from flask import Response
 @app.route('/api/leaderboard', methods=['GET'])
 def get_mini_app_leaderboard():
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT json_data FROM global_cache WHERE cache_key = 'miniapp_snapshot'")
-    row = c.fetchone()
-    c.close()
-    release_db(conn)
-    if row: return Response(row[0], mimetype='application/json')
+    global RAM_CACHE
+    
+    if RAM_CACHE["miniapp_snapshot"]:
+        return Response(RAM_CACHE["miniapp_snapshot"], mimetype='application/json')
+        
     return jsonify({"error": "Syncing..."}), 503
 
 def run_word_of_the_day():
