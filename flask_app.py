@@ -696,30 +696,27 @@ def webhook():
 
     if 'chat_join_request' in update:
         join_req = update['chat_join_request']
+        query_id = join_req.get('query_id')
         user_id = join_req['from']['id']
-        first_name = join_req['from'].get('first_name', 'Student')
         
         # NOTE: You MUST replace 'your-app-name' with your actual Render URL!
-        MINI_APP_URL = "https:/ez-editorials-bot.onrender.com/captcha"
+        MINI_APP_URL = "https://your-app-name.onrender.com/captcha"
         
-        markup = {
-            "inline_keyboard": [[
-                {"text": "📝 Start Entrance Trial", "web_app": {"url": MINI_APP_URL}}
-            ]]
-        }
-        
-        welcome_text = (
-            f"Welcome to **Ez Editorials**, {first_name}! 🪄\n\n"
-            f"To prove you are human and gain entry to the Great Hall, please complete this quick 10-question English trial.\n\n"
-            f"Tap the button below to begin!"
-        )
-        
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
-            "chat_id": user_id,
-            "text": welcome_text,
-            "parse_mode": "Markdown",
-            "reply_markup": markup
-        })
+        if query_id:
+            # ✨ THE MAGIC NATIVE POP-UP (Bot API 7.5+)
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendChatJoinRequestWebApp", json={
+                "chat_join_request_query_id": query_id,
+                "web_app_url": MINI_APP_URL
+            })
+        else:
+            # Fallback (Just in case Telegram's servers glitch and forget the query_id)
+            markup = {"inline_keyboard": [[{"text": "📝 Start Entrance Trial", "web_app": {"url": MINI_APP_URL}}]]}
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
+                "chat_id": user_id,
+                "text": "🪄 Welcome! Tap below to start your Entrance Trial to prove you are human.",
+                "reply_markup": markup
+            })
+            
         return 'OK', 200
 
     if 'poll_answer' in update:
