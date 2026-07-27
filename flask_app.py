@@ -803,10 +803,17 @@ def run_midnight_purge_background():
                 }, timeout=5)
                 
                 if res_ban.status_code == 200 and res_ban.json().get('ok'):
-                    # 2. Instantly lift the blacklist so they can return later
-                    requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/unbanChatMember", json={
-                        "chat_id": CHAT_ID, "user_id": uid, "only_if_banned": True
-                    }, timeout=5)
+                    
+                    # 2. BULLETPROOF UNBAN: Try up to 5 times to guarantee they are off the blacklist!
+                    for _ in range(5):
+                        res_unban = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/unbanChatMember", json={
+                            "chat_id": CHAT_ID, "user_id": uid, "only_if_banned": True
+                        }, timeout=5)
+                        
+                        # If the unban succeeds, break out of the loop immediately
+                        if res_unban.status_code == 200:
+                            break
+                        time.sleep(1) # Wait 1 second and try again if it failed
                     
                     # 3. Erase from DB to restore class averages
                     c.execute("DELETE FROM users WHERE user_id = %s", (uid,))
