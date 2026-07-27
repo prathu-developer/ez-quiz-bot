@@ -628,9 +628,71 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
         except requests.exceptions.RequestException:
             time.sleep(3 + attempt)
 
+def process_read_receipt(cb_id, user_id, first_name, message_id):
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        
+        # 1. Double-Tap Protection
+        c.execute("SELECT 1 FROM read_receipts WHERE message_id=%s AND user_id=%s", (message_id, user_id))
+        if c.fetchone():
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery", json={
+                "callback_query_id": cb_id, "text": "You've already marked this as read! 📖", "show_alert": False
+            })
+            return
+            
+        # 2. Record the tap
+        c.execute("INSERT INTO read_receipts (message_id, user_id) VALUES (%s, %s)", (message_id, user_id))
+        
+        # 3. Secure their 30-Day Protection!
+        current_time = time.time()
+        c.execute("""
+            INSERT INTO users (user_id, first_name, last_updated) VALUES (%s, %s, %s)
+            ON CONFLICT (user_id) DO UPDATE SET 
+                first_name = EXCLUDED.first_name,
+                last_updated = EXCLUDED.last_updated
+        """, (user_id, first_name, current_time))
+        
+        # 4. Count total reads to update the UI
+        c.execute("SELECT COUNT(*) FROM read_receipts WHERE message_id=%s", (message_id,))
+        total_reads = c.fetchone()[0]
+        conn.commit()
+        
+        # 5. Live-Update the Button
+        markup = {"inline_keyboard": [[{"text": f"📖 Mark as Read • {total_reads}", "callback_data": f"read_{message_id}"}]]}
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageReplyMarkup", json={"chat_id": CHAT_ID, "message_id": message_id, "reply_markup": markup})
+        
+        # 6. Inform the user they are safe
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery", json={
+            "callback_query_id": cb_id, "text": "Attendance marked! You are protected from the inactivity purge. 🛡️", "show_alert": False
+        })
+    except Exception as e:
+        print(f"Error processing read receipt: {e}")
+    finally:
+        if conn:
+            try: c.close()
+            except: pass
+            release_db(conn)
+
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
 def webhook():
     update = request.get_json()
+
+    if 'callback_query' in update:
+        cbq = update['callback_query']
+        cb_data = cbq.get('data', '')
+        cb_id = cbq['id']
+        user_info = cbq['from']
+        
+        if cb_data.startswith('read_'):
+            target_msg_id = int(cb_data.split('_')[1])
+            user_id = user_info['id']
+            first_name = user_info.get('first_name', '').strip()
+            
+            # Fire in background for instant response
+            threading.Thread(target=process_read_receipt, args=(cb_id, user_id, first_name, target_msg_id)).start()
+            return 'OK', 200
 
     if 'poll_answer' in update:
         ans = update['poll_answer']
@@ -708,6 +770,68 @@ def webhook():
                     }).start()
 
     return 'OK', 200
+
+def run_midnight_purge_background():
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        
+        # Exactly 30 days of seconds
+        thirty_days_ago = time.time() - (30 * 24 * 60 * 60)
+        admin_ids = [716496729, 6251430317, 5103843488]
+        
+        # Fetch anyone whose timestamp proves they haven't tapped anything in 30 days
+        c.execute("""
+            SELECT user_id, first_name 
+            FROM users 
+            WHERE last_updated IS NOT NULL AND last_updated < %s
+        """, (thirty_days_ago,))
+        
+        inactive_users = c.fetchall()
+        purged_count = 0
+        
+        if inactive_users:
+            for u in inactive_users:
+                uid = u[0]
+                if uid in admin_ids:
+                    continue # Never purge an admin
+                    
+                # 1. Soft-Ban to remove from group
+                res_ban = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/banChatMember", json={
+                    "chat_id": CHAT_ID, "user_id": uid
+                }, timeout=5)
+                
+                if res_ban.status_code == 200 and res_ban.json().get('ok'):
+                    # 2. Instantly lift the blacklist so they can return later
+                    requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/unbanChatMember", json={
+                        "chat_id": CHAT_ID, "user_id": uid, "only_if_banned": True
+                    }, timeout=5)
+                    
+                    # 3. Erase from DB to restore class averages
+                    c.execute("DELETE FROM users WHERE user_id = %s", (uid,))
+                    conn.commit()
+                    purged_count += 1
+                    
+                # 🛡️ THROTTLE: Wait 2 seconds to avoid Telegram Rate Limit bans
+                time.sleep(2)
+        
+        c.close()
+        notify_prathu(f"🧹 **Midnight Purge Complete!**\n\nIdentified Inactive: {len(inactive_users)}\nSuccessfully Purged: {purged_count}")
+        
+    except Exception as e:
+        notify_prathu(f"🚨 **Purge Error:**\n`{e}`")
+    finally:
+        if conn: release_db(conn)
+
+@app.route('/cron/daily_purge_0508', methods=['GET', 'POST'])
+def trigger_daily_purge():
+    # Locked behind your master key
+    if request.headers.get("X-Cron-Secret") != CRON_SECRET:
+        return "Unauthorized", 401
+        
+    threading.Thread(target=run_midnight_purge_background).start()
+    return "Purge Engine armed and running in background!", 200
 
 def run_daily_reset_background():
     conn = get_db()
@@ -2075,20 +2199,34 @@ def relay_message(message_id, target_thread_id):
         try:
             res = requests.post(url, json=payload, timeout=10)
             if res.status_code == 200:
+                new_msg_id = res.json()["result"]["message_id"]
                 try:
                     conn = get_db()
                     c = conn.cursor()
                     c.execute("""
                         INSERT INTO message_links (source_msg_id, target_msg_id) VALUES (%s, %s)
                         ON CONFLICT (source_msg_id) DO UPDATE SET target_msg_id = EXCLUDED.target_msg_id
-                    """, (message_id, res.json()["result"]["message_id"]))
+                    """, (message_id, new_msg_id))
                     conn.commit()
                     c.close()
                     release_db(conn)
                 except: pass
+
+                # ✨ NEW: Inject the "Mark as Read" button if it's the Editorials thread
+                if target_thread_id == 3:
+                    markup = {
+                        "inline_keyboard": [[
+                            {"text": "📖 Mark as Read • 0", "callback_data": f"read_{new_msg_id}"}
+                        ]]
+                    }
+                    requests.post(
+                        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageReplyMarkup",
+                        json={"chat_id": CHAT_ID, "message_id": new_msg_id, "reply_markup": markup},
+                        timeout=5
+                    )
                 return
         except: time.sleep(3)
-
+            
 def sync_message_edit(msg, target_msg_id):
     try:
         # If it's a standard text message
