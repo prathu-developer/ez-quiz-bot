@@ -705,7 +705,7 @@ def webhook():
         user_id = join_req['from']['id']
         
         # NOTE: You MUST replace 'your-app-name' with your actual Render URL!
-        MINI_APP_URL = "https://ez-editorials-bot.onrender.com/captcha"
+        MINI_APP_URL = "https://ez-editorials-bot.onrender.com/captcha?mode=compact"
         
         if query_id:
             # ✨ THE MAGIC NATIVE POP-UP (Strictly enforced)
