@@ -700,7 +700,7 @@ def webhook():
         first_name = join_req['from'].get('first_name', 'Student')
         
         # NOTE: You MUST replace 'your-app-name' with your actual Render URL!
-        MINI_APP_URL = "https://your-app-name.onrender.com/captcha"
+        MINI_APP_URL = "https:/ez-editorials-bot.onrender.com/captcha"
         
         markup = {
             "inline_keyboard": [[
