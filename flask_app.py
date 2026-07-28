@@ -55,6 +55,7 @@ API_KEYS = [
 ]
 
 current_key_index = 0
+LAST_AI_REPLY_TIME = 0  # ✨ NEW: Tracks Lixie's cooldown directly in local RAM!
 app = Flask(__name__)
 
 # --- IN-MEMORY CACHE TO SAVE BANDWIDTH ---
@@ -458,30 +459,11 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
         process_ranking_command(chat_id, user_id, message_id, thread_id)
         return
 
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        c.execute("SELECT value FROM bot_settings WHERE key='last_ai_reply_time'")
-        last_time_row = c.fetchone()
-        current_time = time.time()
-        if last_time_row:
-            last_time = float(last_time_row[0])
-            if current_time - last_time < 10:
-                c.close()
-                release_db(conn)
-                return
-
-        c.execute("""
-            INSERT INTO bot_settings (key, value) VALUES ('last_ai_reply_time', %s)
-            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-        """, (str(current_time),))
-        conn.commit()
-    except Exception as e:
-        print(f"⚠️ Cooldown Error: {e}")
-        try: c.close()
-        except: pass
-        release_db(conn)
+    global LAST_AI_REPLY_TIME
+    current_time = time.time()
+    if current_time - LAST_AI_REPLY_TIME < 10:
         return
+    LAST_AI_REPLY_TIME = current_time
 
     current_ist_time = datetime.utcnow() + timedelta(hours=5, minutes=30)
     current_day = current_ist_time.strftime('%A')
@@ -790,14 +772,15 @@ def webhook():
             text = msg.get('text', '')
             
             # --- INTERCEPT: EPHEMERAL /RANK COMMAND ---
-            if chat_type in ['group', 'supergroup'] and text.startswith('/rank'):
-                threading.Thread(target=process_ranking_command, kwargs={
-                    "chat_id": chat_id, 
-                    "user_id": msg['from']['id'], 
-                    "message_id": msg['message_id'], 
-                    "thread_id": thread_id
-                }).start()
-                return 'OK', 200
+            # 🧊 ON ICE: Temporarily disabled to drive Mini App adoption & save CPU
+            # if chat_type in ['group', 'supergroup'] and text.startswith('/rank'):
+            #     threading.Thread(target=process_ranking_command, kwargs={
+            #         "chat_id": chat_id, 
+            #         "user_id": msg['from']['id'], 
+            #         "message_id": msg['message_id'], 
+            #         "thread_id": thread_id
+            #     }).start()
+            #     return 'OK', 200
 
             # --- EXISTING LIXIE AI LOGIC ---
             if chat_type in ['group', 'supergroup'] and not text.startswith('/'):
@@ -2441,42 +2424,6 @@ def process_ranking_command(chat_id, user_id, message_id, thread_id):
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json=payload, timeout=10)
     except Exception as e:
         print(f"🚨 Error executing /rank command: {e}")
-        
-# ==========================================
-# RESTORED: ADMIN DRAFT VIEWER
-# ==========================================
-@app.route('/admin/view_drafts_0508')
-def view_drafts():
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        c.execute("SELECT set_type, question_data FROM draft_quizzes")
-        drafts = c.fetchall()
-        c.close()
-        release_db(conn)
-
-        if not drafts:
-            return "No drafts found. The table is empty."
-
-        html = "<h2>Stored Drafts for Tonight</h2><div style='font-family: monospace;'>"
-        for d_type, data in drafts:
-            parsed_json = json.loads(data)
-            pretty_json = json.dumps(parsed_json, indent=4)
-            html += f"<h3 style='color: #2a5298;'>{d_type}</h3>"
-            html += f"<pre style='background: #f4f6f8; padding: 10px; border-radius: 5px;'>{pretty_json}</pre><hr>"
-
-        html += "</div>"
-        return html
-    except Exception as e:
-        return f"Error reading database: {e}"
-
-# ==========================================
-# RESTORED: DATABASE VACUUM CRON
-# ==========================================
-@app.route('/cron/vacuum_db_0508', methods=['GET', 'POST'])
-def cron_vacuum_db():
-    """PostgreSQL manages vacuuming automatically, but we keep this route so cron-job.org doesn't return 404 errors!"""
-    return "PostgreSQL Auto-Vacuum handles this automatically. Route kept alive for cron compatibility!", 200
 
 @app.route('/miniapp')
 def serve_mini_app():
