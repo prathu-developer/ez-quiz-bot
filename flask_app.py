@@ -15,7 +15,7 @@ from google.genai import types
 DB_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:FlUVu8dA8xy02woL@db.wuhoozvbufnwjsfpkojp.supabase.co:5432/postgres")
 
 # High-speed connection pool to handle massive group traffic instantly
-db_pool = psycopg2.pool.ThreadedConnectionPool(1, 20, DB_URL)
+db_pool = psycopg2.pool.ThreadedConnectionPool(1, 8, DB_URL)
 
 CRON_SECRET = os.environ.get("CRON_SECRET", "Ez_Master_Key_77")
 
@@ -63,6 +63,7 @@ RAM_CACHE = {
     "miniapp_snapshot": None
 }
 CACHE_LOCK = threading.Lock() # ✨ NEW: Protects Render from Cache Stampedes
+POLL_CACHE = {} # ✨ NEW: Caches poll correct options in RAM
 
 TELEGRAM_TOKEN = "8730359477:AAE4D3_koGNb6EHv40muYod79mV03JEntOQ"
 CHAT_ID = "-1003875580290"
@@ -133,15 +134,19 @@ def process_answer(c, queue_id, user_id, first_name, poll_id, chosen_option):
                 c.connection.commit()
                 return
 
-            c.execute("SELECT correct_index, poll_day FROM polls WHERE poll_id=%s", (poll_id,))
-            poll_data = c.fetchone()
-            if not poll_data:
-                return
-
-            correct_index = poll_data[0]
-            current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
-            poll_day = poll_data[1] if poll_data[1] else current_ist.strftime('%a')
-            is_correct = (chosen_option == correct_index)
+            global POLL_CACHE
+            if poll_id in POLL_CACHE:
+                correct_index, poll_day = POLL_CACHE[poll_id]
+            else:
+                c.execute("SELECT correct_index, poll_day FROM polls WHERE poll_id=%s", (poll_id,))
+                poll_data = c.fetchone()
+                if not poll_data:
+                    return
+                correct_index = poll_data[0]
+                current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+                poll_day = poll_data[1] if poll_data[1] else current_ist.strftime('%a')
+                POLL_CACHE[poll_id] = (correct_index, poll_day)
+                is_correct = (chosen_option == correct_index)
 
             c.execute("""
                 INSERT INTO users (user_id, first_name) VALUES (%s, %s)
@@ -666,6 +671,12 @@ def process_read_receipt(cb_id, user_id, first_name, message_id):
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
 def webhook():
     update = request.get_json()
+    if not update:
+        return 'OK', 200
+
+    # ✨ FAST EXIT: Ignore junk updates instantly to save CPU
+    if not any(k in update for k in ['callback_query', 'chat_join_request', 'poll_answer', 'edited_message', 'message']):
+        return 'OK', 200
 
     if 'callback_query' in update:
         cbq = update['callback_query']
@@ -1395,6 +1406,8 @@ def run_weekly_reset_background():
             except: time.sleep(3 + attempt * 2)
 
         # --- 🧹 SUNDAY SWEEP ---
+        global POLL_CACHE
+        POLL_CACHE.clear()
         c.execute("DELETE FROM polls")
         c.execute("DELETE FROM user_answers")
         thirty_days_ago = (datetime.utcnow() + timedelta(hours=5, minutes=30) - timedelta(days=30)).strftime('%Y-%m-%d')
