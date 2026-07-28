@@ -705,18 +705,27 @@ def webhook():
         query_id = join_req.get('query_id')
         user_id = join_req['from']['id']
         
-        # NOTE: You MUST replace 'your-app-name' with your actual Render URL!
+        # NOTE: Your actual Render URL!
         MINI_APP_URL = "https://ez-editorials-bot.onrender.com/captcha?mode=compact"
         
         if query_id:
-            # ✨ THE MAGIC NATIVE POP-UP (Strictly enforced)
+            # ✨ 1. THE MAGIC NATIVE POP-UP (Triggers immediately on their screen)
             requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendChatJoinRequestWebApp", json={
                 "chat_join_request_query_id": query_id,
                 "web_app_url": MINI_APP_URL
             })
+            
+            # 🛡️ 2. THE SAFETY NET DM (Stays in their inbox in case they swipe the pop-up away)
+            markup = {"inline_keyboard": [[{"text": "📝 Restart Entrance Trial", "web_app": {"url": MINI_APP_URL}}]]}
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
+                "chat_id": user_id,
+                "text": "🪄 **Did your Entrance Trial close accidentally?**\n\nYour join request is currently paused. You can restart and complete your 10-question trial at any time by tapping the button below!",
+                "reply_markup": markup,
+                "parse_mode": "Markdown"
+            })
         else:
-            # 🚨 If query_id is missing, the Telegram setup above isn't finished!
-            print(f"⚠️ Telegram blocked the native pop-up for user {user_id} because the bot isn't assigned as a Verification Bot yet.")
+            # Fallback if the BotFather settings aren't applied correctly
+            print(f"⚠️ Telegram blocked the native pop-up for user {user_id} because the bot isn't assigned as a Verification Bot.")
             
         return 'OK', 200
 
