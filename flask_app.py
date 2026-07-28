@@ -1101,7 +1101,7 @@ def run_weekly_reset_background():
         tier_map = {"T1": [], "T2": [], "T3": [], "T4": [], "T5": []}
         total_q_elo = 0
         
-        tier_acc = {"T1": [0,0], "T2": [0,0], "T3": [0,0], "T4": [0,0], "T5": [0,0]} # [correct, attempts]
+        tier_acc = {"T1": [0,0], "T2": [0,0], "T3": [0,0], "T4": [0,0], "T5": [0,0]}
 
         for p_id, p_att, p_cor in poll_stats:
             p_cor = p_cor if p_cor else 0
@@ -1197,19 +1197,11 @@ def run_weekly_reset_background():
         }
         c.execute("INSERT INTO bot_settings (key, value) VALUES ('wow_stats', %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (json.dumps(current_stats),))
 
-        # 7. House Wars
+        # House Calculation retained for public announcement later in script
         c.execute("SELECT faction, SUM(weekly_score) FROM users WHERE faction IS NOT NULL GROUP BY faction")
         team_scores = dict(c.fetchall())
         finals = {'Gryffindor 🦁🔥': team_scores.get('Gryffindor 🦁🔥', 0), 'Slytherin 🐍💧': team_scores.get('Slytherin 🐍💧', 0), 'Ravenclaw 🦅💨': team_scores.get('Ravenclaw 🦅💨', 0), 'Hufflepuff 🦡🌍': team_scores.get('Hufflepuff 🦡🌍', 0)}
         sorted_finals = sorted(finals.items(), key=lambda x: x[1], reverse=True)
-        winner_margin = sorted_finals[0][1] - sorted_finals[1][1] if len(sorted_finals) > 1 else 0
-        
-        house_text = ""
-        medals_house = ["🥇", "🥈", "🥉", "4️⃣"]
-        for i, (h_name, h_score) in enumerate(sorted_finals):
-            clean_h_score = int(h_score) if h_score % 1 == 0 else round(h_score, 2)
-            house_text += f"{medals_house[i]} {h_name.split()[0]} — {clean_h_score:,} pts\n"
-        house_text += f"\nWinning Margin: {int(winner_margin) if winner_margin % 1 == 0 else round(winner_margin, 2)} pts"
 
         # Dates
         current_ist_time = datetime.utcnow() + timedelta(hours=5, minutes=30)
@@ -1217,23 +1209,7 @@ def run_weekly_reset_background():
         start_date = current_ist_time - timedelta(days=7)
         date_range = f"{start_date.strftime('%d %B')} – {end_date.strftime('%d %B %Y')}"
 
-        # 8. Gemini AI Summarization
-        ai_summary = "AI summary generation failed or timed out."
-        try:
-            raw_data_prompt = f"Write a 3-sentence summary of this week's quiz group performance for the admins. Use British English. Tone: Professional but encouraging. Data: {total_active_students} active users, {overall_accuracy}% accuracy, {completion_rate}% completion. The cut-off was {int(target_average)}. Do not use bullet points or formatting, just plain text."
-            # Cycle through available keys to ensure delivery
-            active_key = API_KEYS[0] 
-            temp_client = genai.Client(api_key=active_key)
-            ai_resp = temp_client.models.generate_content(
-                model='gemini-3.6-flash',
-                contents=raw_data_prompt,
-                config=types.GenerateContentConfig(temperature=0.4)
-            )
-            if ai_resp.text: ai_summary = ai_resp.text.strip()
-        except Exception as ai_e:
-            print("AI summary error:", ai_e)
-
-        # 9. Assemble the New Colossal String
+        # 7. Assemble Streamlined Admin Message
         admin_msg = (
             f"🔐 **ADMIN DEBRIEF: WEEKLY CUP SEASON {current_week_num}**\n"
             f"📅 {date_range}\n\n"
@@ -1293,18 +1269,10 @@ def run_weekly_reset_background():
             f"• Hard Questions: {ki_hard}%\n"
             f"• Boss Questions: {ki_boss}%\n\n"
             f"═══════════════════════════════\n"
-            f"🏰 **6. HOUSE WAR**\n"
-            f"═══════════════════════════════\n\n"
-            f"{house_text}\n\n"
-            f"═══════════════════════════════\n"
-            f"📈 **7. WEEK-ON-WEEK CHANGE**\n"
+            f"📈 **6. WEEK-ON-WEEK CHANGE**\n"
             f"═══════════════════════════════\n\n"
             f"Compared with Season {current_week_num - 1}\n\n"
-            f"{wow_text}\n"
-            f"═══════════════════════════════\n"
-            f"📝 **8. AI SEASON SUMMARY**\n"
-            f"═══════════════════════════════\n\n"
-            f"{ai_summary}"
+            f"{wow_text}"
         )
 
         admin_ids = [716496729, 6251430317, 5103843488]
@@ -1313,7 +1281,7 @@ def run_weekly_reset_background():
             except: pass
 
     except Exception as e: notify_prathu(f"🚨 **ERROR (Weekly Debrief):** Failed to compile or send the Admin Debrief!\n`{e}`")
-
+        
     # ==========================================
     # 🩸 PRIVATE DM: ELO BLEED LEADERBOARD
     # ==========================================
