@@ -149,7 +149,9 @@ def process_answer(c, queue_id, user_id, first_name, poll_id, chosen_option):
                 current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
                 poll_day = poll_data[1] if poll_data[1] else current_ist.strftime('%a')
                 POLL_CACHE[poll_id] = (correct_index, poll_day)
-                is_correct = (chosen_option == correct_index)
+
+            # ✨ FIX: Shifted this line OUTSIDE the 'else' block so it always runs
+            is_correct = (chosen_option == correct_index)
 
             c.execute("""
                 INSERT INTO users (user_id, first_name) VALUES (%s, %s)
