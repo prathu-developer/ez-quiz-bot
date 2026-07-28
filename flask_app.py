@@ -2879,6 +2879,10 @@ def approve_captcha():
 
     # Instantly tell the Mini App to close without waiting!
     return jsonify({"status": "success"}), 200
+
+@app.route("/privacy")
+def privacy():
+    return render_template("privacy.html")
     
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
