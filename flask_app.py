@@ -61,6 +61,7 @@ app = Flask(__name__)
 RAM_CACHE = {
     "miniapp_snapshot": None
 }
+CACHE_LOCK = threading.Lock() # ✨ NEW: Protects Render from Cache Stampedes
 
 TELEGRAM_TOKEN = "8730359477:AAE4D3_koGNb6EHv40muYod79mV03JEntOQ"
 CHAT_ID = "-1003875580290"
@@ -2501,40 +2502,42 @@ def serve_mini_app():
     return render_template('leaderboard.html')
 
 def bake_miniapp_cache():
-    conn = get_db()
-    c = conn.cursor()
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
 
-    c.execute("SELECT value FROM bot_settings WHERE key='current_week'")
-    week_row = c.fetchone()
-    current_week_val = week_row[0] if week_row else 14
+        c.execute("SELECT value FROM bot_settings WHERE key='current_week'")
+        week_row = c.fetchone()
+        current_week_val = week_row[0] if week_row else 14
 
-    c.execute("SELECT COUNT(*) FROM polls")
-    total_quizzes_val = c.fetchone()[0]
-
-    c.execute("""
-        SELECT user_id, first_name, weekly_score, faction, is_captain, weekly_attempts, league_tier, weekly_correct, live_elo, last_updated
-        FROM users WHERE weekly_attempts > 0 ORDER BY weekly_score DESC, last_updated ASC
-    """)
-    top_users = c.fetchall()
-
-    c.execute("SELECT user_id, first_name, live_elo, last_updated FROM users ORDER BY live_elo DESC, last_updated ASC")
-    all_elo_users = c.fetchall()
-
-    # ✨ Changed from a 48-hour to a 7-day inactivity threshold to perfectly match the weekly season
-    seven_days_ago = time.time() - (7 * 24 * 3600)
-    elo_leaderboard = [{"rank": i + 1, "id": eu[0], "name": eu[1], "elo": round(eu[2] if eu[2] is not None else 1000, 1), "is_active": True if (eu[3] if eu[3] else 0) >= seven_days_ago else False} for i, eu in enumerate(all_elo_users)]
-
-    c.execute("SELECT user_id, week_num, rank, total_members, score, attempts, correct FROM weekly_rank_history ORDER BY week_num DESC")
-    rank_hist_dict = {}
-    for r in c.fetchall():
-        if r[0] not in rank_hist_dict: rank_hist_dict[r[0]] = []
-        rank_hist_dict[r[0]].append({"week": r[1], "rank": r[2], "total": r[3], "score": r[4], "attempts": r[5], "correct": r[6]})
-
-    c.execute("SELECT user_id, day_label, score, attempts, correct_answers FROM precise_scores")
-    precise_scores_dict = {}
-    for r in c.fetchall():
-        if r[0] not in precise_scores_dict: precise_scores_dict[r[0]] = []
-        precise_scores_dict[r[0]].append(r)
+        c.execute("SELECT COUNT(*) FROM polls")
+        total_quizzes_val = c.fetchone()[0]
+    
+        c.execute("""
+            SELECT user_id, first_name, weekly_score, faction, is_captain, weekly_attempts, league_tier, weekly_correct, live_elo, last_updated
+            FROM users WHERE weekly_attempts > 0 ORDER BY weekly_score DESC, last_updated ASC
+        """)
+        top_users = c.fetchall()
+    
+        c.execute("SELECT user_id, first_name, live_elo, last_updated FROM users ORDER BY live_elo DESC, last_updated ASC")
+        all_elo_users = c.fetchall()
+    
+        # ✨ Changed from a 48-hour to a 7-day inactivity threshold to perfectly match the weekly season
+        seven_days_ago = time.time() - (7 * 24 * 3600)
+        elo_leaderboard = [{"rank": i + 1, "id": eu[0], "name": eu[1], "elo": round(eu[2] if eu[2] is not None else 1000, 1), "is_active": True if (eu[3] if eu[3] else 0) >= seven_days_ago else False} for i, eu in enumerate(all_elo_users)]
+    
+        c.execute("SELECT user_id, week_num, rank, total_members, score, attempts, correct FROM weekly_rank_history ORDER BY week_num DESC")
+        rank_hist_dict = {}
+        for r in c.fetchall():
+            if r[0] not in rank_hist_dict: rank_hist_dict[r[0]] = []
+            rank_hist_dict[r[0]].append({"week": r[1], "rank": r[2], "total": r[3], "score": r[4], "attempts": r[5], "correct": r[6]})
+    
+        c.execute("SELECT user_id, day_label, score, attempts, correct_answers FROM precise_scores")
+        precise_scores_dict = {}
+        for r in c.fetchall():
+            if r[0] not in precise_scores_dict: precise_scores_dict[r[0]] = []
+            precise_scores_dict[r[0]].append(r)
 
     def get_exact_history_fast(uid): return {row[1]: {"score": row[2], "attempts": row[3], "correct": row[4]} for row in precise_scores_dict.get(uid, [])}
 
@@ -2605,18 +2608,22 @@ def bake_miniapp_cache():
             }
         })
 
-    class_avg_history_dict = {day: round(weighted_daily_sums[day] / sum_weights) if sum_weights > 0 else 0 for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]}
+        class_avg_history_dict = {day: round(weighted_daily_sums[day] / sum_weights) if sum_weights > 0 else 0 for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]}
 
-    json_string = json.dumps({"current_week": current_week_val, "total_quizzes": total_quizzes_val, "leaderboard": leaderboard_list, "topper_history": topper_history_dict, "class_avg_history": class_avg_history_dict, "elo_ranking": elo_leaderboard})
-    
-    # Save to Python's RAM instead of the remote database
-    global RAM_CACHE
-    RAM_CACHE["miniapp_snapshot"] = json_string
-    
-    # Still close the connection properly
-    conn.commit()
-    c.close()
-    release_db(conn)
+        json_string = json.dumps({"current_week": current_week_val, "total_quizzes": total_quizzes_val, "leaderboard": leaderboard_list, "topper_history": topper_history_dict, "class_avg_history": class_avg_history_dict, "elo_ranking": elo_leaderboard})
+        
+        # Save to Python's RAM instead of the remote database
+        global RAM_CACHE
+        RAM_CACHE["miniapp_snapshot"] = json_string
+        
+    except Exception as e:
+        print(f"🚨 Cache Bake Error: {e}")
+    finally:
+        # ✨ ALWAYS runs, even if the code above crashes!
+        if conn:
+            try: c.close()
+            except: pass
+            release_db(conn)
 
 from flask import Response
 
@@ -2626,10 +2633,13 @@ def get_mini_app_leaderboard():
     
     # Auto-bake RAM cache if empty after a deployment or server restart
     if not RAM_CACHE["miniapp_snapshot"]:
-        try:
-            bake_miniapp_cache()
-        except Exception as e:
-            print(f"Error building initial RAM cache: {e}")
+        with CACHE_LOCK: # ✨ The Traffic Light!
+            # Double-check inside the lock in case another thread just finished baking it
+            if not RAM_CACHE["miniapp_snapshot"]:
+                try:
+                    bake_miniapp_cache()
+                except Exception as e:
+                    print(f"Error building initial RAM cache: {e}")
 
     if RAM_CACHE["miniapp_snapshot"]:
         res = Response(RAM_CACHE["miniapp_snapshot"], mimetype='application/json')
@@ -2640,7 +2650,7 @@ def get_mini_app_leaderboard():
         return res
         
     return jsonify({"error": "Syncing..."}), 503
-
+    
 def run_word_of_the_day():
     # ==========================================
     # PART 1: LIFETIME WORD OF THE DAY (Thread 2343)
