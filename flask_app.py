@@ -25,17 +25,15 @@ def get_db():
     # Try up to 3 times to find a breathing connection in the pool
     max_retries = 3
     for _ in range(max_retries):
-        conn = db_pool.getconn()
         try:
-            # Polite knock to test if the pooled connection is alive
-            c = conn.cursor()
-            c.execute("SELECT 1")
-            c.close()
-            return conn
-        except (Exception, psycopg2.DatabaseError):
-            # The connection is dead! 
-            # Passing 'close=True' explicitly tells the pool to destroy this dead connection.
-            db_pool.putconn(conn, close=True)
+            conn = db_pool.getconn()
+            # ✨ INSTANT RAM CHECK: Zero network delay!
+            if conn.closed == 0:
+                return conn
+            else:
+                db_pool.putconn(conn, close=True)
+        except Exception:
+            pass
             
     # Fallback: if the pool is totally exhausted, grab one last time
     return db_pool.getconn()
