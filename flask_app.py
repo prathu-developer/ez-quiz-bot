@@ -930,14 +930,16 @@ def trigger_daily_reset():
     return "Daily reset triggered!", 200
 
 def run_weekly_reset_background():
-    conn = get_db()
-    c = conn.cursor()
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
 
-    c.execute("""
-        SELECT user_id, first_name, weekly_score, weekly_attempts, faction, league_tier, weekly_correct
-        FROM users WHERE weekly_attempts > 0 ORDER BY weekly_score DESC
-    """)
-    all_weekly_players = c.fetchall()
+        c.execute("""
+            SELECT user_id, first_name, weekly_score, weekly_attempts, faction, league_tier, weekly_correct
+            FROM users WHERE weekly_attempts > 0 ORDER BY weekly_score DESC
+        """)
+        all_weekly_players = c.fetchall()
 
     if not all_weekly_players:
         c.execute("INSERT INTO bot_settings (key, value) VALUES ('current_week', '14') ON CONFLICT (key) DO NOTHING")
@@ -1415,17 +1417,25 @@ def run_weekly_reset_background():
         except: time.sleep(3 + attempt * 2)
 
     # --- 🧹 SUNDAY SWEEP ---
-    c.execute("DELETE FROM polls")
-    c.execute("DELETE FROM user_answers")
-    thirty_days_ago = (datetime.utcnow() + timedelta(hours=5, minutes=30) - timedelta(days=30)).strftime('%Y-%m-%d')
-    c.execute("DELETE FROM daily_history WHERE date_str < %s", (thirty_days_ago,))
-    if week_row: c.execute("DELETE FROM weekly_rank_history WHERE week_num < %s", (int(week_row[0]) - 10,))
+        c.execute("DELETE FROM polls")
+        c.execute("DELETE FROM user_answers")
+        thirty_days_ago = (datetime.utcnow() + timedelta(hours=5, minutes=30) - timedelta(days=30)).strftime('%Y-%m-%d')
+        c.execute("DELETE FROM daily_history WHERE date_str < %s", (thirty_days_ago,))
+        if week_row: c.execute("DELETE FROM weekly_rank_history WHERE week_num < %s", (int(week_row[0]) - 10,))
 
-    conn.commit()
-    c.close()
-    release_db(conn)
-    update_live_leaderboard()
-    notify_prathu("🏆 **Weekly Cup Reset & Analytics Debrief** executed successfully!")
+        conn.commit()
+        update_live_leaderboard()
+        notify_prathu("🏆 **Weekly Cup Reset & Analytics Debrief** executed successfully!")
+        
+    except Exception as e:
+        print(f"🚨 Weekly Reset Error: {e}")
+        notify_prathu(f"🚨 **Weekly Reset Error:**\n`{e}`")
+    finally:
+        # ✨ Guarantees the database connection is safely returned
+        if conn:
+            try: c.close()
+            except: pass
+            release_db(conn)
 
 @app.route('/reset_weekly/0508', methods=['GET', 'POST'])
 def trigger_weekly_reset():
