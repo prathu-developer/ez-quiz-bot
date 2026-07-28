@@ -719,7 +719,7 @@ def webhook():
             # 🛡️ 2. BACKUP DM (Using user_chat_id to bypass the /start requirement)
             http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
                 "chat_id": user_chat_id,
-                "text": "🚨 **ACTION REQUIRED TO JOIN EZ EDITORIALS** 🚨\n\nYour join request is currently **PAUSED**.\n\nTo prevent spambots, all new members must complete a quick **10-question English trial**. Tap the button below to start!",
+                "text": "👋 **Welcome to Ez Editorials!**\n\nWe have received your request to join the Great Hall.\n\nTo ensure our community remains a high-quality environment for serious learners, we ask all new members to complete a quick, 10-question English Entrance Trial.\n\nTap the button below to prove your skills and instantly gain access to the group! 🪄",
                 "reply_markup": markup,
                 "parse_mode": "Markdown"
             })
@@ -727,10 +727,18 @@ def webhook():
             # 🔄 3. FALLBACK DM
             http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
                 "chat_id": user_chat_id,
-                "text": "🚨 **ACTION REQUIRED TO JOIN EZ EDITORIALS** 🚨\n\nYour join request is currently **PAUSED**.\n\nPlease complete the quick **10-question trial** below to gain entry to the group.",
+                "text": "👋 **Welcome to Ez Editorials!**\n\nWe have received your request to join the Great Hall.\n\nTo ensure our community remains a high-quality environment for serious learners, we ask all new members to complete a quick, 10-question English Entrance Trial.\n\nTap the button below to prove your skills and instantly gain access to the group! 🪄",
                 "reply_markup": markup,
                 "parse_mode": "Markdown"
             })
+            
+        # ✨ THE TIME BOMB: Starts a 1-hour countdown to auto-decline lazy users
+        def ignite_time_bomb():
+            try:
+                http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/declineChatJoinRequest", json={"chat_id": CHAT_ID, "user_id": user_id}, timeout=5)
+            except: pass
+            
+        threading.Timer(3600.0, ignite_time_bomb).start()
             
         return 'OK', 200
 
