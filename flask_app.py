@@ -2587,10 +2587,8 @@ def get_mini_app_leaderboard():
 
     if RAM_CACHE["miniapp_snapshot"]:
         res = Response(RAM_CACHE["miniapp_snapshot"], mimetype='application/json')
-        # Prevent Telegram WebApp from caching responses locally on students' phones
-        res.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
-        res.headers["Pragma"] = "no-cache"
-        res.headers["Expires"] = "0"
+        # ✨ Allow user devices to cache the leaderboard for 30s to prevent rapid re-downloads
+        res.headers["Cache-Control"] = "public, max-age=30"
         return res
         
     return jsonify({"error": "Syncing..."}), 503
