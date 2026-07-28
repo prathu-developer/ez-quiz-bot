@@ -56,6 +56,9 @@ current_key_index = 0
 LAST_AI_REPLY_TIME = 0  # ✨ NEW: Tracks Lixie's cooldown directly in local RAM!
 app = Flask(__name__)
 
+# ✨ NEW: The High-Speed Tunnel to Telegram and GitHub
+http_session = requests.Session()
+
 # --- IN-MEMORY CACHE TO SAVE BANDWIDTH ---
 RAM_CACHE = {
     "miniapp_snapshot": None
@@ -87,7 +90,7 @@ def notify_prathu(message):
         "parse_mode": "Markdown"
     }
     try:
-        requests.post(url, json=payload, timeout=10)
+        http_session.post(url, json=payload, timeout=10)
     except Exception as e:
         print(f"⚠️ Could not send DM to Prathu: {e}")
 
@@ -384,7 +387,7 @@ def update_live_leaderboard():
     max_retries = 10
     for attempt in range(max_retries):
         try:
-            res = requests.post(url, json=payload, timeout=10)
+            res = http_session.post(url, json=payload, timeout=10)
             if res.status_code == 200 or (res.status_code == 400 and "message is not modified" in res.text.lower()):
                 break
             elif res.status_code == 429:
@@ -430,7 +433,7 @@ def update_live_leaderboard():
 
     for attempt in range(max_retries):
         try:
-            res = requests.post(url, json=elo_payload, timeout=10)
+            res = http_session.post(url, json=elo_payload, timeout=10)
             if res.status_code == 200 or (res.status_code == 400 and "message is not modified" in res.text.lower()):
                 break
             elif res.status_code == 429:
@@ -612,7 +615,7 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
 
     for attempt in range(10):
         try:
-            res = requests.post(send_url, json=payload, timeout=15)
+            res = http_session.post(send_url, json=payload, timeout=15)
             if res.status_code == 200: break
             elif res.status_code == 429: time.sleep(res.json().get("parameters", {}).get("retry_after", 3) + 1)
             else: time.sleep(2)
@@ -628,7 +631,7 @@ def process_read_receipt(cb_id, user_id, first_name, message_id):
         # 1. Double-Tap Protection
         c.execute("SELECT 1 FROM read_receipts WHERE message_id=%s AND user_id=%s", (message_id, user_id))
         if c.fetchone():
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery", json={
+            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery", json={
                 "callback_query_id": cb_id, "text": "You've already marked this as read! 📖", "show_alert": False
             })
             return
@@ -652,10 +655,10 @@ def process_read_receipt(cb_id, user_id, first_name, message_id):
         
         # 5. Live-Update the Button
         markup = {"inline_keyboard": [[{"text": f"📖 Mark as Read • {total_reads}", "callback_data": f"read_{message_id}"}]]}
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageReplyMarkup", json={"chat_id": CHAT_ID, "message_id": message_id, "reply_markup": markup})
+        http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageReplyMarkup", json={"chat_id": CHAT_ID, "message_id": message_id, "reply_markup": markup})
         
         # 6. Inform the user they are safe
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery", json={
+        http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery", json={
             "callback_query_id": cb_id, "text": "Attendance marked! You are protected from the inactivity purge. 🛡️", "show_alert": False
         })
     except Exception as e:
@@ -701,13 +704,13 @@ def webhook():
         
         if query_id:
             # ✨ 1. NATIVE POP-UP (For supported Telegram clients)
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendChatJoinRequestWebApp", json={
+            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendChatJoinRequestWebApp", json={
                 "chat_join_request_query_id": query_id,
                 "web_app_url": MINI_APP_URL
             })
             
             # 🛡️ 2. BACKUP DM (If they accidentally swipe the pop-up away)
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
+            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
                 "chat_id": user_id,
                 "text": "🪄 **Did your Entrance Trial close accidentally?**\n\nYour join request is currently paused. Tap below to restart and complete your 10-question trial!",
                 "reply_markup": markup,
@@ -715,7 +718,7 @@ def webhook():
             })
         else:
             # 🔄 3. FALLBACK DM (If query_id is missing or native pop-up is unavailable)
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
+            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
                 "chat_id": user_id,
                 "text": "🪄 **Welcome to Ez Editorials!**\n\nPlease tap the button below to complete your Entrance Trial and gain entry to the group.",
                 "reply_markup": markup,
@@ -852,14 +855,14 @@ def run_midnight_purge_background():
                 if total_reads < 4 and total_quizzes < 50:
                     
                     # 1. Soft-Ban to remove from group
-                    res_ban = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/banChatMember", json={
+                    res_ban = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/banChatMember", json={
                         "chat_id": CHAT_ID, "user_id": uid
                     }, timeout=5)
                     
                     if res_ban.status_code == 200 and res_ban.json().get('ok'):
                         # 2. BULLETPROOF UNBAN
                         for _ in range(5):
-                            res_unban = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/unbanChatMember", json={
+                            res_unban = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/unbanChatMember", json={
                                 "chat_id": CHAT_ID, "user_id": uid, "only_if_banned": True
                             }, timeout=5)
                             if res_unban.status_code == 200:
@@ -1028,11 +1031,11 @@ def run_weekly_reset_background():
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         for attempt in range(5):
             try:
-                res = requests.post(url, json={"chat_id": CHAT_ID, "text": group_text, "parse_mode": "Markdown", "message_thread_id": TELEGRAM_THREAD_ID}, timeout=10)
+                res = http_session.post(url, json={"chat_id": CHAT_ID, "text": group_text, "parse_mode": "Markdown", "message_thread_id": TELEGRAM_THREAD_ID}, timeout=10)
                 if res.json().get("ok"):
                     for _ in range(3):
                         try:
-                            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False}, timeout=5)
+                            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False}, timeout=5)
                             break
                         except: time.sleep(2)
                     break
@@ -1274,7 +1277,7 @@ def run_weekly_reset_background():
 
             admin_ids = [716496729, 6251430317, 5103843488]
             for a_id in admin_ids:
-                try: requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": a_id, "text": admin_msg, "parse_mode": "Markdown"}, timeout=5)
+                try: http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": a_id, "text": admin_msg, "parse_mode": "Markdown"}, timeout=5)
                 except: pass
 
         except Exception as e: notify_prathu(f"🚨 **ERROR (Weekly Debrief):** Failed to compile or send the Admin Debrief!\n`{e}`")
@@ -1331,7 +1334,7 @@ def run_weekly_reset_background():
 
                 bleed_text += "\n🟢 Positive growth\n🟡 Almost unchanged\n🔴 Negative growth"
 
-                requests.post(
+                http_session.post(
                     f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
                     json={"chat_id": "716496729", "text": bleed_text, "parse_mode": "Markdown"}, 
                     timeout=5
@@ -1391,11 +1394,11 @@ def run_weekly_reset_background():
 
         for attempt in range(5):
             try:
-                res = requests.post(url, json={"chat_id": CHAT_ID, "message_thread_id": ANNOUNCEMENT_THREAD_ID, "text": announcement_text, "parse_mode": "Markdown"}, timeout=10)
+                res = http_session.post(url, json={"chat_id": CHAT_ID, "message_thread_id": ANNOUNCEMENT_THREAD_ID, "text": announcement_text, "parse_mode": "Markdown"}, timeout=10)
                 if res.json().get("ok"):
                     for _ in range(3):
                         try:
-                            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False}, timeout=5)
+                            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False}, timeout=5)
                             break
                         except: time.sleep(2)
                     break
@@ -1459,7 +1462,7 @@ def run_queue_processor_background():
             pass 
         else:
             try:
-                requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
+                http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
                     "chat_id": "716496729",
                     "text": f"🚨 **CRITICAL CRON ERROR (Queue Processor)** 🚨\n\n`{e}`",
                     "parse_mode": "Markdown"
@@ -1495,7 +1498,7 @@ def run_heavy_math_background():
         c.close()
     except Exception as e:
         try:
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
+            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
                 "chat_id": "716496729",
                 "text": f"🚨 **CRITICAL CRON ERROR (Heavy Math Engine)** 🚨\n\n`{e}`",
                 "parse_mode": "Markdown"
@@ -1540,7 +1543,7 @@ def cron_update_telegram_text():
             return "No update needed.", 200
     except Exception as e:
         try:
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
+            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
                 "chat_id": "716496729",
                 "text": f"🚨 **CRITICAL CRON ERROR (Telegram Updater)** 🚨\n\n`{e}`",
                 "parse_mode": "Markdown"
@@ -1576,7 +1579,7 @@ def dispatch_practice_sets():
             "Accept": "application/vnd.github.v3.raw"  # Tells GitHub to return the raw JSON file text directly
         }
         
-        response = requests.get(github_grammar_url, headers=headers, timeout=15)
+        response = http_session.get(github_grammar_url, headers=headers, timeout=15)
         response.raise_for_status()
         data = response.json()
         titles, set_a, set_b, set_c = data.get("titles", []), data.get("set_a", []), data.get("set_b", []), data.get("set_c", [])
@@ -1597,9 +1600,9 @@ def dispatch_practice_sets():
     def safe_send_text(text, pin=False):
         for attempt in range(10):
             try:
-                res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": PRACTICE_THREAD_ID, "text": text, "parse_mode": "Markdown"}, timeout=20)
+                res = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": PRACTICE_THREAD_ID, "text": text, "parse_mode": "Markdown"}, timeout=20)
                 if res.status_code == 200:
-                    if pin: requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"]}, timeout=10)
+                    if pin: http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"]}, timeout=10)
                     return True
                 elif res.status_code == 429: time.sleep(res.json().get("parameters", {}).get("retry_after", 3) + 1)
                 else: time.sleep(2)
@@ -1630,7 +1633,7 @@ def dispatch_practice_sets():
             }
             for tg_attempt in range(10):
                 try:
-                    res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPoll", json=poll_payload, timeout=20)
+                    res = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPoll", json=poll_payload, timeout=20)
                     if res.status_code == 200:
                         if CONNECT_TO_LEADERBOARD:
                             poll_id = res.json()['result']['poll']['id']
@@ -1791,7 +1794,7 @@ def run_sunday_announcement():
     text = "_There won't be any Today's Editorials today; Editorials will be available Monday through Saturday exclusively._"
     for attempt in range(10):
         try:
-            res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": 3, "text": text, "parse_mode": "Markdown"}, timeout=20)
+            res = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": 3, "text": text, "parse_mode": "Markdown"}, timeout=20)
             if res.status_code == 200: 
                 notify_prathu("📢 **Sunday Announcement** posted successfully!")
                 break
@@ -1813,9 +1816,9 @@ def run_daily_vocab_and_quizzes():
 
     for attempt in range(10):
         try:
-            res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": 246, "text": text, "parse_mode": "Markdown"}, timeout=20)
+            res = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": 246, "text": text, "parse_mode": "Markdown"}, timeout=20)
             if res.status_code == 200:
-                requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False}, timeout=20)
+                http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False}, timeout=20)
                 break
             elif res.status_code == 429: time.sleep(res.json().get("parameters", {}).get("retry_after", 5) + 1)
             else: time.sleep(2)
@@ -1833,7 +1836,7 @@ def run_daily_vocab_and_quizzes():
             "Authorization": f"token {GITHUB_PAT}",
             "Accept": "application/vnd.github.v3.raw"
         }
-        mcqs = requests.get(github_vocab_url, headers=headers, timeout=15).json()
+        mcqs = http_session.get(github_vocab_url, headers=headers, timeout=15).json()
     except Exception as e: 
         notify_prathu(f"🚨 **CRITICAL ERROR (Vocab):** Failed to fetch `questions.json` from GitHub. Quizzes did NOT drop!\n`{e}`")
         return
@@ -1856,7 +1859,7 @@ def run_daily_vocab_and_quizzes():
 
         for attempt in range(10):
             try:
-                poll_res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPoll", json=poll_payload, timeout=20)
+                poll_res = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPoll", json=poll_payload, timeout=20)
                 if poll_res.status_code == 200:
                     try:
                         conn = get_db()
@@ -1910,9 +1913,9 @@ def run_sunday_reminder():
         
         for attempt in range(10):
             try:
-                res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": target["thread_id"], "text": text, "parse_mode": "Markdown"}, timeout=20)
+                res = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": target["thread_id"], "text": text, "parse_mode": "Markdown"}, timeout=20)
                 if res.status_code == 200:
-                    requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False}, timeout=10)
+                    http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False}, timeout=10)
                     notify_prathu("⏳ **Sunday Warning Reminder** posted successfully!")
                     break
             except: 
@@ -1955,9 +1958,9 @@ def run_sunday_final_reminder():
 
     for attempt in range(10):
         try:
-            res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": 11, "text": text, "parse_mode": "HTML"}, timeout=20)
+            res = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": 11, "text": text, "parse_mode": "HTML"}, timeout=20)
             if res.status_code == 200:
-                requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False}, timeout=10)
+                http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False}, timeout=10)
                 notify_prathu("⏱️ **Sunday Final Midnight Reminder** posted successfully!")
                 break
         except: time.sleep(3 + attempt * 2)
@@ -1994,7 +1997,7 @@ def fetch_and_update_exams_db():
             "Authorization": f"token {GITHUB_PAT}",
             "Accept": "application/vnd.github.v3.raw"
         }
-        latest_exams = requests.get(github_exams_url, headers=headers, timeout=10).json()
+        latest_exams = http_session.get(github_exams_url, headers=headers, timeout=10).json()
         
         conn = get_db()
         c = conn.cursor()
@@ -2046,7 +2049,7 @@ def update_exam_countdown():
 
     for attempt in range(10):
         try:
-            res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText", json={"chat_id": CHAT_ID, "message_id": COUNTDOWN_MESSAGE_ID, "text": text, "parse_mode": "Markdown"}, timeout=10)
+            res = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText", json={"chat_id": CHAT_ID, "message_id": COUNTDOWN_MESSAGE_ID, "text": text, "parse_mode": "Markdown"}, timeout=10)
             if res.status_code == 200: break
             elif res.status_code == 429: time.sleep(res.json().get("parameters", {}).get("retry_after", 3) + 1)
             else: break
@@ -2166,18 +2169,18 @@ def generate_and_send_commentary():
     try:
         c.execute("SELECT value FROM bot_settings WHERE key='last_commentary_msg_id'")
         if last_msg := c.fetchone():
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage", json={"chat_id": CHAT_ID, "message_id": int(last_msg[0])}, timeout=5)
+            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage", json={"chat_id": CHAT_ID, "message_id": int(last_msg[0])}, timeout=5)
             
         c.execute("SELECT value FROM bot_settings WHERE key='last_quick_insights_msg_id'")
         if last_insights_msg := c.fetchone():
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage", json={"chat_id": CHAT_ID, "message_id": int(last_insights_msg[0])}, timeout=5)
+            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage", json={"chat_id": CHAT_ID, "message_id": int(last_insights_msg[0])}, timeout=5)
     except: 
         pass
 
     # STEP 6: Send MESSAGE 1 (AI Commentary)
     for attempt in range(3):
         try:
-            res_main = requests.post(
+            res_main = http_session.post(
                 f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
                 json={
                     "chat_id": CHAT_ID, 
@@ -2210,7 +2213,7 @@ def generate_and_send_commentary():
 
         for attempt in range(3):
             try:
-                res_sec = requests.post(
+                res_sec = http_session.post(
                     f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
                     json={
                         "chat_id": CHAT_ID, 
@@ -2238,7 +2241,7 @@ def relay_message(message_id, target_thread_id):
     payload = {"chat_id": CHAT_ID, "from_chat_id": SOURCE_CHAT_ID, "message_id": message_id, "message_thread_id": target_thread_id}
     for attempt in range(5):
         try:
-            res = requests.post(url, json=payload, timeout=10)
+            res = http_session.post(url, json=payload, timeout=10)
             if res.status_code == 200:
                 new_msg_id = res.json()["result"]["message_id"]
                 try:
@@ -2260,7 +2263,7 @@ def relay_message(message_id, target_thread_id):
                             {"text": "📖 Mark as Read • 0", "callback_data": f"read_{new_msg_id}"}
                         ]]
                     }
-                    requests.post(
+                    http_session.post(
                         f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageReplyMarkup",
                         json={"chat_id": CHAT_ID, "message_id": new_msg_id, "reply_markup": markup},
                         timeout=5
@@ -2279,7 +2282,7 @@ def sync_message_edit(msg, target_msg_id):
             }
             if 'entities' in msg:
                 payload['entities'] = msg['entities']
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText", json=payload, timeout=10)
+            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText", json=payload, timeout=10)
             
         # If it's a photo/document with a caption
         elif 'caption' in msg:
@@ -2290,7 +2293,7 @@ def sync_message_edit(msg, target_msg_id):
             }
             if 'caption_entities' in msg:
                 payload['caption_entities'] = msg['caption_entities']
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageCaption", json=payload, timeout=10)
+            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageCaption", json=payload, timeout=10)
     except Exception as e:
         print(f"Sync edit error: {e}")
 
@@ -2298,7 +2301,7 @@ def process_ranking_command(chat_id, user_id, message_id, thread_id):
     try:
         # 1. ✨ STEALTH MODE: Instantly delete the student's /rank text message
         try:
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage", json={
+            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage", json={
                 "chat_id": chat_id,
                 "message_id": message_id
             }, timeout=5)
@@ -2336,7 +2339,7 @@ def process_ranking_command(chat_id, user_id, message_id, thread_id):
                     "inline_keyboard": [[{"text": "📊 Open Full Dashboard", "url": "https://t.me/Ez_vocab_bot/leaderboard"}]]
                 }
             }
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json=payload, timeout=10)
+            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json=payload, timeout=10)
             return
 
         u_score = user_stats['score']
@@ -2432,7 +2435,7 @@ def process_ranking_command(chat_id, user_id, message_id, thread_id):
                 ]]
             }
         }
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json=payload, timeout=10)
+        http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json=payload, timeout=10)
     except Exception as e:
         print(f"🚨 Error executing /rank command: {e}")
 
@@ -2658,7 +2661,7 @@ Connotation Guide:
     if wotd_text:
         for attempt in range(10):
             try:
-                res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": 2343, "text": wotd_text}, timeout=20)
+                res = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": 2343, "text": wotd_text}, timeout=20)
                 if res.status_code == 200:
                     try:
                         lines = [line.strip() for line in wotd_text.split('\n') if line.strip()]
@@ -2756,7 +2759,7 @@ Output EXACTLY in this format:
         if foreign_text:
             for attempt in range(10):
                 try:
-                    res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": 11028, "text": foreign_text}, timeout=20)
+                    res = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": 11028, "text": foreign_text}, timeout=20)
                     if res.status_code == 200:
                         try:
                             conn = get_db()
@@ -2795,7 +2798,7 @@ def background_approve_user(user_id):
     # 1. Approve the request safely with anti-spam retry logic
     for attempt in range(5):
         try:
-            res = requests.post(url, json=payload, timeout=10)
+            res = http_session.post(url, json=payload, timeout=10)
             if res.status_code == 200:
                 break
             elif res.status_code == 429: # Telegram Rate Limit
@@ -2807,7 +2810,7 @@ def background_approve_user(user_id):
             
     # 2. Send the Welcome DM
     try:
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
+        http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
             "chat_id": user_id,
             "text": "🎉 **Trial Complete!**\n\nYou have been approved. Welcome to the Great Hall of Ez Editorials! 🪄",
             "parse_mode": "Markdown"
