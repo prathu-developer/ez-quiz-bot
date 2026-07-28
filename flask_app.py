@@ -705,27 +705,31 @@ def webhook():
         query_id = join_req.get('query_id')
         user_id = join_req['from']['id']
         
-        # NOTE: Your actual Render URL!
         MINI_APP_URL = "https://ez-editorials-bot.onrender.com/captcha?mode=compact"
+        markup = {"inline_keyboard": [[{"text": "📝 Start Entrance Trial", "web_app": {"url": MINI_APP_URL}}]]}
         
         if query_id:
-            # ✨ 1. THE MAGIC NATIVE POP-UP (Triggers immediately on their screen)
+            # ✨ 1. NATIVE POP-UP (For supported Telegram clients)
             requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendChatJoinRequestWebApp", json={
                 "chat_join_request_query_id": query_id,
                 "web_app_url": MINI_APP_URL
             })
             
-            # 🛡️ 2. THE SAFETY NET DM (Stays in their inbox in case they swipe the pop-up away)
-            markup = {"inline_keyboard": [[{"text": "📝 Restart Entrance Trial", "web_app": {"url": MINI_APP_URL}}]]}
+            # 🛡️ 2. BACKUP DM (If they accidentally swipe the pop-up away)
             requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
                 "chat_id": user_id,
-                "text": "🪄 **Did your Entrance Trial close accidentally?**\n\nYour join request is currently paused. You can restart and complete your 10-question trial at any time by tapping the button below!",
+                "text": "🪄 **Did your Entrance Trial close accidentally?**\n\nYour join request is currently paused. Tap below to restart and complete your 10-question trial!",
                 "reply_markup": markup,
                 "parse_mode": "Markdown"
             })
         else:
-            # Fallback if the BotFather settings aren't applied correctly
-            print(f"⚠️ Telegram blocked the native pop-up for user {user_id} because the bot isn't assigned as a Verification Bot.")
+            # 🔄 3. FALLBACK DM (If query_id is missing or native pop-up is unavailable)
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
+                "chat_id": user_id,
+                "text": "🪄 **Welcome to Ez Editorials!**\n\nPlease tap the button below to complete your Entrance Trial and gain entry to the group.",
+                "reply_markup": markup,
+                "parse_mode": "Markdown"
+            })
             
         return 'OK', 200
 
