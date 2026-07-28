@@ -703,28 +703,31 @@ def webhook():
         query_id = join_req.get('query_id')
         user_id = join_req['from']['id']
         
+        # ✨ Use Telegram's secret join request bypass ID
+        user_chat_id = join_req.get('user_chat_id', user_id)
+        
         MINI_APP_URL = "https://ez-editorials-bot.onrender.com/captcha?mode=compact"
-        markup = {"inline_keyboard": [[{"text": "📝 Start Entrance Trial", "web_app": {"url": MINI_APP_URL}}]]}
+        markup = {"inline_keyboard": [[{"text": "⚡️ Complete Entrance Trial (10Q)", "web_app": {"url": MINI_APP_URL}}]]}
         
         if query_id:
-            # ✨ 1. NATIVE POP-UP (For supported Telegram clients)
+            # ✨ 1. NATIVE POP-UP
             http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendChatJoinRequestWebApp", json={
                 "chat_join_request_query_id": query_id,
                 "web_app_url": MINI_APP_URL
             })
             
-            # 🛡️ 2. BACKUP DM (If they accidentally swipe the pop-up away)
+            # 🛡️ 2. BACKUP DM (Using user_chat_id to bypass the /start requirement)
             http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
-                "chat_id": user_id,
-                "text": "🪄 **Did your Entrance Trial close accidentally?**\n\nYour join request is currently paused. Tap below to restart and complete your 10-question trial!",
+                "chat_id": user_chat_id,
+                "text": "🚨 **ACTION REQUIRED TO JOIN EZ EDITORIALS** 🚨\n\nYour join request is currently **PAUSED**.\n\nTo prevent spambots, all new members must complete a quick **10-question English trial**. Tap the button below to start!",
                 "reply_markup": markup,
                 "parse_mode": "Markdown"
             })
         else:
-            # 🔄 3. FALLBACK DM (If query_id is missing or native pop-up is unavailable)
+            # 🔄 3. FALLBACK DM
             http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
-                "chat_id": user_id,
-                "text": "🪄 **Welcome to Ez Editorials!**\n\nPlease tap the button below to complete your Entrance Trial and gain entry to the group.",
+                "chat_id": user_chat_id,
+                "text": "🚨 **ACTION REQUIRED TO JOIN EZ EDITORIALS** 🚨\n\nYour join request is currently **PAUSED**.\n\nPlease complete the quick **10-question trial** below to gain entry to the group.",
                 "reply_markup": markup,
                 "parse_mode": "Markdown"
             })
@@ -933,6 +936,15 @@ def trigger_daily_reset():
     return "Daily reset triggered!", 200
 
 def run_weekly_reset_background():
+    # ✨ NEW: The Live Status Tracker
+    reset_status = {
+        "Database_Reset": "🔴 Failed",
+        "Top10_Announcement": "🔴 Failed",
+        "Admin_Debrief": "🔴 Failed",
+        "Elo_Bleed_DM": "🔴 Failed",
+        "Public_WrapUp": "🔴 Failed"
+    }
+    
     conn = None
     try:
         conn = get_db()
@@ -1003,7 +1015,7 @@ def run_weekly_reset_background():
                         rank = EXCLUDED.rank, total_members = EXCLUDED.total_members,
                         score = EXCLUDED.score, attempts = EXCLUDED.attempts, correct = EXCLUDED.correct
                 """, (uid, current_week_num, rank_index + 1, total_players_this_week, u_score, u_attempts, u_correct))
-            conn.commit()
+            # ✨ Removed the premature conn.commit() so it waits for the final lock!
         except Exception as e: print(e)
 
         c.execute("INSERT INTO bot_settings (key, value) VALUES ('current_week', '14') ON CONFLICT DO NOTHING")
@@ -1346,10 +1358,7 @@ def run_weekly_reset_background():
         except Exception as e:
             print(f"🚨 Error generating Elo Bleed DM: {e}")
 
-        c.execute("UPDATE users SET faction = NULL WHERE weekly_score < %s", (target_average,))
-        c.execute("UPDATE users SET base_elo = live_elo, weekly_score = 0, weekly_attempts = 0, is_captain = 0")
-        c.execute("DELETE FROM precise_scores")
-        
+        # ✨ 1. FIRST: Select the captains while the scores are still intact!
         c.execute("SELECT user_id, first_name FROM users WHERE faction='Gryffindor 🦁🔥' AND weekly_attempts > 0 ORDER BY weekly_score DESC LIMIT 1")
         top_gryffindor = c.fetchone()
         c.execute("SELECT user_id, first_name FROM users WHERE faction='Slytherin 🐍💧' AND weekly_attempts > 0 ORDER BY weekly_score DESC LIMIT 1")
@@ -1359,6 +1368,12 @@ def run_weekly_reset_background():
         c.execute("SELECT user_id, first_name FROM users WHERE faction='Hufflepuff 🦡🌍' AND weekly_attempts > 0 ORDER BY weekly_score DESC LIMIT 1")
         top_hufflepuff = c.fetchone()
 
+        # ✨ 2. SECOND: Execute "The Great Wipe" securely
+        c.execute("UPDATE users SET faction = NULL WHERE weekly_score < %s", (target_average,))
+        c.execute("UPDATE users SET base_elo = live_elo, weekly_score = 0, weekly_attempts = 0, is_captain = 0")
+        c.execute("DELETE FROM precise_scores")
+
+        # ✨ 3. THIRD: Reinstate the House Captains with their badges
         if top_gryffindor: c.execute("UPDATE users SET faction='Gryffindor 🦁🔥', is_captain=1 WHERE user_id=%s", (top_gryffindor[0],))
         if top_slytherin: c.execute("UPDATE users SET faction='Slytherin 🐍💧', is_captain=1 WHERE user_id=%s", (top_slytherin[0],))
         if top_ravenclaw: c.execute("UPDATE users SET faction='Ravenclaw 🦅💨', is_captain=1 WHERE user_id=%s", (top_ravenclaw[0],))
@@ -1424,14 +1439,18 @@ def run_weekly_reset_background():
         notify_prathu("🏆 **Weekly Cup Reset & Analytics Debrief** executed successfully!")
         
     except Exception as e:
+        # ✨ THE ULTIMATE SAFETY NET: If ANYTHING fails, erase all changes!
+        if conn:
+            conn.rollback()
         print(f"🚨 Weekly Reset Error: {e}")
-        notify_prathu(f"🚨 **Weekly Reset Error:**\n`{e}`")
+        notify_prathu(f"🚨 **Weekly Reset Error (Safely Rolled Back!):**\n`{e}`")
     finally:
         # ✨ Guarantees the database connection is safely returned
         if conn:
             try: c.close()
             except: pass
             release_db(conn)
+            
 @app.route('/reset_weekly/0508', methods=['GET', 'POST'])
 def trigger_weekly_reset():
     threading.Thread(target=run_weekly_reset_background).start()
