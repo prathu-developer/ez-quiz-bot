@@ -2836,6 +2836,36 @@ def trigger_word_of_the_day():
 def serve_captcha():
     return render_template('captcha.html')
 
+def background_approve_user(user_id):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/approveChatJoinRequest"
+    payload = {
+        "chat_id": CHAT_ID,
+        "user_id": user_id
+    }
+    
+    # 1. Approve the request safely with anti-spam retry logic
+    for attempt in range(5):
+        try:
+            res = requests.post(url, json=payload, timeout=10)
+            if res.status_code == 200:
+                break
+            elif res.status_code == 429: # Telegram Rate Limit
+                time.sleep(res.json().get("parameters", {}).get("retry_after", 3) + 1)
+            else:
+                break
+        except:
+            time.sleep(2)
+            
+    # 2. Send the Welcome DM
+    try:
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
+            "chat_id": user_id,
+            "text": "🎉 **Trial Complete!**\n\nYou have been approved. Welcome to the Great Hall of Ez Editorials! 🪄",
+            "parse_mode": "Markdown"
+        }, timeout=5)
+    except:
+        pass
+
 @app.route('/api/approve_captcha', methods=['POST'])
 def approve_captcha():
     data = request.get_json()
@@ -2844,26 +2874,12 @@ def approve_captcha():
     if not user_id:
         return jsonify({"error": "No user ID provided"}), 400
 
-    # The moment they finish 10 clicks, the bot magically approves their join request!
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/approveChatJoinRequest"
-    payload = {
-        "chat_id": CHAT_ID,
-        "user_id": user_id
-    }
-    
-    try:
-        requests.post(url, json=payload, timeout=5)
-        # Optional: Send them a welcome DM right after they are approved
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
-            "chat_id": user_id,
-            "text": "🎉 **Trial Complete!**\n\nYou have been approved. Welcome to the Great Hall of Ez Editorials! 🪄",
-            "parse_mode": "Markdown"
-        }, timeout=5)
-    except Exception as e:
-        print(f"Error approving join request: {e}")
+    # Instantly pass the heavy lifting to a background thread
+    threading.Thread(target=background_approve_user, args=(user_id,)).start()
 
+    # Instantly tell the Mini App to close without waiting!
     return jsonify({"status": "success"}), 200
-
+    
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
