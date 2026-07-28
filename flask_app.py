@@ -2520,74 +2520,74 @@ def bake_miniapp_cache():
             if r[0] not in precise_scores_dict: precise_scores_dict[r[0]] = []
             precise_scores_dict[r[0]].append(r)
 
-    def get_exact_history_fast(uid): return {row[1]: {"score": row[2], "attempts": row[3], "correct": row[4]} for row in precise_scores_dict.get(uid, [])}
+        def get_exact_history_fast(uid): return {row[1]: {"score": row[2], "attempts": row[3], "correct": row[4]} for row in precise_scores_dict.get(uid, [])}
 
-    weighted_daily_sums = {"Mon": 0, "Tue": 0, "Wed": 0, "Thu": 0, "Fri": 0, "Sat": 0, "Sun": 0}
-    sum_weights = 0
-    topper_history_dict = {}
-    leaderboard_list = []
-    day_order = {"Mon": 1, "Tue": 2, "Wed": 3, "Thu": 4, "Fri": 5, "Sat": 6, "Sun": 7}
+        weighted_daily_sums = {"Mon": 0, "Tue": 0, "Wed": 0, "Thu": 0, "Fri": 0, "Sat": 0, "Sun": 0}
+        sum_weights = 0
+        topper_history_dict = {}
+        leaderboard_list = []
+        day_order = {"Mon": 1, "Tue": 2, "Wed": 3, "Thu": 4, "Fri": 5, "Sat": 6, "Sun": 7}
 
-    for index, user in enumerate(top_users):
-        uid = user[0]
-        u_score = int(user[2]) if user[2] % 1 == 0 else round(user[2], 2)
-        u_attempts = user[5] if user[5] is not None else 0
-        u_correct = user[7] if user[7] is not None else 0
-        weight = u_attempts ** 0.5
-        sum_weights += weight
+        for index, user in enumerate(top_users):
+            uid = user[0]
+            u_score = int(user[2]) if user[2] % 1 == 0 else round(user[2], 2)
+            u_attempts = user[5] if user[5] is not None else 0
+            u_correct = user[7] if user[7] is not None else 0
+            weight = u_attempts ** 0.5
+            sum_weights += weight
 
-        user_hist = get_exact_history_fast(uid)
-        sorted_user_hist = sorted(user_hist.items(), key=lambda x: day_order.get(x[0], 99))
+            user_hist = get_exact_history_fast(uid)
+            sorted_user_hist = sorted(user_hist.items(), key=lambda x: day_order.get(x[0], 99))
 
-        for day, stats in user_hist.items():
-            weighted_daily_sums[day] = weighted_daily_sums.get(day, 0) + (stats["score"] * weight)
+            for day, stats in user_hist.items():
+                weighted_daily_sums[day] = weighted_daily_sums.get(day, 0) + (stats["score"] * weight)
 
-        if index == 0: topper_history_dict = {k: (int(v["score"]) if v["score"] % 1 == 0 else round(v["score"], 2)) for k, v in user_hist.items()}
+            if index == 0: topper_history_dict = {k: (int(v["score"]) if v["score"] % 1 == 0 else round(v["score"], 2)) for k, v in user_hist.items()}
 
-        # ✨ THE MASTER GROWTH FORMULA ✨
-        hist = rank_hist_dict.get(uid, [])
-        lifetime_growth_text = "Calibrating..."
-        
-        if len(hist) > 0:
-            curr_acc = (u_correct / u_attempts) * 100 if u_attempts > 0 else 0
-            u_elo_val = user[8] if user[8] is not None else 1000
+            # ✨ THE MASTER GROWTH FORMULA ✨
+            hist = rank_hist_dict.get(uid, [])
+            lifetime_growth_text = "Calibrating..."
             
-            # Establish the Dynamic Baseline
-            if len(hist) == 1:
-                # Sophomore: Base off their single Week 1
-                base_att = hist[0]['attempts']
-                base_corr = hist[0]['correct'] if hist[0]['correct'] else 0
-            else:
-                # Veteran: Base off the average of their two oldest weeks (which are at the end of the list)
-                base_att = hist[-1]['attempts'] + hist[-2]['attempts']
-                base_corr = (hist[-1]['correct'] if hist[-1]['correct'] else 0) + (hist[-2]['correct'] if hist[-2]['correct'] else 0)
+            if len(hist) > 0:
+                curr_acc = (u_correct / u_attempts) * 100 if u_attempts > 0 else 0
+                u_elo_val = user[8] if user[8] is not None else 1000
                 
-            base_acc = (base_corr / base_att) * 100 if base_att > 0 else 0
-            
-            # Calculate Sub-Indicators
-            accuracy_shift = curr_acc - base_acc
-            elo_factor = (u_elo_val - 1000) / 10.0
-            consistency_multiplier = 1.0 + (len(hist) * 0.05) # 5% boost for every active week
-            
-            raw_growth = (accuracy_shift + elo_factor) * consistency_multiplier
-            
-            # Format the output (hide negative dips to prevent demotivation)
-            if raw_growth > 0:
-                lifetime_growth_text = f"+{int(raw_growth)}%"
+                # Establish the Dynamic Baseline
+                if len(hist) == 1:
+                    # Sophomore: Base off their single Week 1
+                    base_att = hist[0]['attempts']
+                    base_corr = hist[0]['correct'] if hist[0]['correct'] else 0
+                else:
+                    # Veteran: Base off the average of their two oldest weeks (which are at the end of the list)
+                    base_att = hist[-1]['attempts'] + hist[-2]['attempts']
+                    base_corr = (hist[-1]['correct'] if hist[-1]['correct'] else 0) + (hist[-2]['correct'] if hist[-2]['correct'] else 0)
+                    
+                base_acc = (base_corr / base_att) * 100 if base_att > 0 else 0
+                
+                # Calculate Sub-Indicators
+                accuracy_shift = curr_acc - base_acc
+                elo_factor = (u_elo_val - 1000) / 10.0
+                consistency_multiplier = 1.0 + (len(hist) * 0.05) # 5% boost for every active week
+                
+                raw_growth = (accuracy_shift + elo_factor) * consistency_multiplier
+                
+                # Format the output (hide negative dips to prevent demotivation)
+                if raw_growth > 0:
+                    lifetime_growth_text = f"+{int(raw_growth)}%"
 
-        leaderboard_list.append({
-            "rank": index + 1, "id": uid, "name": user[1], "score": u_score,
-            "elo": round(user[8] if user[8] is not None else 1000, 1), 
-            "last_updated": user[9] if user[9] else 0,
-            "house": str(user[3]), "is_captain": user[4], "attempts": u_attempts, "league": user[6] if user[6] else 0,
-            "lifetime_growth": lifetime_growth_text, # ✨ Slotted straight into the JSON payload!
-            "rank_history": hist,
-            "history": {
-                "labels": [k for k, v in sorted_user_hist], "scores": [(int(v["score"]) if v["score"] % 1 == 0 else round(v["score"], 2)) for k, v in sorted_user_hist],
-                "daily_correct": [v["correct"] for k, v in sorted_user_hist], "daily_attempts": [v["attempts"] for k, v in sorted_user_hist],
-                "accuracy": round((u_correct / u_attempts) * 100) if u_attempts > 0 else 0, "correct": u_correct, "wrong": max(0, u_attempts - u_correct)
-            }
-        })
+            leaderboard_list.append({
+                "rank": index + 1, "id": uid, "name": user[1], "score": u_score,
+                "elo": round(user[8] if user[8] is not None else 1000, 1), 
+                "last_updated": user[9] if user[9] else 0,
+                "house": str(user[3]), "is_captain": user[4], "attempts": u_attempts, "league": user[6] if user[6] else 0,
+                "lifetime_growth": lifetime_growth_text, # ✨ Slotted straight into the JSON payload!
+                "rank_history": hist,
+                "history": {
+                    "labels": [k for k, v in sorted_user_hist], "scores": [(int(v["score"]) if v["score"] % 1 == 0 else round(v["score"], 2)) for k, v in sorted_user_hist],
+                    "daily_correct": [v["correct"] for k, v in sorted_user_hist], "daily_attempts": [v["attempts"] for k, v in sorted_user_hist],
+                    "accuracy": round((u_correct / u_attempts) * 100) if u_attempts > 0 else 0, "correct": u_correct, "wrong": max(0, u_attempts - u_correct)
+                }
+            })
 
         class_avg_history_dict = {day: round(weighted_daily_sums[day] / sum_weights) if sum_weights > 0 else 0 for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]}
 
