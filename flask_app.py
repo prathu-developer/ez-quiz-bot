@@ -2843,6 +2843,21 @@ def serve_captcha():
     return render_template('captcha.html')
 
 def background_approve_user(user_id):
+    # ✨ NEW: Automatically store the approved user in Supabase with today's timestamp!
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO users (user_id, first_name, joined_at)
+            VALUES (%s, 'New Student', NOW())
+            ON CONFLICT (user_id) DO NOTHING
+        """, (user_id,))
+        conn.commit()
+        c.close()
+        release_db(conn)
+    except Exception as e:
+        print(f"🚨 Error saving new member to database: {e}")
+
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/approveChatJoinRequest"
     payload = {
         "chat_id": CHAT_ID,
