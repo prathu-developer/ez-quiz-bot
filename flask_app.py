@@ -945,482 +945,473 @@ def run_weekly_reset_background():
         """)
         all_weekly_players = c.fetchall()
 
-    if not all_weekly_players:
-        c.execute("INSERT INTO bot_settings (key, value) VALUES ('current_week', '14') ON CONFLICT (key) DO NOTHING")
+        if not all_weekly_players:
+            c.execute("INSERT INTO bot_settings (key, value) VALUES ('current_week', '14') ON CONFLICT (key) DO NOTHING")
+            c.execute("SELECT value FROM bot_settings WHERE key='current_week'")
+            if week_row := c.fetchone():
+                c.execute("UPDATE bot_settings SET value=%s WHERE key='current_week'", (str(int(week_row[0]) + 1),))
+            c.execute("UPDATE users SET weekly_score = 0, weekly_attempts = 0")
+            conn.commit()
+            c.close()
+            release_db(conn)
+            return
+
+        sum_weighted_points = 0
+        sum_weights = 0
+        for row in all_weekly_players:
+            score, attempts = row[2], row[3]
+            weight = attempts ** 0.5
+            sum_weighted_points += (score * weight)
+            sum_weights += weight
+        target_average = (sum_weighted_points / sum_weights) if sum_weights > 0 else 0
+
+        for rank_index, row in enumerate(all_weekly_players):
+            uid = row[0]
+            score = row[2]
+            current_league = row[5] if row[5] is not None else 0
+
+            if score >= target_average:
+                if current_league >= 15: 
+                    # 🛡️ THE GENESIS GRIND: Once at Omniscient (15) or higher, strictly +1 promotion per week.
+                    # Max ceiling is now 25 (Genesis X).
+                    new_league = min(25, current_league + 1)
+                else:
+                    # Standard promotion for Ascendant (14) and below
+                    if rank_index == 0: new_league = current_league + 3
+                    elif rank_index < 10: new_league = current_league + 2
+                    else: new_league = current_league + 1
+                    
+                    # 🛡️ THE OMNISCIENT GATE: Cannot skip past Omniscient (15) in a single jump.
+                    if new_league > 15:
+                        new_league = 15
+            else:
+                new_league = max(0, current_league - 1)
+            c.execute("UPDATE users SET league_tier = %s WHERE user_id = %s", (new_league, uid))
+
+        try:
+            c.execute("SELECT value FROM bot_settings WHERE key='current_week'")
+            week_row = c.fetchone()
+            current_week_num = int(week_row[0]) if week_row else 14
+            total_players_this_week = len(all_weekly_players)
+
+            for rank_index, user in enumerate(all_weekly_players):
+                uid, u_score, u_attempts = user[0], user[2], user[3]
+                u_correct = user[6] if (len(user) > 6 and user[6] is not None) else 0
+                c.execute("""
+                    INSERT INTO weekly_rank_history (user_id, week_num, rank, total_members, score, attempts, correct)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (user_id, week_num) DO UPDATE SET
+                        rank = EXCLUDED.rank, total_members = EXCLUDED.total_members,
+                        score = EXCLUDED.score, attempts = EXCLUDED.attempts, correct = EXCLUDED.correct
+                """, (uid, current_week_num, rank_index + 1, total_players_this_week, u_score, u_attempts, u_correct))
+            conn.commit()
+        except Exception as e: print(e)
+
+        c.execute("INSERT INTO bot_settings (key, value) VALUES ('current_week', '14') ON CONFLICT DO NOTHING")
         c.execute("SELECT value FROM bot_settings WHERE key='current_week'")
         if week_row := c.fetchone():
             c.execute("UPDATE bot_settings SET value=%s WHERE key='current_week'", (str(int(week_row[0]) + 1),))
-        c.execute("UPDATE users SET weekly_score = 0, weekly_attempts = 0")
-        conn.commit()
-        c.close()
-        release_db(conn)
-        return
 
-    sum_weighted_points = 0
-    sum_weights = 0
-    for row in all_weekly_players:
-        score, attempts = row[2], row[3]
-        weight = attempts ** 0.5
-        sum_weighted_points += (score * weight)
-        sum_weights += weight
-    target_average = (sum_weighted_points / sum_weights) if sum_weights > 0 else 0
+        # --- 1. GROUP ANNOUNCEMENT (TOP 10) ---
+        top_10 = all_weekly_players[:10]
+        medals = ["🥇 Rank 1", "🥈 Rank 2", "🥉 Rank 3", "4th", "5th", "6th", "7th", "8th", "9th", "10th"]
 
-    for rank_index, row in enumerate(all_weekly_players):
-        uid = row[0]
-        score = row[2]
-        current_league = row[5] if row[5] is not None else 0
-
-        if score >= target_average:
-            if current_league >= 15: 
-                # 🛡️ THE GENESIS GRIND: Once at Omniscient (15) or higher, strictly +1 promotion per week.
-                # Max ceiling is now 25 (Genesis X).
-                new_league = min(25, current_league + 1)
-            else:
-                # Standard promotion for Ascendant (14) and below
-                if rank_index == 0: new_league = current_league + 3
-                elif rank_index < 10: new_league = current_league + 2
-                else: new_league = current_league + 1
-                
-                # 🛡️ THE OMNISCIENT GATE: Cannot skip past Omniscient (15) in a single jump.
-                if new_league > 15:
-                    new_league = 15
-        else:
-            new_league = max(0, current_league - 1)
-        c.execute("UPDATE users SET league_tier = %s WHERE user_id = %s", (new_league, uid))
-
-    try:
-        c.execute("SELECT value FROM bot_settings WHERE key='current_week'")
-        week_row = c.fetchone()
-        current_week_num = int(week_row[0]) if week_row else 14
-        total_players_this_week = len(all_weekly_players)
-
-        for rank_index, user in enumerate(all_weekly_players):
-            uid, u_score, u_attempts = user[0], user[2], user[3]
-            u_correct = user[6] if (len(user) > 6 and user[6] is not None) else 0
-            c.execute("""
-                INSERT INTO weekly_rank_history (user_id, week_num, rank, total_members, score, attempts, correct)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (user_id, week_num) DO UPDATE SET
-                    rank = EXCLUDED.rank, total_members = EXCLUDED.total_members,
-                    score = EXCLUDED.score, attempts = EXCLUDED.attempts, correct = EXCLUDED.correct
-            """, (uid, current_week_num, rank_index + 1, total_players_this_week, u_score, u_attempts, u_correct))
-        conn.commit()
-    except Exception as e: print(e)
-
-    c.execute("INSERT INTO bot_settings (key, value) VALUES ('current_week', '14') ON CONFLICT DO NOTHING")
-    c.execute("SELECT value FROM bot_settings WHERE key='current_week'")
-    if week_row := c.fetchone():
-        c.execute("UPDATE bot_settings SET value=%s WHERE key='current_week'", (str(int(week_row[0]) + 1),))
-
-    # --- 1. GROUP ANNOUNCEMENT (TOP 10) ---
-    top_10 = all_weekly_players[:10]
-    medals = ["🥇 Rank 1", "🥈 Rank 2", "🥉 Rank 3", "4th", "5th", "6th", "7th", "8th", "9th", "10th"]
-
-    current_ist_time = datetime.utcnow() + timedelta(hours=5, minutes=30)
-    end_date = current_ist_time - timedelta(days=1)
-    start_date = current_ist_time - timedelta(days=7)
-    date_range = f"{start_date.strftime('%d %B')} - {end_date.strftime('%d %B')}"
-
-    group_text = f"🌟 **WEEKLY EXAM RESULTS ARE IN!** 🌟\n📅 **{date_range}**\n\n"
-
-    for i, user in enumerate(top_10):
-        u_id, name, score, faction_val = user[0], user[1], user[2], str(user[4])
-        clean_score = int(score) if score % 1 == 0 else round(score, 2)
-        if "Gryffindor" in faction_val: faction_emoji = "🦁 "
-        elif "Slytherin" in faction_val: faction_emoji = "🐍 "
-        elif "Ravenclaw" in faction_val: faction_emoji = "🦅 "
-        elif "Hufflepuff" in faction_val: faction_emoji = "🦡 "
-        else: faction_emoji = ""
-        group_text += f"{medals[i]}: {faction_emoji}[{name}](tg://user?id={u_id}) ({clean_score} pts)\n"
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    for attempt in range(5):
-        try:
-            res = requests.post(url, json={"chat_id": CHAT_ID, "text": group_text, "parse_mode": "Markdown", "message_thread_id": TELEGRAM_THREAD_ID}, timeout=10)
-            if res.json().get("ok"):
-                for _ in range(3):
-                    try:
-                        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False}, timeout=5)
-                        break
-                    except: time.sleep(2)
-                break
-            elif res.json().get("error_code") == 429: time.sleep(res.json().get("parameters", {}).get("retry_after", 3) + 1)
-            else: break
-        except: time.sleep(3 + attempt * 2)
-
-    # --- THE ADMIN MASTERY FUNNEL DEBRIEF ---
-    try:
-        c.execute("SELECT COUNT(*) FROM polls")
-        total_quizzes = c.fetchone()[0]
-
-        total_active_students = len(all_weekly_players)
-        
-        # 1. New vs Returning Tracking
-        c.execute("SELECT DISTINCT user_id FROM weekly_rank_history WHERE week_num < %s", (current_week_num,))
-        past_users = set(row[0] for row in c.fetchall())
-        new_challengers = sum(1 for u in all_weekly_players if u[0] not in past_users)
-        returning_challengers = total_active_students - new_challengers
-
-        # 2. General Metrics
-        total_weekly_attempts = sum(u[3] for u in all_weekly_players)
-        avg_attempts_per_student = round(total_weekly_attempts / total_active_students, 1) if total_active_students > 0 else 0
-        completion_count = sum(1 for u in all_weekly_players if u[3] >= total_quizzes)
-        completion_rate = round((completion_count / total_active_students) * 100) if total_active_students > 0 else 0
-
-        total_weekly_correct = sum(u[6] if (len(u) > 6 and u[6] is not None) else 0 for u in all_weekly_players)
-        overall_accuracy = round((total_weekly_correct / total_weekly_attempts) * 100) if total_weekly_attempts > 0 else 0
-        
-        engagement_rating = "HIGH" if completion_rate >= 70 else "MODERATE" if completion_rate >= 40 else "NEEDS ATTENTION"
-
-        promoted_count = sum(1 for u in all_weekly_players if u[2] >= target_average)
-        demoted_count = total_active_students - promoted_count
-        promotion_rate = round((promoted_count / total_active_students) * 100) if total_active_students > 0 else 0
-
-        # 3. Elo Gain/Loss Calculation
-        c.execute("SELECT first_name, live_elo, base_elo FROM users WHERE live_elo IS NOT NULL")
-        elo_users = c.fetchall()
-        highest_elo_val = 1000
-        biggest_gain = 0
-        biggest_loss = 0
-        if elo_users:
-            highest_elo_val = max((row[1] for row in elo_users if row[1] is not None), default=1000)
-            diffs = [(row[1] - (row[2] or 1000)) for row in elo_users if row[1] is not None]
-            if diffs:
-                biggest_gain = max(diffs)
-                biggest_loss = min(diffs)
-                if biggest_gain < 0: biggest_gain = 0
-                if biggest_loss > 0: biggest_loss = 0
-
-        # 4. Deep Poll Analytics
-        c.execute("SELECT poll_id, correct_index FROM polls")
-        poll_metadata = {row[0]: row[1] for row in c.fetchall()}
-
-        c.execute("""
-            SELECT poll_id, COUNT(*) as attempts, SUM(is_correct) as correct
-            FROM user_answers GROUP BY poll_id HAVING COUNT(*) > 0
-        """)
-        poll_stats = c.fetchall()
-
-        t1 = t2 = t3 = t4 = t5 = 0
-        lowest_acc, highest_acc = 101, -1
-        hardest_poll_id = easiest_poll_id = None
-        tier_map = {"T1": [], "T2": [], "T3": [], "T4": [], "T5": []}
-        total_q_elo = 0
-        
-        tier_acc = {"T1": [0,0], "T2": [0,0], "T3": [0,0], "T4": [0,0], "T5": [0,0]}
-
-        for p_id, p_att, p_cor in poll_stats:
-            p_cor = p_cor if p_cor else 0
-            p_acc = (p_cor / p_att) * 100
-
-            if p_acc >= 86: 
-                t1 += 1; tier_map["T1"].append(p_id); total_q_elo += 800
-                tier_acc["T1"][0] += p_cor; tier_acc["T1"][1] += p_att
-            elif p_acc >= 72: 
-                t2 += 1; tier_map["T2"].append(p_id); total_q_elo += 1000
-                tier_acc["T2"][0] += p_cor; tier_acc["T2"][1] += p_att
-            elif p_acc >= 58: 
-                t3 += 1; tier_map["T3"].append(p_id); total_q_elo += 1200
-                tier_acc["T3"][0] += p_cor; tier_acc["T3"][1] += p_att
-            elif p_acc >= 44: 
-                t4 += 1; tier_map["T4"].append(p_id); total_q_elo += 1500
-                tier_acc["T4"][0] += p_cor; tier_acc["T4"][1] += p_att
-            else: 
-                t5 += 1; tier_map["T5"].append(p_id); total_q_elo += 1800
-                tier_acc["T5"][0] += p_cor; tier_acc["T5"][1] += p_att
-
-            if p_acc < lowest_acc: lowest_acc = p_acc; hardest_poll_id = p_id
-            if p_acc > highest_acc: highest_acc = p_acc; easiest_poll_id = p_id
-
-        avg_q_elo = (total_q_elo / len(poll_stats)) if len(poll_stats) > 0 else 1000
-        week_diff_score = min(10.0, max(1.0, ((avg_q_elo - 800) / 1000) * 9.0 + 1.0))
-        diff_label = "Easy" if week_diff_score < 4 else "Moderate" if week_diff_score < 7 else "Brutal"
-
-        lowest_acc = round(lowest_acc) if lowest_acc != 101 else 0
-        highest_acc = round(highest_acc) if highest_acc != -1 else 0
-
-        trap_pct, trap_opt = 0, "N/A"
-        if hardest_poll_id:
-            c.execute("""
-                SELECT chosen_option, COUNT(*) as count FROM user_answers
-                WHERE poll_id = %s AND is_correct = 0 GROUP BY chosen_option ORDER BY count DESC LIMIT 1
-            """, (hardest_poll_id,))
-            trap_row = c.fetchone()
-            if trap_row:
-                c.execute("SELECT COUNT(*) FROM user_answers WHERE poll_id = %s", (hardest_poll_id,))
-                total_att_hard = c.fetchone()[0]
-                trap_pct = round((trap_row[1] / total_att_hard) * 100) if total_att_hard > 0 else 0
-                opt_map = {0: "Option A", 1: "Option B", 2: "Option C", 3: "Option D"}
-                trap_opt = opt_map.get(trap_row[0], f"Option Index {trap_row[0]}")
-
-        # 5. Mastery & Knowledge Index
-        c.execute("SELECT user_id, poll_id FROM user_answers WHERE is_correct = 1")
-        user_correct_dict = {}
-        for uid, pid in c.fetchall():
-            if uid not in user_correct_dict: user_correct_dict[uid] = set()
-            user_correct_dict[uid].add(pid)
-
-        masters = {"T1": 0, "T2": 0, "T3": 0, "T4": 0, "T5": 0}
-        for uid, correct_set in user_correct_dict.items():
-            if len(tier_map["T1"]) > 0 and all(pid in correct_set for pid in tier_map["T1"]): masters["T1"] += 1
-            if len(tier_map["T2"]) > 0 and all(pid in correct_set for pid in tier_map["T2"]): masters["T2"] += 1
-            if len(tier_map["T3"]) > 0 and all(pid in correct_set for pid in tier_map["T3"]): masters["T3"] += 1
-            if len(tier_map["T4"]) > 0 and all(pid in correct_set for pid in tier_map["T4"]): masters["T4"] += 1
-            if len(tier_map["T5"]) > 0 and all(pid in correct_set for pid in tier_map["T5"]): masters["T5"] += 1
-
-        ki_easy = round((tier_acc["T1"][0]+tier_acc["T2"][0]) / (tier_acc["T1"][1]+tier_acc["T2"][1]) * 100) if (tier_acc["T1"][1]+tier_acc["T2"][1]) > 0 else 0
-        ki_med = round(tier_acc["T3"][0] / tier_acc["T3"][1] * 100) if tier_acc["T3"][1] > 0 else 0
-        ki_hard = round(tier_acc["T4"][0] / tier_acc["T4"][1] * 100) if tier_acc["T4"][1] > 0 else 0
-        ki_boss = round(tier_acc["T5"][0] / tier_acc["T5"][1] * 100) if tier_acc["T5"][1] > 0 else 0
-
-        # 6. Week-on-Week Tracking (WoW)
-        c.execute("SELECT value FROM bot_settings WHERE key='wow_stats'")
-        wow_row = c.fetchone()
-        wow_text = ""
-        if wow_row and wow_row[0]:
-            try:
-                last_stats = json.loads(wow_row[0])
-                def get_change(old, new):
-                    if old == 0: return f"▲ +100%" if new > 0 else "0%"
-                    change = ((new - old) / old) * 100
-                    return f"▲ +{change:.1f}%" if change > 0 else f"▼ {change:.1f}%"
-                
-                wow_text = (
-                    f"• Active Challengers: {get_change(last_stats.get('active', 0), total_active_students)}\n"
-                    f"• Total Attempts: {get_change(last_stats.get('attempts', 0), total_weekly_attempts)}\n"
-                    f"• Completion Rate: {get_change(last_stats.get('completion', 0), completion_rate)}\n"
-                    f"• Overall Accuracy: {get_change(last_stats.get('accuracy', 0), overall_accuracy)}\n"
-                    f"• Promotion Cut-off: {get_change(last_stats.get('cutoff', 0), target_average)}\n"
-                    f"• Highest Elo: {get_change(last_stats.get('highest_elo', 1000), highest_elo_val)}\n"
-                )
-            except: wow_text = "Data formatting error.\n"
-        else: wow_text = "No previous data for comparison.\n"
-
-        current_stats = {
-            "active": total_active_students, "attempts": total_weekly_attempts,
-            "completion": completion_rate, "accuracy": overall_accuracy,
-            "cutoff": target_average, "highest_elo": highest_elo_val
-        }
-        c.execute("INSERT INTO bot_settings (key, value) VALUES ('wow_stats', %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (json.dumps(current_stats),))
-
-        # House Calculation retained for public announcement later in script
-        c.execute("SELECT faction, SUM(weekly_score) FROM users WHERE faction IS NOT NULL GROUP BY faction")
-        team_scores = dict(c.fetchall())
-        finals = {'Gryffindor 🦁🔥': team_scores.get('Gryffindor 🦁🔥', 0), 'Slytherin 🐍💧': team_scores.get('Slytherin 🐍💧', 0), 'Ravenclaw 🦅💨': team_scores.get('Ravenclaw 🦅💨', 0), 'Hufflepuff 🦡🌍': team_scores.get('Hufflepuff 🦡🌍', 0)}
-        sorted_finals = sorted(finals.items(), key=lambda x: x[1], reverse=True)
-
-        # Dates
         current_ist_time = datetime.utcnow() + timedelta(hours=5, minutes=30)
         end_date = current_ist_time - timedelta(days=1)
         start_date = current_ist_time - timedelta(days=7)
-        date_range = f"{start_date.strftime('%d %B')} – {end_date.strftime('%d %B %Y')}"
+        date_range = f"{start_date.strftime('%d %B')} - {end_date.strftime('%d %B')}"
 
-        # 7. Assemble Streamlined Admin Message
-        admin_msg = (
-            f"🔐 **ADMIN DEBRIEF: WEEKLY CUP SEASON {current_week_num}**\n"
-            f"📅 {date_range}\n\n"
-            f"═══════════════════════════════\n"
-            f"👥 **1. COMMUNITY HEALTH**\n"
-            f"═══════════════════════════════\n\n"
-            f"• Active Challengers: {total_active_students}\n"
-            f"• New Challengers: {new_challengers}\n"
-            f"• Returning Challengers: {returning_challengers}\n\n"
-            f"• Total Quiz Attempts: {total_weekly_attempts:,}\n"
-            f"• Average Attempts per Student: {avg_attempts_per_student}\n"
-            f"• Completion Rate: {completion_rate}%\n\n"
-            f"• Overall Accuracy: {overall_accuracy}%\n"
-            f"• Engagement Rating: {engagement_rating}\n\n"
-            f"═══════════════════════════════\n"
-            f"📊 **2. QUIZ ANALYTICS**\n"
-            f"═══════════════════════════════\n\n"
-            f"• Quizzes Dropped: {total_quizzes}\n"
-            f"• Overall Difficulty: {diff_label} ({week_diff_score:.1f}/10)\n\n"
-            f"Difficulty Distribution\n"
-            f"• Tier 1 (Very Easy): {t1}\n"
-            f"• Tier 2 (Easy): {t2}\n"
-            f"• Tier 3 (Medium): {t3}\n"
-            f"• Tier 4 (Hard): {t4}\n"
-            f"• Tier 5 (Boss): {t5}\n\n"
-            f"Hardest Question\n"
-            f"↳ {lowest_acc}% answered correctly.\n\n"
-            f"Easiest Question\n"
-            f"↳ {highest_acc}% answered correctly.\n\n"
-            f"Most Common Trap\n"
-            f"↳ {trap_opt} selected by {trap_pct}% of incorrect attempts.\n\n"
-            f"═══════════════════════════════\n"
-            f"🏆 **3. COMPETITION HEALTH**\n"
-            f"═══════════════════════════════\n\n"
-            f"• Promotion Cut-off: {int(target_average)} pts\n\n"
-            f"• Promotions: {promoted_count}\n"
-            f"• Demotions: {demoted_count}\n\n"
-            f"• Promotion Rate: {promotion_rate}%\n\n"
-            f"═══════════════════════════════\n"
-            f"⚔️ **4. LEAGUE & ELO**\n"
-            f"═══════════════════════════════\n\n"
-            f"• Highest Elo: {highest_elo_val:.1f}\n"
-            f"• Biggest Elo Gain: +{biggest_gain:.1f}\n"
-            f"• Biggest Elo Loss: {biggest_loss:.1f}\n\n"
-            f"═══════════════════════════════\n"
-            f"🎯 **5. LEARNING INSIGHTS**\n"
-            f"═══════════════════════════════\n\n"
-            f"Perfect Accuracy\n\n"
-            f"• Tier 1 Masters: {masters['T1']}\n"
-            f"• Tier 2 Masters: {masters['T2']}\n"
-            f"• Tier 3 Masters: {masters['T3']}\n"
-            f"• Tier 4 Masters: {masters['T4']}\n"
-            f"• Tier 5 Boss Slayers: {masters['T5']}\n\n"
-            f"Knowledge Index\n\n"
-            f"• Easy Questions: {ki_easy}%\n"
-            f"• Medium Questions: {ki_med}%\n"
-            f"• Hard Questions: {ki_hard}%\n"
-            f"• Boss Questions: {ki_boss}%\n\n"
-            f"═══════════════════════════════\n"
-            f"📈 **6. WEEK-ON-WEEK CHANGE**\n"
-            f"═══════════════════════════════\n\n"
-            f"Compared with Season {current_week_num - 1}\n\n"
-            f"{wow_text}"
-        )
+        group_text = f"🌟 **WEEKLY EXAM RESULTS ARE IN!** 🌟\n📅 **{date_range}**\n\n"
 
-        admin_ids = [716496729, 6251430317, 5103843488]
-        for a_id in admin_ids:
-            try: requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": a_id, "text": admin_msg, "parse_mode": "Markdown"}, timeout=5)
-            except: pass
+        for i, user in enumerate(top_10):
+            u_id, name, score, faction_val = user[0], user[1], user[2], str(user[4])
+            clean_score = int(score) if score % 1 == 0 else round(score, 2)
+            if "Gryffindor" in faction_val: faction_emoji = "🦁 "
+            elif "Slytherin" in faction_val: faction_emoji = "🐍 "
+            elif "Ravenclaw" in faction_val: faction_emoji = "🦅 "
+            elif "Hufflepuff" in faction_val: faction_emoji = "🦡 "
+            else: faction_emoji = ""
+            group_text += f"{medals[i]}: {faction_emoji}[{name}](tg://user?id={u_id}) ({clean_score} pts)\n"
 
-    except Exception as e: notify_prathu(f"🚨 **ERROR (Weekly Debrief):** Failed to compile or send the Admin Debrief!\n`{e}`")
-        
-    # ==========================================
-    # 🩸 PRIVATE DM: ELO BLEED LEADERBOARD
-    # ==========================================
-    try:
-        # 1. Fetch the Top 10 users with the most negative Elo Bleed
-        c.execute("""
-            SELECT user_id, first_name, COALESCE(base_elo, 1000), live_elo, weekly_attempts, weekly_correct
-            FROM users 
-            WHERE weekly_attempts > 0 AND live_elo < COALESCE(base_elo, 1000)
-            ORDER BY (live_elo - COALESCE(base_elo, 1000)) ASC
-            LIMIT 10
-        """)
-        bleeders = c.fetchall()
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        for attempt in range(5):
+            try:
+                res = requests.post(url, json={"chat_id": CHAT_ID, "text": group_text, "parse_mode": "Markdown", "message_thread_id": TELEGRAM_THREAD_ID}, timeout=10)
+                if res.json().get("ok"):
+                    for _ in range(3):
+                        try:
+                            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False}, timeout=5)
+                            break
+                        except: time.sleep(2)
+                    break
+                elif res.json().get("error_code") == 429: time.sleep(res.json().get("parameters", {}).get("retry_after", 3) + 1)
+                else: break
+            except: time.sleep(3 + attempt * 2)
 
-        if bleeders:
-            bleed_text = "🩸 **ELO BLEED LEADERBOARD**\n\n"
-            
-            for idx, w in enumerate(bleeders):
-                w_id, w_name, w_base, w_live, w_att, w_cor = w
-                
-                # Calculate True Elo Bleed
-                bleed_amount = round(w_live - w_base, 1)
-                
-                # 2. Replicate the Mini App 'Lifetime Growth' Formula
-                curr_acc = (w_cor / w_att) * 100 if w_att > 0 else 0
-                c.execute("SELECT attempts, correct FROM weekly_rank_history WHERE user_id = %s ORDER BY week_num ASC", (w_id,))
-                hist = c.fetchall()
-                
-                raw_growth = 0.0
-                if len(hist) > 0:
-                    if len(hist) == 1:
-                        base_att = hist[0][0]
-                        base_corr = hist[0][1] if hist[0][1] is not None else 0
-                    else:
-                        base_att = hist[0][0] + hist[1][0]
-                        base_corr = (hist[0][1] if hist[0][1] is not None else 0) + (hist[1][1] if hist[1][1] is not None else 0)
-                    
-                    base_acc = (base_corr / base_att) * 100 if base_att > 0 else 0
-                    accuracy_shift = curr_acc - base_acc
-                    elo_factor = (w_live - 1000) / 10.0
-                    consistency_multiplier = 1.0 + (len(hist) * 0.05)
-                    raw_growth = (accuracy_shift + elo_factor) * consistency_multiplier
-
-                clean_growth = round(raw_growth, 1)
-
-                # 3. Apply Design Emojis & Formatting
-                if clean_growth > 2.0:
-                    growth_icon = f"🟢 +{clean_growth}%"
-                elif clean_growth < -2.0:
-                    growth_icon = f"🔴 {clean_growth}%"
-                else:
-                    growth_icon = f"🟡 {'+' if clean_growth > 0 else ''}{clean_growth}%"
-
-                # 4. Construct Mention Feature Line
-                bleed_text += f"{idx + 1}. [{w_name}](tg://user?id={w_id}) ➪ {bleed_amount} Elo    {growth_icon}\n"
-
-            # 5. Append Legend
-            bleed_text += "\n🟢 Positive growth\n🟡 Almost unchanged\n🔴 Negative growth"
-
-            # 6. Dispatch directly to Admin Prathu
-            requests.post(
-                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
-                json={"chat_id": "716496729", "text": bleed_text, "parse_mode": "Markdown"}, 
-                timeout=5
-            )
-    except Exception as e:
-        print(f"🚨 Error generating Elo Bleed DM: {e}")
-
-    # --- THE GREAT WIPE ---
-    c.execute("UPDATE users SET faction = NULL WHERE weekly_score < %s", (target_average,))
-    c.execute("UPDATE users SET base_elo = live_elo, weekly_score = 0, weekly_attempts = 0, is_captain = 0")
-    c.execute("DELETE FROM precise_scores")
-    
-    # --- CAPTAIN SELECTION & PUBLIC WRAP-UP ANNOUNCEMENT ---
-    c.execute("SELECT user_id, first_name FROM users WHERE faction='Gryffindor 🦁🔥' AND weekly_attempts > 0 ORDER BY weekly_score DESC LIMIT 1")
-    top_gryffindor = c.fetchone()
-    c.execute("SELECT user_id, first_name FROM users WHERE faction='Slytherin 🐍💧' AND weekly_attempts > 0 ORDER BY weekly_score DESC LIMIT 1")
-    top_slytherin = c.fetchone()
-    c.execute("SELECT user_id, first_name FROM users WHERE faction='Ravenclaw 🦅💨' AND weekly_attempts > 0 ORDER BY weekly_score DESC LIMIT 1")
-    top_ravenclaw = c.fetchone()
-    c.execute("SELECT user_id, first_name FROM users WHERE faction='Hufflepuff 🦡🌍' AND weekly_attempts > 0 ORDER BY weekly_score DESC LIMIT 1")
-    top_hufflepuff = c.fetchone()
-
-    if top_gryffindor: c.execute("UPDATE users SET faction='Gryffindor 🦁🔥', is_captain=1 WHERE user_id=%s", (top_gryffindor[0],))
-    if top_slytherin: c.execute("UPDATE users SET faction='Slytherin 🐍💧', is_captain=1 WHERE user_id=%s", (top_slytherin[0],))
-    if top_ravenclaw: c.execute("UPDATE users SET faction='Ravenclaw 🦅💨', is_captain=1 WHERE user_id=%s", (top_ravenclaw[0],))
-    if top_hufflepuff: c.execute("UPDATE users SET faction='Hufflepuff 🦡🌍', is_captain=1 WHERE user_id=%s", (top_hufflepuff[0],))
-
-    gryf_cap = f"[{top_gryffindor[1]}](tg://user?id={top_gryffindor[0]})" if top_gryffindor else "None"
-    slyth_cap = f"[{top_slytherin[1]}](tg://user?id={top_slytherin[0]})" if top_slytherin else "None"
-    rav_cap = f"[{top_ravenclaw[1]}](tg://user?id={top_ravenclaw[0]})" if top_ravenclaw else "None"
-    huff_cap = f"[{top_hufflepuff[1]}](tg://user?id={top_hufflepuff[0]})" if top_hufflepuff else "None"
-
-    winner_house = sorted_finals[0][0]
-    winner_score = sorted_finals[0][1]
-    second_score = sorted_finals[1][1] if len(sorted_finals) > 1 else 0
-
-    winning_banner = ""
-    if winner_score > second_score:
-        house_name, emoji = winner_house.split()[0].upper(), winner_house.split()[1]
-        clean_win_score = int(winner_score) if winner_score % 1 == 0 else round(winner_score, 2)
-        winning_banner = f"🥇 **TEAM {house_name} WINS!** {emoji}\nSecuring the top spot with **{clean_win_score}** points! Your reigning Team Captains for this new week are:\n\n"
-    elif winner_score > 0 and winner_score == second_score:
-        clean_win_score = int(winner_score) if winner_score % 1 == 0 else round(winner_score, 2)
-        winning_banner = f"⚖️ **TEAM TIE!**\nThe top teams tied with **{clean_win_score}** points. Your reigning Team Captains for this new week are:\n\n"
-    else:
-        winning_banner = "⚖️ **THE WEEK HAS ENDED!**\nNo points were earned this week. Your reigning Team Captains for this new week are:\n\n"
-
-    announcement_text = "🏆 ✨ **WEEKLY CUP WRAP-UP & ANALYSIS** ✨ 🏆\n\n"
-    announcement_text += winning_banner
-    announcement_text += f"🦁 **Gryffindor:** 👑 {gryf_cap}\n🐍 **Slytherin:** 👑 {slyth_cap}\n🦅 **Ravenclaw:** 👑 {rav_cap}\n🦡 **Hufflepuff:** 👑 {huff_cap}\n\n"
-    announcement_text += "📊 **Community Performance Analysis:**\n"
-    announcement_text += f"• **Active Challengers:** **{total_active_students}** students consistently competed this week.\n"
-    announcement_text += f"• **Total Engagement:** A massive **{total_weekly_attempts}** questions were attempted collectively!\n"
-    announcement_text += f"• **Overall Accuracy:** The class achieved a combined accuracy rate of **{overall_accuracy}%**.\n"
-    announcement_text += f"• **League Progress:** The final promotion cut-off landed at **{int(target_average)} pts**{cutoff_change_text}, with **{promoted_count}** students successfully levelling up their league tier.\n\n"
-    announcement_text += "⚡️ The leaderboards have been wiped clean. Attempt your first quiz today at 7:00 PM to kick off the new week!"
-
-    for attempt in range(5):
+        # --- THE ADMIN MASTERY FUNNEL DEBRIEF ---
         try:
-            res = requests.post(url, json={"chat_id": CHAT_ID, "message_thread_id": ANNOUNCEMENT_THREAD_ID, "text": announcement_text, "parse_mode": "Markdown"}, timeout=10)
-            if res.json().get("ok"):
-                for _ in range(3):
-                    try:
-                        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False}, timeout=5)
-                        break
-                    except: time.sleep(2)
-                break
-            elif res.json().get("error_code") == 429: time.sleep(res.json().get("parameters", {}).get("retry_after", 3) + 1)
-            else: break
-        except: time.sleep(3 + attempt * 2)
+            c.execute("SELECT COUNT(*) FROM polls")
+            total_quizzes = c.fetchone()[0]
 
-    # --- 🧹 SUNDAY SWEEP ---
+            total_active_students = len(all_weekly_players)
+            
+            # 1. New vs Returning Tracking
+            c.execute("SELECT DISTINCT user_id FROM weekly_rank_history WHERE week_num < %s", (current_week_num,))
+            past_users = set(row[0] for row in c.fetchall())
+            new_challengers = sum(1 for u in all_weekly_players if u[0] not in past_users)
+            returning_challengers = total_active_students - new_challengers
+
+            # 2. General Metrics
+            total_weekly_attempts = sum(u[3] for u in all_weekly_players)
+            avg_attempts_per_student = round(total_weekly_attempts / total_active_students, 1) if total_active_students > 0 else 0
+            completion_count = sum(1 for u in all_weekly_players if u[3] >= total_quizzes)
+            completion_rate = round((completion_count / total_active_students) * 100) if total_active_students > 0 else 0
+
+            total_weekly_correct = sum(u[6] if (len(u) > 6 and u[6] is not None) else 0 for u in all_weekly_players)
+            overall_accuracy = round((total_weekly_correct / total_weekly_attempts) * 100) if total_weekly_attempts > 0 else 0
+            
+            engagement_rating = "HIGH" if completion_rate >= 70 else "MODERATE" if completion_rate >= 40 else "NEEDS ATTENTION"
+
+            promoted_count = sum(1 for u in all_weekly_players if u[2] >= target_average)
+            demoted_count = total_active_students - promoted_count
+            promotion_rate = round((promoted_count / total_active_students) * 100) if total_active_students > 0 else 0
+
+            # 3. Elo Gain/Loss Calculation
+            c.execute("SELECT first_name, live_elo, base_elo FROM users WHERE live_elo IS NOT NULL")
+            elo_users = c.fetchall()
+            highest_elo_val = 1000
+            biggest_gain = 0
+            biggest_loss = 0
+            if elo_users:
+                highest_elo_val = max((row[1] for row in elo_users if row[1] is not None), default=1000)
+                diffs = [(row[1] - (row[2] or 1000)) for row in elo_users if row[1] is not None]
+                if diffs:
+                    biggest_gain = max(diffs)
+                    biggest_loss = min(diffs)
+                    if biggest_gain < 0: biggest_gain = 0
+                    if biggest_loss > 0: biggest_loss = 0
+
+            # 4. Deep Poll Analytics
+            c.execute("SELECT poll_id, correct_index FROM polls")
+            poll_metadata = {row[0]: row[1] for row in c.fetchall()}
+
+            c.execute("""
+                SELECT poll_id, COUNT(*) as attempts, SUM(is_correct) as correct
+                FROM user_answers GROUP BY poll_id HAVING COUNT(*) > 0
+            """)
+            poll_stats = c.fetchall()
+
+            t1 = t2 = t3 = t4 = t5 = 0
+            lowest_acc, highest_acc = 101, -1
+            hardest_poll_id = easiest_poll_id = None
+            tier_map = {"T1": [], "T2": [], "T3": [], "T4": [], "T5": []}
+            total_q_elo = 0
+            
+            tier_acc = {"T1": [0,0], "T2": [0,0], "T3": [0,0], "T4": [0,0], "T5": [0,0]}
+
+            for p_id, p_att, p_cor in poll_stats:
+                p_cor = p_cor if p_cor else 0
+                p_acc = (p_cor / p_att) * 100
+
+                if p_acc >= 86: 
+                    t1 += 1; tier_map["T1"].append(p_id); total_q_elo += 800
+                    tier_acc["T1"][0] += p_cor; tier_acc["T1"][1] += p_att
+                elif p_acc >= 72: 
+                    t2 += 1; tier_map["T2"].append(p_id); total_q_elo += 1000
+                    tier_acc["T2"][0] += p_cor; tier_acc["T2"][1] += p_att
+                elif p_acc >= 58: 
+                    t3 += 1; tier_map["T3"].append(p_id); total_q_elo += 1200
+                    tier_acc["T3"][0] += p_cor; tier_acc["T3"][1] += p_att
+                elif p_acc >= 44: 
+                    t4 += 1; tier_map["T4"].append(p_id); total_q_elo += 1500
+                    tier_acc["T4"][0] += p_cor; tier_acc["T4"][1] += p_att
+                else: 
+                    t5 += 1; tier_map["T5"].append(p_id); total_q_elo += 1800
+                    tier_acc["T5"][0] += p_cor; tier_acc["T5"][1] += p_att
+
+                if p_acc < lowest_acc: lowest_acc = p_acc; hardest_poll_id = p_id
+                if p_acc > highest_acc: highest_acc = p_acc; easiest_poll_id = p_id
+
+            avg_q_elo = (total_q_elo / len(poll_stats)) if len(poll_stats) > 0 else 1000
+            week_diff_score = min(10.0, max(1.0, ((avg_q_elo - 800) / 1000) * 9.0 + 1.0))
+            diff_label = "Easy" if week_diff_score < 4 else "Moderate" if week_diff_score < 7 else "Brutal"
+
+            lowest_acc = round(lowest_acc) if lowest_acc != 101 else 0
+            highest_acc = round(highest_acc) if highest_acc != -1 else 0
+
+            trap_pct, trap_opt = 0, "N/A"
+            if hardest_poll_id:
+                c.execute("""
+                    SELECT chosen_option, COUNT(*) as count FROM user_answers
+                    WHERE poll_id = %s AND is_correct = 0 GROUP BY chosen_option ORDER BY count DESC LIMIT 1
+                """, (hardest_poll_id,))
+                trap_row = c.fetchone()
+                if trap_row:
+                    c.execute("SELECT COUNT(*) FROM user_answers WHERE poll_id = %s", (hardest_poll_id,))
+                    total_att_hard = c.fetchone()[0]
+                    trap_pct = round((trap_row[1] / total_att_hard) * 100) if total_att_hard > 0 else 0
+                    opt_map = {0: "Option A", 1: "Option B", 2: "Option C", 3: "Option D"}
+                    trap_opt = opt_map.get(trap_row[0], f"Option Index {trap_row[0]}")
+
+            # 5. Mastery & Knowledge Index
+            c.execute("SELECT user_id, poll_id FROM user_answers WHERE is_correct = 1")
+            user_correct_dict = {}
+            for uid, pid in c.fetchall():
+                if uid not in user_correct_dict: user_correct_dict[uid] = set()
+                user_correct_dict[uid].add(pid)
+
+            masters = {"T1": 0, "T2": 0, "T3": 0, "T4": 0, "T5": 0}
+            for uid, correct_set in user_correct_dict.items():
+                if len(tier_map["T1"]) > 0 and all(pid in correct_set for pid in tier_map["T1"]): masters["T1"] += 1
+                if len(tier_map["T2"]) > 0 and all(pid in correct_set for pid in tier_map["T2"]): masters["T2"] += 1
+                if len(tier_map["T3"]) > 0 and all(pid in correct_set for pid in tier_map["T3"]): masters["T3"] += 1
+                if len(tier_map["T4"]) > 0 and all(pid in correct_set for pid in tier_map["T4"]): masters["T4"] += 1
+                if len(tier_map["T5"]) > 0 and all(pid in correct_set for pid in tier_map["T5"]): masters["T5"] += 1
+
+            ki_easy = round((tier_acc["T1"][0]+tier_acc["T2"][0]) / (tier_acc["T1"][1]+tier_acc["T2"][1]) * 100) if (tier_acc["T1"][1]+tier_acc["T2"][1]) > 0 else 0
+            ki_med = round(tier_acc["T3"][0] / tier_acc["T3"][1] * 100) if tier_acc["T3"][1] > 0 else 0
+            ki_hard = round(tier_acc["T4"][0] / tier_acc["T4"][1] * 100) if tier_acc["T4"][1] > 0 else 0
+            ki_boss = round(tier_acc["T5"][0] / tier_acc["T5"][1] * 100) if tier_acc["T5"][1] > 0 else 0
+
+            # 6. Week-on-Week Tracking (WoW)
+            c.execute("SELECT value FROM bot_settings WHERE key='wow_stats'")
+            wow_row = c.fetchone()
+            wow_text = ""
+            if wow_row and wow_row[0]:
+                try:
+                    last_stats = json.loads(wow_row[0])
+                    def get_change(old, new):
+                        if old == 0: return f"▲ +100%" if new > 0 else "0%"
+                        change = ((new - old) / old) * 100
+                        return f"▲ +{change:.1f}%" if change > 0 else f"▼ {change:.1f}%"
+                    
+                    wow_text = (
+                        f"• Active Challengers: {get_change(last_stats.get('active', 0), total_active_students)}\n"
+                        f"• Total Attempts: {get_change(last_stats.get('attempts', 0), total_weekly_attempts)}\n"
+                        f"• Completion Rate: {get_change(last_stats.get('completion', 0), completion_rate)}\n"
+                        f"• Overall Accuracy: {get_change(last_stats.get('accuracy', 0), overall_accuracy)}\n"
+                        f"• Promotion Cut-off: {get_change(last_stats.get('cutoff', 0), target_average)}\n"
+                        f"• Highest Elo: {get_change(last_stats.get('highest_elo', 1000), highest_elo_val)}\n"
+                    )
+                except: wow_text = "Data formatting error.\n"
+            else: wow_text = "No previous data for comparison.\n"
+
+            current_stats = {
+                "active": total_active_students, "attempts": total_weekly_attempts,
+                "completion": completion_rate, "accuracy": overall_accuracy,
+                "cutoff": target_average, "highest_elo": highest_elo_val
+            }
+            c.execute("INSERT INTO bot_settings (key, value) VALUES ('wow_stats', %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (json.dumps(current_stats),))
+
+            # 7. House Wars
+            c.execute("SELECT faction, SUM(weekly_score) FROM users WHERE faction IS NOT NULL GROUP BY faction")
+            team_scores = dict(c.fetchall())
+            finals = {'Gryffindor 🦁🔥': team_scores.get('Gryffindor 🦁🔥', 0), 'Slytherin 🐍💧': team_scores.get('Slytherin 🐍💧', 0), 'Ravenclaw 🦅💨': team_scores.get('Ravenclaw 🦅💨', 0), 'Hufflepuff 🦡🌍': team_scores.get('Hufflepuff 🦡🌍', 0)}
+            sorted_finals = sorted(finals.items(), key=lambda x: x[1], reverse=True)
+            
+            current_ist_time = datetime.utcnow() + timedelta(hours=5, minutes=30)
+            end_date = current_ist_time - timedelta(days=1)
+            start_date = current_ist_time - timedelta(days=7)
+            date_range = f"{start_date.strftime('%d %B')} – {end_date.strftime('%d %B %Y')}"
+
+            # 8. Assemble Streamlined Admin Message
+            admin_msg = (
+                f"🔐 **ADMIN DEBRIEF: WEEKLY CUP SEASON {current_week_num}**\n"
+                f"📅 {date_range}\n\n"
+                f"═══════════════════════════════\n"
+                f"👥 **1. COMMUNITY HEALTH**\n"
+                f"═══════════════════════════════\n\n"
+                f"• Active Challengers: {total_active_students}\n"
+                f"• New Challengers: {new_challengers}\n"
+                f"• Returning Challengers: {returning_challengers}\n\n"
+                f"• Total Quiz Attempts: {total_weekly_attempts:,}\n"
+                f"• Average Attempts per Student: {avg_attempts_per_student}\n"
+                f"• Completion Rate: {completion_rate}%\n\n"
+                f"• Overall Accuracy: {overall_accuracy}%\n"
+                f"• Engagement Rating: {engagement_rating}\n\n"
+                f"═══════════════════════════════\n"
+                f"📊 **2. QUIZ ANALYTICS**\n"
+                f"═══════════════════════════════\n\n"
+                f"• Quizzes Dropped: {total_quizzes}\n"
+                f"• Overall Difficulty: {diff_label} ({week_diff_score:.1f}/10)\n\n"
+                f"Difficulty Distribution\n"
+                f"• Tier 1 (Very Easy): {t1}\n"
+                f"• Tier 2 (Easy): {t2}\n"
+                f"• Tier 3 (Medium): {t3}\n"
+                f"• Tier 4 (Hard): {t4}\n"
+                f"• Tier 5 (Boss): {t5}\n\n"
+                f"Hardest Question\n"
+                f"↳ {lowest_acc}% answered correctly.\n\n"
+                f"Easiest Question\n"
+                f"↳ {highest_acc}% answered correctly.\n\n"
+                f"Most Common Trap\n"
+                f"↳ {trap_opt} selected by {trap_pct}% of incorrect attempts.\n\n"
+                f"═══════════════════════════════\n"
+                f"🏆 **3. COMPETITION HEALTH**\n"
+                f"═══════════════════════════════\n\n"
+                f"• Promotion Cut-off: {int(target_average)} pts\n\n"
+                f"• Promotions: {promoted_count}\n"
+                f"• Demotions: {demoted_count}\n\n"
+                f"• Promotion Rate: {promotion_rate}%\n\n"
+                f"═══════════════════════════════\n"
+                f"⚔️ **4. LEAGUE & ELO**\n"
+                f"═══════════════════════════════\n\n"
+                f"• Highest Elo: {highest_elo_val:.1f}\n"
+                f"• Biggest Elo Gain: +{biggest_gain:.1f}\n"
+                f"• Biggest Elo Loss: {biggest_loss:.1f}\n\n"
+                f"═══════════════════════════════\n"
+                f"🎯 **5. LEARNING INSIGHTS**\n"
+                f"═══════════════════════════════\n\n"
+                f"Perfect Accuracy\n\n"
+                f"• Tier 1 Masters: {masters['T1']}\n"
+                f"• Tier 2 Masters: {masters['T2']}\n"
+                f"• Tier 3 Masters: {masters['T3']}\n"
+                f"• Tier 4 Masters: {masters['T4']}\n"
+                f"• Tier 5 Boss Slayers: {masters['T5']}\n\n"
+                f"Knowledge Index\n\n"
+                f"• Easy Questions: {ki_easy}%\n"
+                f"• Medium Questions: {ki_med}%\n"
+                f"• Hard Questions: {ki_hard}%\n"
+                f"• Boss Questions: {ki_boss}%\n\n"
+                f"═══════════════════════════════\n"
+                f"📈 **6. WEEK-ON-WEEK CHANGE**\n"
+                f"═══════════════════════════════\n\n"
+                f"Compared with Season {current_week_num - 1}\n\n"
+                f"{wow_text}"
+            )
+
+            admin_ids = [716496729, 6251430317, 5103843488]
+            for a_id in admin_ids:
+                try: requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": a_id, "text": admin_msg, "parse_mode": "Markdown"}, timeout=5)
+                except: pass
+
+        except Exception as e: notify_prathu(f"🚨 **ERROR (Weekly Debrief):** Failed to compile or send the Admin Debrief!\n`{e}`")
+
+        # ==========================================
+        # 🩸 PRIVATE DM: ELO BLEED LEADERBOARD
+        # ==========================================
+        try:
+            c.execute("""
+                SELECT user_id, first_name, COALESCE(base_elo, 1000), live_elo, weekly_attempts, weekly_correct
+                FROM users 
+                WHERE weekly_attempts > 0 AND live_elo < COALESCE(base_elo, 1000)
+                ORDER BY (live_elo - COALESCE(base_elo, 1000)) ASC
+                LIMIT 10
+            """)
+            bleeders = c.fetchall()
+
+            if bleeders:
+                bleed_text = "🩸 **ELO BLEED LEADERBOARD**\n\n"
+                
+                for idx, w in enumerate(bleeders):
+                    w_id, w_name, w_base, w_live, w_att, w_cor = w
+                    bleed_amount = round(w_live - w_base, 1)
+                    
+                    curr_acc = (w_cor / w_att) * 100 if w_att > 0 else 0
+                    c.execute("SELECT attempts, correct FROM weekly_rank_history WHERE user_id = %s ORDER BY week_num ASC", (w_id,))
+                    hist = c.fetchall()
+                    
+                    raw_growth = 0.0
+                    if len(hist) > 0:
+                        if len(hist) == 1:
+                            base_att = hist[0][0]
+                            base_corr = hist[0][1] if hist[0][1] is not None else 0
+                        else:
+                            base_att = hist[0][0] + hist[1][0]
+                            base_corr = (hist[0][1] if hist[0][1] is not None else 0) + (hist[1][1] if hist[1][1] is not None else 0)
+                        
+                        base_acc = (base_corr / base_att) * 100 if base_att > 0 else 0
+                        accuracy_shift = curr_acc - base_acc
+                        elo_factor = (w_live - 1000) / 10.0
+                        consistency_multiplier = 1.0 + (len(hist) * 0.05)
+                        raw_growth = (accuracy_shift + elo_factor) * consistency_multiplier
+
+                    clean_growth = round(raw_growth, 1)
+
+                    if clean_growth > 2.0:
+                        growth_icon = f"🟢 +{clean_growth}%"
+                    elif clean_growth < -2.0:
+                        growth_icon = f"🔴 {clean_growth}%"
+                    else:
+                        growth_icon = f"🟡 {'+' if clean_growth > 0 else ''}{clean_growth}%"
+
+                    bleed_text += f"{idx + 1}. [{w_name}](tg://user?id={w_id}) ➪ {bleed_amount} Elo    {growth_icon}\n"
+
+                bleed_text += "\n🟢 Positive growth\n🟡 Almost unchanged\n🔴 Negative growth"
+
+                requests.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
+                    json={"chat_id": "716496729", "text": bleed_text, "parse_mode": "Markdown"}, 
+                    timeout=5
+                )
+        except Exception as e:
+            print(f"🚨 Error generating Elo Bleed DM: {e}")
+
+        c.execute("UPDATE users SET faction = NULL WHERE weekly_score < %s", (target_average,))
+        c.execute("UPDATE users SET base_elo = live_elo, weekly_score = 0, weekly_attempts = 0, is_captain = 0")
+        c.execute("DELETE FROM precise_scores")
+        
+        c.execute("SELECT user_id, first_name FROM users WHERE faction='Gryffindor 🦁🔥' AND weekly_attempts > 0 ORDER BY weekly_score DESC LIMIT 1")
+        top_gryffindor = c.fetchone()
+        c.execute("SELECT user_id, first_name FROM users WHERE faction='Slytherin 🐍💧' AND weekly_attempts > 0 ORDER BY weekly_score DESC LIMIT 1")
+        top_slytherin = c.fetchone()
+        c.execute("SELECT user_id, first_name FROM users WHERE faction='Ravenclaw 🦅💨' AND weekly_attempts > 0 ORDER BY weekly_score DESC LIMIT 1")
+        top_ravenclaw = c.fetchone()
+        c.execute("SELECT user_id, first_name FROM users WHERE faction='Hufflepuff 🦡🌍' AND weekly_attempts > 0 ORDER BY weekly_score DESC LIMIT 1")
+        top_hufflepuff = c.fetchone()
+
+        if top_gryffindor: c.execute("UPDATE users SET faction='Gryffindor 🦁🔥', is_captain=1 WHERE user_id=%s", (top_gryffindor[0],))
+        if top_slytherin: c.execute("UPDATE users SET faction='Slytherin 🐍💧', is_captain=1 WHERE user_id=%s", (top_slytherin[0],))
+        if top_ravenclaw: c.execute("UPDATE users SET faction='Ravenclaw 🦅💨', is_captain=1 WHERE user_id=%s", (top_ravenclaw[0],))
+        if top_hufflepuff: c.execute("UPDATE users SET faction='Hufflepuff 🦡🌍', is_captain=1 WHERE user_id=%s", (top_hufflepuff[0],))
+
+        gryf_cap = f"[{top_gryffindor[1]}](tg://user?id={top_gryffindor[0]})" if top_gryffindor else "None"
+        slyth_cap = f"[{top_slytherin[1]}](tg://user?id={top_slytherin[0]})" if top_slytherin else "None"
+        rav_cap = f"[{top_ravenclaw[1]}](tg://user?id={top_ravenclaw[0]})" if top_ravenclaw else "None"
+        huff_cap = f"[{top_hufflepuff[1]}](tg://user?id={top_hufflepuff[0]})" if top_hufflepuff else "None"
+
+        winner_house = sorted_finals[0][0]
+        winner_score = sorted_finals[0][1]
+        second_score = sorted_finals[1][1] if len(sorted_finals) > 1 else 0
+
+        winning_banner = ""
+        if winner_score > second_score:
+            house_name, emoji = winner_house.split()[0].upper(), winner_house.split()[1]
+            clean_win_score = int(winner_score) if winner_score % 1 == 0 else round(winner_score, 2)
+            winning_banner = f"🥇 **TEAM {house_name} WINS!** {emoji}\nSecuring the top spot with **{clean_win_score}** points! Your reigning Team Captains for this new week are:\n\n"
+        elif winner_score > 0 and winner_score == second_score:
+            clean_win_score = int(winner_score) if winner_score % 1 == 0 else round(winner_score, 2)
+            winning_banner = f"⚖️ **TEAM TIE!**\nThe top teams tied with **{clean_win_score}** points. Your reigning Team Captains for this new week are:\n\n"
+        else:
+            winning_banner = "⚖️ **THE WEEK HAS ENDED!**\nNo points were earned this week. Your reigning Team Captains for this new week are:\n\n"
+
+        cutoff_change_text = ""
+
+        announcement_text = "🏆 ✨ **WEEKLY CUP WRAP-UP & ANALYSIS** ✨ 🏆\n\n"
+        announcement_text += winning_banner
+        announcement_text += f"🦁 **Gryffindor:** 👑 {gryf_cap}\n🐍 **Slytherin:** 👑 {slyth_cap}\n🦅 **Ravenclaw:** 👑 {rav_cap}\n🦡 **Hufflepuff:** 👑 {huff_cap}\n\n"
+        announcement_text += "📊 **Community Performance Analysis:**\n"
+        announcement_text += f"• **Active Challengers:** **{total_active_students}** students consistently competed this week.\n"
+        announcement_text += f"• **Total Engagement:** A massive **{total_weekly_attempts}** questions were attempted collectively!\n"
+        announcement_text += f"• **Overall Accuracy:** The class achieved a combined accuracy rate of **{overall_accuracy}%**.\n"
+        announcement_text += f"• **League Progress:** The final promotion cut-off landed at **{int(target_average)} pts**{cutoff_change_text}, with **{promoted_count}** students successfully levelling up their league tier.\n\n"
+        announcement_text += "⚡️ The leaderboards have been wiped clean. Attempt your first quiz today at 7:00 PM to kick off the new week!"
+
+        for attempt in range(5):
+            try:
+                res = requests.post(url, json={"chat_id": CHAT_ID, "message_thread_id": ANNOUNCEMENT_THREAD_ID, "text": announcement_text, "parse_mode": "Markdown"}, timeout=10)
+                if res.json().get("ok"):
+                    for _ in range(3):
+                        try:
+                            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False}, timeout=5)
+                            break
+                        except: time.sleep(2)
+                    break
+                elif res.json().get("error_code") == 429: time.sleep(res.json().get("parameters", {}).get("retry_after", 3) + 1)
+                else: break
+            except: time.sleep(3 + attempt * 2)
+
+        # --- 🧹 SUNDAY SWEEP ---
         c.execute("DELETE FROM polls")
         c.execute("DELETE FROM user_answers")
         thirty_days_ago = (datetime.utcnow() + timedelta(hours=5, minutes=30) - timedelta(days=30)).strftime('%Y-%m-%d')
@@ -1440,7 +1431,6 @@ def run_weekly_reset_background():
             try: c.close()
             except: pass
             release_db(conn)
-
 @app.route('/reset_weekly/0508', methods=['GET', 'POST'])
 def trigger_weekly_reset():
     threading.Thread(target=run_weekly_reset_background).start()
