@@ -1,6 +1,7 @@
 import threading
 import os
 from flask import Flask, request, render_template, jsonify
+from flask_compress import Compress  # ✨ 1. Import Compress
 import requests
 import time
 import json
@@ -55,6 +56,7 @@ API_KEYS = [
 current_key_index = 0
 LAST_AI_REPLY_TIME = 0  # ✨ NEW: Tracks Lixie's cooldown directly in local RAM!
 app = Flask(__name__)
+Compress(app)
 
 # ✨ NEW: The High-Speed Tunnel to Telegram and GitHub
 http_session = requests.Session()
