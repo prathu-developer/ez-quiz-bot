@@ -242,6 +242,9 @@
             { q: "Identify the correctly spelt word.", opts: ["Travelled", "Traveled", "Travellled", "Travelld"], ans: 0 }
         ];
 
+        // ✨ PRO FEATURE: Completely shuffle the questions every single time the Mini App opens
+        questions.sort(() => Math.random() - 0.5);
+
         let currentQuestion = 0;
         let isProcessingTap = false; // Prevents spam-clicking
 
