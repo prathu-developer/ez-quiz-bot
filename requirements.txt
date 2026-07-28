@@ -2,4 +2,5 @@ Flask==3.0.0
 requests
 google-genai
 psycopg2-binary
+flask-compress
 gunicorn
