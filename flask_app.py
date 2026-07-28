@@ -738,7 +738,7 @@ def webhook():
                 http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/declineChatJoinRequest", json={"chat_id": CHAT_ID, "user_id": user_id}, timeout=5)
             except: pass
             
-        threading.Timer(3600.0, ignite_time_bomb).start()
+        threading.Timer(300.0, ignite_time_bomb).start()
             
         return 'OK', 200
 
