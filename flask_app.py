@@ -1049,6 +1049,7 @@ def run_weekly_reset_background():
             try:
                 res = http_session.post(url, json={"chat_id": CHAT_ID, "text": group_text, "parse_mode": "Markdown", "message_thread_id": TELEGRAM_THREAD_ID}, timeout=10)
                 if res.json().get("ok"):
+                    reset_status["Top10_Announcement"] = "🟢 Success"
                     for _ in range(3):
                         try:
                             http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False}, timeout=5)
@@ -1293,7 +1294,9 @@ def run_weekly_reset_background():
 
             admin_ids = [716496729, 6251430317, 5103843488]
             for a_id in admin_ids:
-                try: http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": a_id, "text": admin_msg, "parse_mode": "Markdown"}, timeout=5)
+                try: 
+                    http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": a_id, "text": admin_msg, "parse_mode": "Markdown"}, timeout=5)
+                    reset_status["Admin_Debrief"] = "🟢 Success"
                 except: pass
 
         except Exception as e: notify_prathu(f"🚨 **ERROR (Weekly Debrief):** Failed to compile or send the Admin Debrief!\n`{e}`")
@@ -1355,6 +1358,7 @@ def run_weekly_reset_background():
                     json={"chat_id": "716496729", "text": bleed_text, "parse_mode": "Markdown"}, 
                     timeout=5
                 )
+                reset_status["Elo_Bleed_DM"] = "🟢 Success"
         except Exception as e:
             print(f"🚨 Error generating Elo Bleed DM: {e}")
 
@@ -1415,6 +1419,7 @@ def run_weekly_reset_background():
             try:
                 res = http_session.post(url, json={"chat_id": CHAT_ID, "message_thread_id": ANNOUNCEMENT_THREAD_ID, "text": announcement_text, "parse_mode": "Markdown"}, timeout=10)
                 if res.json().get("ok"):
+                    reset_status["Public_WrapUp"] = "🟢 Success"
                     for _ in range(3):
                         try:
                             http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False}, timeout=5)
@@ -1435,8 +1440,28 @@ def run_weekly_reset_background():
         if week_row: c.execute("DELETE FROM weekly_rank_history WHERE week_num < %s", (int(week_row[0]) - 10,))
 
         conn.commit()
+        reset_status["Database_Reset"] = "🟢 Success"
         update_live_leaderboard()
-        notify_prathu("🏆 **Weekly Cup Reset & Analytics Debrief** executed successfully!")
+        
+        # ✨ Generate and send the final comprehensive status report!
+        report_msg = (
+            "🏆 **WEEKLY RESET STATUS REPORT** 🏆\n\n"
+            f"🗄️ **Database Integrity:** {reset_status['Database_Reset']}\n"
+            f"🥇 **Top 10 Blast:** {reset_status['Top10_Announcement']}\n"
+            f"🔐 **Admin Debrief:** {reset_status['Admin_Debrief']}\n"
+            f"🩸 **Elo Bleed DM:** {reset_status['Elo_Bleed_DM']}\n"
+            f"🏰 **Final Wrap-Up:** {reset_status['Public_WrapUp']}\n"
+        )
+        
+        # ✨ Send explicitly ONLY to Prathu and EZ
+        for admin_id in [716496729, 5103843488]:
+            try:
+                http_session.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
+                    json={"chat_id": admin_id, "text": report_msg, "parse_mode": "Markdown"}, 
+                    timeout=5
+                )
+            except: pass
         
     except Exception as e:
         # ✨ THE ULTIMATE SAFETY NET: If ANYTHING fails, erase all changes!
