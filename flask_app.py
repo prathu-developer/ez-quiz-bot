@@ -2509,7 +2509,8 @@ def bake_miniapp_cache():
 
         c.execute("SELECT value FROM bot_settings WHERE key='current_week'")
         week_row = c.fetchone()
-        current_week_val = week_row[0] if week_row else 14
+        # ⚡ FIX: Convert the database string to an integer so we can do math on it!
+        current_week_val = int(week_row[0]) if week_row else 14
 
         c.execute("SELECT COUNT(*) FROM polls")
         total_quizzes_val = c.fetchone()[0]
@@ -2660,8 +2661,12 @@ def get_mini_app_leaderboard():
                     print(f"Error building initial RAM cache: {e}")
                     return jsonify({"error": "Syncing..."}), 503
 
-    master_data = RAM_CACHE["master_data"]
+    master_data = RAM_CACHE.get("master_data")
     
+    # ⚡ FIX: If the background cache failed to build, safely tell the app to wait instead of crashing!
+    if not master_data:
+        return jsonify({"error": "Syncing data, please refresh..."}), 503
+        
     # 2. Slice the Leaderboard (Top 50 + The Requesting User)
     custom_leaderboard = []
     
