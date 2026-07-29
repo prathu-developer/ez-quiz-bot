@@ -10,7 +10,7 @@
 
     <!-- ⚡ FREE ZERO-BANDWIDTH CDN DELIVERY -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/prathu-developer/ez-editorials-assets@main/style.css">
-    <script src="https://cdn.jsdelivr.net/gh/prathu-developer/ez-editorials-assets@main/app_v5.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/gh/prathu-developer/ez-editorials-assets@main/app_v6.js" defer></script>
 </head>
 <body>
     <!-- HEADER -->
@@ -29,15 +29,96 @@
     <div class="floating-scroll-btn" id="scrollBtn" onclick="scrollToDemotionZone()" title="Scroll to Demotion Zone">🔻</div>
     <div class="user-footer" id="footer">Loading your rank...</div>
 
-    <!-- MAIN ANALYSIS MODAL (Empty shells for JS to populate) -->
+    <!-- MAIN ANALYSIS MODAL -->
     <div class="modal-overlay" id="analysisModal" onclick="closeModal(event)">
-        <!-- The JS dynamically injects the modal content here when a user taps a profile -->
-        <!-- We stripped the hardcoded HTML here because app.js handles it! -->
+        <div class="modal-content" id="modalContentBg" onclick="event.stopPropagation()">
+            <div class="close-indicator" onclick="closeModal(event, true)"></div>
+            
+            <div class="dash-card">
+                <div class="profile-header">
+                    <div class="profile-info">
+                        <h2 id="modalStudentName">--</h2>
+                        <p id="modalStudentHouse">--</p>
+                        <p id="modalStudentElo" style="font-weight: 800; color: #2563eb; font-size: 1.1em; margin-top: 5px;">--</p>
+                        <p id="modalStudentTitle" style="font-size: 0.85em; color: #64748b;">--</p>
+                    </div>
+                </div>
+                <div class="stats-grid-4">
+                    <div class="mini-stat"><div class="mini-stat-val val-blue" id="statScore">--</div><div class="mini-stat-label">Points</div></div>
+                    <div class="mini-stat"><div class="mini-stat-val val-green" id="statAccuracy">--</div><div class="mini-stat-label">Accuracy</div></div>
+                    <div class="mini-stat"><div class="mini-stat-val val-purple" id="statAttempts">--</div><div class="mini-stat-label">Attempts</div></div>
+                    <div class="mini-stat"><div class="mini-stat-val val-amber" id="statGrowth">--</div><div class="mini-stat-label">Growth</div></div>
+                </div>
+            </div>
+
+            <div class="dash-card">
+                <h3 class="section-title">📊 Weekly Performance</h3>
+                <div class="chart-container"><canvas id="dailyChart"></canvas></div>
+            </div>
+
+            <div class="dash-card">
+                <h3 class="section-title">🎯 Accuracy Breakdown</h3>
+                <div class="doughnut-layout">
+                    <div class="doughnut-wrap"><canvas id="pieChart"></canvas></div>
+                    <div class="performance-table">
+                        <table class="perf-table">
+                            <tr><th></th><th>Correct</th><th>Wrong</th><th>Attempts</th><th>Acc.</th></tr>
+                            <tr><td class="tbl-label" id="tblStudentHeader">You</td><td id="tblYouCor">--</td><td id="tblYouWro">--</td><td id="tblYouAtt">--</td><td id="tblYouAcc" style="font-weight: bold; color: #10b981;">--</td></tr>
+                            <tr><td class="tbl-label">Topper</td><td id="tblTopCor">--</td><td id="tblTopWro">--</td><td id="tblTopAtt">--</td><td id="tblTopAcc" style="font-weight: bold; color: #3b82f6;">--</td></tr>
+                            <tr><td class="tbl-label">Class Avg</td><td id="tblAvgCor">--</td><td id="tblAvgWro">--</td><td id="tblAvgAtt">--</td><td id="tblAvgAcc" style="font-weight: bold; color: #f59e0b;">--</td></tr>
+                        </table>
+                    </div>
+                </div>
+                <div class="chart-summary">
+                    <div class="cs-item"><div class="cs-val" id="csTotal">--</div><div class="cs-label">Total Pts</div></div>
+                    <div class="cs-item"><div class="cs-val" id="csCorrect">--</div><div class="cs-label"><span class="text-green">●</span> Correct</div></div>
+                    <div class="cs-item"><div class="cs-val" id="csWrong">--</div><div class="cs-label"><span class="text-red">●</span> Wrong</div></div>
+                    <div class="cs-item"><div class="cs-val" id="csAcc">--</div><div class="cs-label">Accuracy</div></div>
+                </div>
+                <div class="topper-banner">
+                    <div class="topper-banner-title">🥇 Topper</div>
+                    <div class="topper-banner-info" id="bannerTopperName">--</div>
+                    <div class="topper-banner-info" id="bannerTopperInfo" style="font-weight: 600; color: #b45309; font-size: 0.9em;">--</div>
+                </div>
+            </div>
+
+            <div class="dash-card">
+                <h3 class="section-title">📈 Rank History</h3>
+                <div id="rankHistorySection"></div>
+            </div>
+
+            <div class="dash-card">
+                <h3 class="section-title">⚡ Recent Activity</h3>
+                <div id="activityList"></div>
+            </div>
+        </div>
     </div>
 
     <!-- HISTORY ARCHIVE MODAL -->
     <div class="modal-overlay" id="historyModalOverlay" onclick="closeHistoryModal(event)" style="z-index: 200;">
-        <!-- The JS dynamically injects the history content here -->
+        <div class="modal-content" style="height: auto; max-height: 50vh; border-radius: 24px 24px 0 0;" onclick="event.stopPropagation()">
+            <div class="close-indicator" onclick="closeHistoryModal(event, true)"></div>
+            <h3 style="margin-top: 0; color: #0f172a; text-align: center;">Week <span id="histWeek">--</span> Records</h3>
+            
+            <div style="background: white; border-radius: 12px; padding: 15px; border: 1px solid #edf1f5; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #f1f5f9;">
+                    <div style="color: #64748b; font-size: 0.9em; font-weight: 600;">Rank</div>
+                    <div style="font-weight: bold; color: #3b82f6; font-size: 1.1em;" id="histRank">--</div>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #f1f5f9;">
+                    <div style="color: #64748b; font-size: 0.9em; font-weight: 600;">Score</div>
+                    <div style="font-weight: bold; color: #0f172a;" id="histScore">--</div>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #f1f5f9;">
+                    <div style="color: #64748b; font-size: 0.9em; font-weight: 600;">Accuracy</div>
+                    <div style="font-weight: bold; color: #10b981;" id="histAcc">--</div>
+                </div>
+                <div style="display: flex; justify-content: space-between;">
+                    <div style="color: #64748b; font-size: 0.9em; font-weight: 600;">Correct Answers</div>
+                    <div style="font-weight: bold; color: #0f172a;" id="histCorrect">--</div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- ELO LEADERBOARD MODAL -->
