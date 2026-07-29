@@ -2507,10 +2507,13 @@ def bake_miniapp_cache():
         conn = get_db()
         c = conn.cursor()
 
+        # ⚡ 1. Safely extract the week number as an Integer
         c.execute("SELECT value FROM bot_settings WHERE key='current_week'")
         week_row = c.fetchone()
-        # ⚡ FIX: Convert the database string to an integer so we can do math on it!
-        current_week_val = int(week_row[0]) if week_row else 14
+        try:
+            current_week_val = int(week_row[0]) if week_row else 14
+        except:
+            current_week_val = 14
 
         c.execute("SELECT COUNT(*) FROM polls")
         total_quizzes_val = c.fetchone()[0]
@@ -2524,24 +2527,24 @@ def bake_miniapp_cache():
         c.execute("SELECT user_id, first_name, live_elo, last_updated FROM users ORDER BY live_elo DESC, last_updated ASC")
         all_elo_users = c.fetchall()
     
-        # ✨ Changed from a 48-hour to a 7-day inactivity threshold to perfectly match the weekly season
         seven_days_ago = time.time() - (7 * 24 * 3600)
         elo_leaderboard = [{"rank": i + 1, "id": eu[0], "name": eu[1], "elo": round(eu[2] if eu[2] is not None else 1000, 1), "is_active": True if (eu[3] if eu[3] else 0) >= seven_days_ago else False} for i, eu in enumerate(all_elo_users)]
     
-        # ⚡ OPTIMIZED: Only fetch history for active players, and only the last 4 weeks!
+        # ⚡ 2. Safely cast week_num to INTEGER directly in SQL to prevent string math crashes
         c.execute("""
             SELECT user_id, week_num, rank, total_members, score, attempts, correct 
             FROM weekly_rank_history 
             WHERE user_id IN (SELECT user_id FROM users WHERE weekly_attempts > 0)
-            AND week_num >= %s 
+            AND CAST(week_num AS INTEGER) >= %s 
             ORDER BY week_num DESC
         """, (current_week_val - 4,))
+        
         rank_hist_dict = {}
         for r in c.fetchall():
             if r[0] not in rank_hist_dict: rank_hist_dict[r[0]] = []
             rank_hist_dict[r[0]].append({"week": r[1], "rank": r[2], "total": r[3], "score": r[4], "attempts": r[5], "correct": r[6]})
     
-        # ⚡ OPTIMIZED: Ignore thousands of inactive users who aren't on the board this week
+        # ⚡ 3. Only fetch active players for precise scores
         c.execute("""
             SELECT user_id, day_label, score, attempts, correct_answers 
             FROM precise_scores 
@@ -2576,7 +2579,6 @@ def bake_miniapp_cache():
 
             if index == 0: topper_history_dict = {k: (int(v["score"]) if v["score"] % 1 == 0 else round(v["score"], 2)) for k, v in user_hist.items()}
 
-            # ✨ THE MASTER GROWTH FORMULA ✨
             hist = rank_hist_dict.get(uid, [])
             lifetime_growth_text = "Calibrating..."
             
@@ -2584,26 +2586,20 @@ def bake_miniapp_cache():
                 curr_acc = (u_correct / u_attempts) * 100 if u_attempts > 0 else 0
                 u_elo_val = user[8] if user[8] is not None else 1000
                 
-                # Establish the Dynamic Baseline
                 if len(hist) == 1:
-                    # Sophomore: Base off their single Week 1
                     base_att = hist[0]['attempts']
                     base_corr = hist[0]['correct'] if hist[0]['correct'] else 0
                 else:
-                    # Veteran: Base off the average of their two oldest weeks (which are at the end of the list)
                     base_att = hist[-1]['attempts'] + hist[-2]['attempts']
                     base_corr = (hist[-1]['correct'] if hist[-1]['correct'] else 0) + (hist[-2]['correct'] if hist[-2]['correct'] else 0)
                     
                 base_acc = (base_corr / base_att) * 100 if base_att > 0 else 0
-                
-                # Calculate Sub-Indicators
                 accuracy_shift = curr_acc - base_acc
                 elo_factor = (u_elo_val - 1000) / 10.0
-                consistency_multiplier = 1.0 + (len(hist) * 0.05) # 5% boost for every active week
+                consistency_multiplier = 1.0 + (len(hist) * 0.05)
                 
                 raw_growth = (accuracy_shift + elo_factor) * consistency_multiplier
                 
-                # Format the output (hide negative dips to prevent demotivation)
                 if raw_growth > 0:
                     lifetime_growth_text = f"+{int(raw_growth)}%"
 
@@ -2612,7 +2608,7 @@ def bake_miniapp_cache():
                 "elo": round(user[8] if user[8] is not None else 1000, 1), 
                 "last_updated": user[9] if user[9] else 0,
                 "house": str(user[3]), "is_captain": user[4], "attempts": u_attempts, "league": user[6] if user[6] else 0,
-                "lifetime_growth": lifetime_growth_text, # ✨ Slotted straight into the JSON payload!
+                "lifetime_growth": lifetime_growth_text, 
                 "rank_history": hist,
                 "history": {
                     "labels": [k for k, v in sorted_user_hist], "scores": [(int(v["score"]) if v["score"] % 1 == 0 else round(v["score"], 2)) for k, v in sorted_user_hist],
@@ -2623,7 +2619,7 @@ def bake_miniapp_cache():
 
         class_avg_history_dict = {day: round(weighted_daily_sums[day] / sum_weights) if sum_weights > 0 else 0 for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]}
 
-        # Save the structured Python dictionary directly to RAM (Do NOT json.dump here!)
+        # ⚡ 4. Store directly as a Python Dictionary!
         global RAM_CACHE
         RAM_CACHE["master_data"] = {
             "current_week": current_week_val, 
@@ -2638,12 +2634,11 @@ def bake_miniapp_cache():
     except Exception as e:
         print(f"🚨 Cache Bake Error: {e}")
     finally:
-        # ✨ ALWAYS runs, even if the code above crashes!
         if conn:
             try: c.close()
             except: pass
             release_db(conn)
-
+            
 from flask import Response
 
 @app.route('/api/leaderboard', methods=['GET'])
