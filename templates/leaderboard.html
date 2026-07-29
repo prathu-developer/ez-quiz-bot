@@ -10,173 +10,267 @@
 
     <!-- ⚡ FREE ZERO-BANDWIDTH CDN DELIVERY -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/prathu-developer/ez-editorials-assets@main/style.css">
-    <script src="https://cdn.jsdelivr.net/gh/prathu-developer/ez-editorials-assets@main/app_v6.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/gh/prathu-developer/ez-editorials-assets@main/app_v7.js" defer></script>
 </head>
 <body>
-    <!-- HEADER -->
     <div class="header">
         <div class="active-count-pill">👥 <span id="activeCount">--</span></div>
         <div class="header-title">🏆 The Great Hall</div>
         <div class="timer-sub-header">SEASON <span id="weekNumber">--</span> • ENDS IN <span id="timeRemainingHead" style="color: #fff;">--</span></div>
     </div>
 
-    <!-- MAIN LEADERBOARD LIST -->
     <div class="leaderboard-container" id="list">
         <div style="text-align: center; color: #8c939d; margin-top: 30px;">Fetching magical records...</div>
     </div>
 
-    <!-- ✨ RESTORED: HOW IT WORKS SECTION -->
-    <div style="padding: 0 15px 120px 15px;">
-        <div class="how-wrapper">
-            <div class="how-btn" onclick="document.getElementById('howBox').classList.toggle('active')">
-                <span>📖 How the Ranking Works</span>
-                <span style="font-size: 0.8em;">▼</span>
-            </div>
-            <div class="how-box" id="howBox">
-                <div class="how-inner">
-                    <div class="info-card">
-                        <h4>⚔️ The House Cup</h4>
-                        <p>You earn points for every correct answer, but lose points for every wrong answer. Harder questions give more points!</p>
-                    </div>
-                    
-                    <div class="info-card">
-                        <h4>📈 Promotion & Demotion</h4>
-                        <p>To level up your League, your final score must be <b>above the Class Average</b> at the end of the week. If you fall below it, you drop a League.</p>
-                        <div class="cut-off-alert">
-                            <div><b>Current Class Average:</b> The green/red arrows next to your score show if you are currently safe.</div>
-                        </div>
-                    </div>
-
-                    <div class="info-card">
-                        <h4>🏅 League Tiers</h4>
-                        <p>Climb the ranks from Unranked to the ultimate Genesis leagues.</p>
-                        
-                        <div class="league-track">
-                            <span class="league-badge bg-unranked">🛡️ Unranked</span> <span class="league-arrow">➔</span>
-                            <span class="league-badge bg-bronze">🥉 Bronze</span> <span class="league-arrow">➔</span>
-                            <span class="league-badge bg-silver">🥈 Silver</span> <span class="league-arrow">➔</span>
-                            <span class="league-badge bg-gold">🥇 Gold</span>
-                        </div>
-                        <div class="league-track">
-                            <span class="league-badge bg-plat">💠 Platinum</span> <span class="league-arrow">➔</span>
-                            <span class="league-badge bg-dia">💎 Diamond</span> <span class="league-arrow">➔</span>
-                            <span class="league-badge bg-champ">👑 Champion</span>
-                        </div>
-                        <div class="league-track">
-                            <span class="league-badge bg-master">🎖️ Master</span> <span class="league-arrow">➔</span>
-                            <span class="league-badge bg-elite">⚡ Elite</span> <span class="league-arrow">➔</span>
-                            <span class="league-badge bg-legend">🌟 Legend</span>
-                        </div>
-                        <div class="league-track">
-                            <span class="league-badge bg-mythic">🔮 Mythic</span> <span class="league-arrow">➔</span>
-                            <span class="league-badge bg-prodigy">⚛️ Prodigy</span> <span class="league-arrow">➔</span>
-                            <span class="league-badge bg-celestial">☄️ Celestial</span>
-                        </div>
-                        <div class="league-track">
-                            <span class="league-badge bg-zenith">🧿 Zenith</span> <span class="league-arrow">➔</span>
-                            <span class="league-badge bg-ascendant">🌌 Ascendant</span> <span class="league-arrow">➔</span>
-                            <span class="league-badge bg-omniscient">👁️‍🗨️ Omniscient</span>
-                        </div>
-                        <div class="league-track" style="background: linear-gradient(45deg, #020617, #3b0764, #701a75, #020617); border: 1px solid #fbbf24;">
-                            <span class="league-badge bg-genesis" style="font-size: 0.85em;">✨ GENESIS ✨</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- FLOATING SCROLL BUTTON & FOOTER -->
+    <!-- FLOATING SCROLL TO DEMOTION BUTTON -->
     <div class="floating-scroll-btn" id="scrollBtn" onclick="scrollToDemotionZone()" title="Scroll to Demotion Zone">🔻</div>
+
     <div class="user-footer" id="footer">Loading your rank...</div>
 
-    <!-- MAIN ANALYSIS MODAL -->
     <div class="modal-overlay" id="analysisModal" onclick="closeModal(event)">
         <div class="modal-content" id="modalContentBg" onclick="event.stopPropagation()">
-            <div class="close-indicator" onclick="closeModal(event, true)"></div>
-            
-            <div class="dash-card">
-                <div class="profile-header">
-                    <div class="profile-info">
-                        <h2 id="modalStudentName">--</h2>
-                        <p id="modalStudentHouse">--</p>
-                        <p id="modalStudentElo" style="font-weight: 800; color: #2563eb; font-size: 1.1em; margin-top: 5px;">--</p>
-                        <p id="modalStudentTitle" style="font-size: 0.85em; color: #64748b;">--</p>
+            <div class="close-indicator" onclick="closeModal(null, true)"></div>
+
+            <div class="profile-header" style="align-items: flex-start;">
+                <div class="profile-info" style="flex: 1;">
+                    <h2 id="modalStudentName" style="font-size: 1.3em;">Student Name</h2>
+                    <p id="modalStudentHouse" style="font-size: 0.9em; margin-top: 8px;">House</p>
+                </div>
+                <div style="text-align: right; flex-shrink: 0; padding-left: 10px;">
+                    <h2 id="modalStudentElo" style="margin: 0; font-size: 1.4em; color: #1e3a8a; font-weight: 900;">🧠 1000</h2>
+                    <p id="modalStudentTitle" style="margin: 5px 0 0 0; color: #64748b; font-size: 0.85em; font-weight: 700;">🎓 Scholar</p>
+                </div>
+            </div>
+
+            <div class="how-wrapper" style="display: flex; gap: 10px;">
+                <div class="how-btn" style="flex: 1; padding: 10px; font-size: 0.85em;" onclick="document.getElementById('howItWorksBox').classList.toggle('active')">
+                    📜 Guide: Quiz Cup ▾
+                </div>
+                <div class="how-btn" style="flex: 1; padding: 10px; font-size: 0.85em; background: #f0fdf4; color: #166534; border-color: #bbf7d0;" onclick="openEloLeaderboard()">
+                    🌍 View Global Elo ▾
+                </div>
+            </div>
+                <div class="how-box" id="howItWorksBox">
+                    <div class="how-inner">
+
+                        <div class="info-card">
+                            <h4>⚙️ Dynamic Scoring System</h4>
+                            <p>Points adjust based on global class accuracy. The harder the question is for the class, the higher the reward and the lower the penalty!</p>
+                            <table style="width:100%; text-align:center; font-size: 0.8em; margin-top:10px; border-collapse: collapse;">
+                                <tr style="background: #e2e8f0; color: #0f172a;">
+                                    <th style="padding: 6px; border-radius: 6px 0 0 0;">Tier</th>
+                                    <th style="padding: 6px;">Correct</th>
+                                    <th style="padding: 6px; border-radius: 0 6px 0 0;">Wrong</th>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 6px; font-weight:bold; color: #10b981;">T1 (Very Easy)</td>
+                                    <td style="padding: 6px;">+1.0</td>
+                                    <td style="padding: 6px; color:#ef4444;">-0.42</td>
+                                </tr>
+                                <tr style="background: #f8fafc;">
+                                    <td style="padding: 6px; font-weight:bold; color: #3b82f6;">T2 (Easy)</td>
+                                    <td style="padding: 6px;">+2.0</td>
+                                    <td style="padding: 6px; color:#ef4444;">-0.60</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 6px; font-weight:bold; color: #f59e0b;">T3 (Moderate)</td>
+                                    <td style="padding: 6px;">+3.0</td>
+                                    <td style="padding: 6px; color:#ef4444;">-0.75</td>
+                                </tr>
+                                <tr style="background: #f8fafc;">
+                                    <td style="padding: 6px; font-weight:bold; color: #f97316;">T4 (Hard)</td>
+                                    <td style="padding: 6px;">+4.0</td>
+                                    <td style="padding: 6px; color:#ef4444;">-0.60</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 6px; font-weight:bold; color: #ef4444; border-radius: 0 0 0 6px;">T5 (Very Hard)</td>
+                                    <td style="padding: 6px;">+5.0</td>
+                                    <td style="padding: 6px; color:#ef4444; border-radius: 0 0 6px 0;">-0.42</td>
+                                </tr>
+                            </table>
+                        </div>
+
+                        <div class="info-card">
+                            <h4>📅 The Weekly Season</h4>
+                            <p>New editorial vocabulary quizzes drop <b>Monday to Saturday</b>. You have until the ultimate deadline on <b>Sunday at 11:59 PM (IST)</b> to complete them before the season resets!</p>
+                        </div>
+
+                        <div class="info-card">
+                            <h4>🏅 The League Journey</h4>
+                            <p>Compete, climb the leaderboard, and unlock higher leagues. There are no speed advantages—only accuracy and consistency matter.</p>
+
+                            <div class="league-track">
+                                <span class="league-badge bg-unranked">🛡️ Unranked</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-bronze">🥉 Bronze</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-silver">🥈 Silver</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-gold">🥇 Gold</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-plat">💠 Plat</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-dia">💎 Dia</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-champ">👑 Champ</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-master">🎖️ Master</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-elite">⚡ Elite</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-legend">🌟 Legend</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-mythic">🔮 Mythic</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-prodigy">🎇 Prodigy</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-celestial">☄️ Celestial</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-zenith">🧿 Zenith</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-ascendant">🌌 Ascendant</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-omniscient">👁️‍🗨️ Omniscient</span> <span class="league-arrow">➔</span>
+                                <span class="league-badge bg-genesis">✨ Genesis I - X</span>
+                            </div>
+
+                            <div class="cut-off-alert">
+                                <div><b class="text-green">▲ PROMOTION:</b> Stay above the <b>Class Average</b> to be promoted by one league. Finish in the <b>Top 10</b> for a <b>Double Promotion</b>, or secure <b>1st Place</b> for a massive <b>Triple Promotion</b>!</div>
+                                <div style="height: 1px; background: #e2e8f0; width: 100%;"></div>
+                                <div><b class="text-red">▼ DEMOTION:</b> Dropping below the class average means your badge will be demoted. Keep grinding!</div>
+                            </div>
+                        </div>
+
+                        <div class="info-card" style="margin-bottom: 0;">
+                            <h4>💡 The Path to Champion</h4>
+                            <p>1. Read <b>Today's Editorials</b><br>
+                               2. Study the <b>Words 101</b> series<br>
+                               3. Attempt the Daily Quizzes<br>
+                               <i>* Consistency is rewarded more than occasional high scores. Never miss a quiz!</i>
+                            </p>
+                        </div>
+
                     </div>
                 </div>
-                <div class="stats-grid-4">
-                    <div class="mini-stat"><div class="mini-stat-val val-blue" id="statScore">--</div><div class="mini-stat-label">Points</div></div>
-                    <div class="mini-stat"><div class="mini-stat-val val-green" id="statAccuracy">--</div><div class="mini-stat-label">Accuracy</div></div>
-                    <div class="mini-stat"><div class="mini-stat-val val-purple" id="statAttempts">--</div><div class="mini-stat-label">Attempts</div></div>
-                    <div class="mini-stat"><div class="mini-stat-val val-amber" id="statGrowth">--</div><div class="mini-stat-label">Growth</div></div>
+
+            <div class="stats-grid-4">
+                <div class="mini-stat">
+                    <div class="mini-stat-val val-blue" id="statScore">0</div>
+                    <div class="mini-stat-label">Total Points</div>
+                </div>
+                <div class="mini-stat">
+                    <div class="mini-stat-val val-green" id="statAccuracy">0%</div>
+                    <div class="mini-stat-label">Weekly Accuracy</div>
+                </div>
+                <div class="mini-stat">
+                    <div class="mini-stat-val val-purple" id="statAttempts">0</div>
+                    <div class="mini-stat-label">Quizzes Attempted</div>
+                </div>
+                <div class="mini-stat">
+                    <div class="mini-stat-val val-amber" id="statGrowth" style="font-size: 1.5em;">Calibrating...</div>
+                    <div class="mini-stat-label">Lifetime Growth 📈</div>
+                </div>
+            </div>
+
+            <!-- NEW: HISTORIC RANK ENTRIES SECTION -->
+            <div class="dash-card">
+                <div class="section-title">📜 Previous Rank History</div>
+                <div id="rankHistorySection">
+                    <div style="text-align:center; color:#94a3b8; padding: 10px; font-size: 0.85em;">No previous records available. Data will start appearing from next week! 🔮</div>
                 </div>
             </div>
 
             <div class="dash-card">
-                <h3 class="section-title">📊 Weekly Performance</h3>
-                <div class="chart-container"><canvas id="dailyChart"></canvas></div>
+                <div class="section-title">
+                    <div>📊 Weekly Progress <span style="font-size: 0.7em; color: #64748b; margin-left: 5px; font-weight:normal;">(Mon - Sun)</span></div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="dailyChart"></canvas>
+                </div>
+                <div class="chart-summary">
+                    <div class="cs-item"><div class="cs-label">Σ Total Points</div><div class="cs-val" id="csTotal">0</div></div>
+                    <div class="cs-item"><div class="cs-label">✅ Correct</div><div class="cs-val" id="csCorrect">0</div></div>
+                    <div class="cs-item"><div class="cs-label">❌ Wrong</div><div class="cs-val" id="csWrong">0</div></div>
+                    <div class="cs-item"><div class="cs-label">🎯 Accuracy</div><div class="cs-val" id="csAcc">0%</div></div>
+                </div>
             </div>
 
             <div class="dash-card">
-                <h3 class="section-title">🎯 Accuracy Breakdown</h3>
+                <div class="section-title">🎯 Performance Overview</div>
                 <div class="doughnut-layout">
-                    <div class="doughnut-wrap"><canvas id="pieChart"></canvas></div>
+                    <div class="doughnut-wrap">
+                        <canvas id="pieChart"></canvas>
+                    </div>
                     <div class="performance-table">
                         <table class="perf-table">
-                            <tr><th></th><th>Correct</th><th>Wrong</th><th>Attempts</th><th>Acc.</th></tr>
-                            <tr><td class="tbl-label" id="tblStudentHeader">You</td><td id="tblYouCor">--</td><td id="tblYouWro">--</td><td id="tblYouAtt">--</td><td id="tblYouAcc" style="font-weight: bold; color: #10b981;">--</td></tr>
-                            <tr><td class="tbl-label">Topper</td><td id="tblTopCor">--</td><td id="tblTopWro">--</td><td id="tblTopAtt">--</td><td id="tblTopAcc" style="font-weight: bold; color: #3b82f6;">--</td></tr>
-                            <tr><td class="tbl-label">Class Avg</td><td id="tblAvgCor">--</td><td id="tblAvgWro">--</td><td id="tblAvgAtt">--</td><td id="tblAvgAcc" style="font-weight: bold; color: #f59e0b;">--</td></tr>
+                            <tr>
+                                <th></th>
+                                <th id="tblStudentHeader">Student</th>
+                                <th>Topper</th>
+                                <th>Class Avg.</th>
+                            </tr>
+                            <tr>
+                                <td class="tbl-label"><span class="text-green">●</span> Correct</td>
+                                <td id="tblYouCor" style="font-weight:bold;">0</td>
+                                <td id="tblTopCor" style="font-weight:bold;">0</td>
+                                <td id="tblAvgCor" style="font-weight:bold;">0</td>
+                            </tr>
+                            <tr>
+                                <td class="tbl-label"><span class="text-red">●</span> Wrong</td>
+                                <td id="tblYouWro" style="font-weight:bold;">0</td>
+                                <td id="tblTopWro" style="font-weight:bold;">0</td>
+                                <td id="tblAvgWro" style="font-weight:bold;">0</td>
+                            </tr>
+                            <tr>
+                                <td class="tbl-label" style="color: #64748b;">Total</td>
+                                <td id="tblYouAtt" style="font-weight:bold;">0</td>
+                                <td id="tblTopAtt" style="font-weight:bold;">0</td>
+                                <td id="tblAvgAtt" style="font-weight:bold;">0</td>
+                            </tr>
+                            <tr>
+                                <td class="tbl-label" style="color: #64748b;">Accuracy</td>
+                                <td id="tblYouAcc" style="font-weight:bold;">0%</td>
+                                <td id="tblTopAcc" style="font-weight:bold;">0%</td>
+                                <td id="tblAvgAcc" style="font-weight:bold;">0%</td>
+                            </tr>
                         </table>
                     </div>
                 </div>
-                <div class="chart-summary">
-                    <div class="cs-item"><div class="cs-val" id="csTotal">--</div><div class="cs-label">Total Pts</div></div>
-                    <div class="cs-item"><div class="cs-val" id="csCorrect">--</div><div class="cs-label"><span class="text-green">●</span> Correct</div></div>
-                    <div class="cs-item"><div class="cs-val" id="csWrong">--</div><div class="cs-label"><span class="text-red">●</span> Wrong</div></div>
-                    <div class="cs-item"><div class="cs-val" id="csAcc">--</div><div class="cs-label">Accuracy</div></div>
-                </div>
+
                 <div class="topper-banner">
-                    <div class="topper-banner-title">🥇 Topper</div>
-                    <div class="topper-banner-info" id="bannerTopperName">--</div>
-                    <div class="topper-banner-info" id="bannerTopperInfo" style="font-weight: 600; color: #b45309; font-size: 0.9em;">--</div>
+                    <div class="topper-banner-title">
+                        🏆 Topper This Week
+                    </div>
+                    <div style="display:flex; align-items:center; gap: 8px;">
+                        <span id="bannerTopperName" style="font-weight: bold; color: #1c1e21;">Name (House)</span>
+                    </div>
+                    <div class="topper-banner-info" id="bannerTopperInfo">
+                        0 pts • 0% Accuracy
+                    </div>
                 </div>
             </div>
 
             <div class="dash-card">
-                <h3 class="section-title">📈 Rank History</h3>
-                <div id="rankHistorySection"></div>
+                <div class="section-title">🕒 Recent Activity</div>
+                <div id="activityList">
+                </div>
             </div>
 
-            <div class="dash-card">
-                <h3 class="section-title">⚡ Recent Activity</h3>
-                <div id="activityList"></div>
-            </div>
         </div>
     </div>
-
-    <!-- HISTORY ARCHIVE MODAL -->
     <div class="modal-overlay" id="historyModalOverlay" onclick="closeHistoryModal(event)" style="z-index: 200;">
-        <div class="modal-content" style="height: auto; max-height: 50vh; border-radius: 24px 24px 0 0;" onclick="event.stopPropagation()">
-            <div class="close-indicator" onclick="closeHistoryModal(event, true)"></div>
-            <h3 style="margin-top: 0; color: #0f172a; text-align: center;">Week <span id="histWeek">--</span> Records</h3>
-            
-            <div style="background: white; border-radius: 12px; padding: 15px; border: 1px solid #edf1f5; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
-                <div style="display: flex; justify-content: space-between; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #f1f5f9;">
-                    <div style="color: #64748b; font-size: 0.9em; font-weight: 600;">Rank</div>
-                    <div style="font-weight: bold; color: #3b82f6; font-size: 1.1em;" id="histRank">--</div>
+        <div class="modal-content" id="historyModalContent" onclick="event.stopPropagation()" style="height: auto; padding-bottom: 40px; background: #f8fafc;">
+            <div class="close-indicator" onclick="closeHistoryModal(null, true)"></div>
+
+            <div class="profile-header" style="justify-content: center; margin-bottom: 25px;">
+                <div class="profile-info" style="text-align: center;">
+                    <h2 style="justify-content: center; font-size: 1.4em;">📜 Season <span id="histWeek">--</span> Archive</h2>
+                    <p style="justify-content: center; color: #64748b; margin-top: 5px;">Final Locked Standings</p>
                 </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #f1f5f9;">
-                    <div style="color: #64748b; font-size: 0.9em; font-weight: 600;">Score</div>
-                    <div style="font-weight: bold; color: #0f172a;" id="histScore">--</div>
+            </div>
+
+            <div class="stats-grid-4">
+                <div class="mini-stat">
+                    <div class="mini-stat-val val-blue" id="histScore">0</div>
+                    <div class="mini-stat-label">Final Score</div>
                 </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #f1f5f9;">
-                    <div style="color: #64748b; font-size: 0.9em; font-weight: 600;">Accuracy</div>
-                    <div style="font-weight: bold; color: #10b981;" id="histAcc">--</div>
+                <div class="mini-stat">
+                    <div class="mini-stat-val val-amber" id="histRank">#0</div>
+                    <div class="mini-stat-label">Final Rank</div>
                 </div>
-                <div style="display: flex; justify-content: space-between;">
-                    <div style="color: #64748b; font-size: 0.9em; font-weight: 600;">Correct Answers</div>
-                    <div style="font-weight: bold; color: #0f172a;" id="histCorrect">--</div>
+                <div class="mini-stat">
+                    <div class="mini-stat-val val-green" id="histCorrect">0</div>
+                    <div class="mini-stat-label">Total Correct</div>
+                </div>
+                <div class="mini-stat">
+                    <div class="mini-stat-val val-purple" id="histAcc">0%</div>
+                    <div class="mini-stat-label">Accuracy</div>
                 </div>
             </div>
         </div>
@@ -188,9 +282,12 @@
             <div style="padding: 20px; text-align: center; border-bottom: 1px solid #e2e8f0; background: white; border-radius: 32px 32px 0 0;">
                 <div class="close-indicator" onclick="closeEloModal(null, true)"></div>
                 <h2 style="margin: 0; color: #0f172a; font-size: 1.3em;">🌍 Global Intelligence</h2>
-                <p style="margin: 4px 0 0 0; font-size: 0.8em; color: #64748b;">Top 50 Lifetime Elo Ratings</p>
+                <p style="margin: 4px 0 0 0; font-size: 0.8em; color: #64748b;">Top 50 Lifetime Elo Ratings (Active Only)</p>
             </div>
-            <div id="eloListContainer" style="flex: 1; overflow-y: auto; padding: 15px; padding-bottom: 100px;"></div>
+
+            <div id="eloListContainer" style="flex: 1; overflow-y: auto; padding: 15px; padding-bottom: 100px;">
+                </div>
+
             <div class="user-footer" id="eloFooter" style="bottom: 20px; background: rgba(15, 23, 42, 0.95); border: 1px solid #334155; color: white;">
                 Loading your Elo status...
             </div>
