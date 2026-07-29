@@ -1,0 +1,414 @@
+/* --- CORE STYLES --- */
+        body { background-color: #f4f6f8; color: #1c1e21; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; overflow-x: hidden; }
+        .header { position: relative; background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); color: white; text-align: center; padding: 15px 15px; font-weight: bold; z-index: 10; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .header-title { font-size: 1.4em; }
+        .timer-sub-header { font-size: 0.7em; color: #bae6fd; margin-top: 6px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }
+
+        .active-count-pill { position: absolute; top: 15px; right: 15px; background: rgba(255, 255, 255, 0.15); font-size: 0.6em; padding: 4px 8px; border-radius: 12px; font-weight: 700; letter-spacing: 0.5px; display: flex; align-items: center; gap: 4px; border: 1px solid rgba(255, 255, 255, 0.2); color: #e0f2fe; }
+
+        .leaderboard-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px;
+            padding-bottom: 140px; /* Increased so the last student easily clears the floating footer */
+
+            /* NEW: Native momentum scrolling and fluid physics */
+            -webkit-overflow-scrolling: touch;
+            scroll-behavior: smooth;
+            overscroll-behavior-y: contain;
+        }
+
+        /* --- LIST STYLES --- */
+                @keyframes slideUpFade {
+            0% { opacity: 0; transform: translateY(25px); }
+            100% { opacity: 1; transform: translateY(0); }
+        }
+
+        .rank-row {
+            background: white;
+            border-radius: 12px;
+            padding: 12px 14px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+            border: 1px solid #edf1f5;
+            transition: transform 0.15s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.15s ease-out;
+            opacity: 0;
+            animation: slideUpFade 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+
+            /* NEW: GPU Acceleration for flawless gliding */
+            will-change: transform, opacity;
+            transform: translateZ(0);
+            -webkit-backface-visibility: hidden;
+            backface-visibility: hidden;
+        }
+        .rank-row:active {
+            transform: scale(0.96);
+            box-shadow: 0 0px 2px rgba(0,0,0,0.02);
+        }
+        .rank-left { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
+        .rank-number { font-size: 1.3em; font-weight: 900; color: #8c939d; width: 35px; text-align: center; flex-shrink: 0; }
+        .user-details { display: flex; flex-direction: column; flex: 1; min-width: 0; padding-right: 8px; }
+        .user-name { font-weight: bold; font-size: 1.05em; color: #1c1e21; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center;}
+        .user-sub-details { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+        .user-house { font-size: 1.15em; color: #64748b; white-space: nowrap; }
+        .user-score { font-weight: bold; color: #2a5298; background: #eef2f7; padding: 6px 12px; border-radius: 20px; font-size: 0.95em; display: flex; align-items: center; white-space: nowrap; flex-shrink: 0; }
+
+        .user-footer {
+            position: fixed;
+            bottom: 20px; /* Floats above the bottom */
+            left: 20px;
+            right: 20px;
+            width: auto;
+            border-radius: 24px; /* Fully rounded pill shape */
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            padding: 15px 20px;
+            box-sizing: border-box;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.12); /* Deep hover shadow */
+            z-index: 20;
+            cursor: pointer;
+            border: 1px solid rgba(255,255,255,0.6);
+            transition: transform 0.15s cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+        .user-footer:active {
+            transform: scale(0.95);
+        }
+
+        /* --- NEW: FLOATING SCROLL BUTTON STYLES --- */
+        .floating-scroll-btn {
+            position: fixed;
+            bottom: 110px; /* Sits perfectly above the footer */
+            right: 20px;
+            width: 42px; /* Slightly thicker for a better touch target */
+            height: 42px;
+            background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); /* Crisp, bright solid gradient */
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            /* Outer red glow + Inner white highlight for a 3D polished look */
+            box-shadow: 0 4px 12px rgba(220, 38, 38, 0.4), inset 0 2px 4px rgba(255, 255, 255, 0.3);
+            z-index: 25;
+            cursor: pointer;
+            font-size: 1.1em;
+            border: none; /* Removed the hard white border */
+            transition: transform 0.15s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.15s;
+        }
+        .floating-scroll-btn:active {
+            transform: scale(0.85);
+            box-shadow: 0 2px 6px rgba(220, 38, 38, 0.3), inset 0 1px 2px rgba(255, 255, 255, 0.2);
+        }
+
+        /* --- LEAGUE BADGES --- */
+        .league-badge { display: inline-flex; align-items: center; padding: 3px 6px; border-radius: 6px; font-size: 0.65em; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); color: white; white-space: nowrap; }
+
+        /* Base Leagues */
+        .bg-unranked {
+            background: #e2e8f0; /* Lighter, flat grey so it doesn't match Silver */
+            color: #64748b;
+        }
+        .bg-bronze { background: linear-gradient(135deg, #b45309, #d97706); }
+        .bg-silver {
+            background: linear-gradient(135deg, #94a3b8, #cbd5e1);
+            color: #0f172a;
+        }
+        .bg-gold { background: linear-gradient(135deg, #ca8a04, #fde047); color: #422006;}
+        .bg-plat {
+            background: linear-gradient(135deg, #0369a1, #38bdf8);
+            border: 1px solid #7dd3fc; /* Icy cyan edge */
+            box-shadow: 0 1px 4px rgba(56, 189, 248, 0.3); /* Subtle baseline glow */
+            color: white;
+        }
+        .bg-dia {
+            background: linear-gradient(135deg, #4338ca, #a855f7);
+            border: 1px solid #d8b4fe; /* Adds a sharp, crystalline edge */
+            box-shadow: 0 0 6px rgba(168, 85, 247, 0.5); /* Soft, premium outer glow */
+            color: white;
+        }
+        .bg-champ {
+            background: linear-gradient(135deg, #991b1b, #ef4444);
+            border: 1px solid #fca5a5; /* Changed from yellow to frosted ruby */
+            box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+            color: white;
+        }
+
+        /* Premium Expansion Leagues */
+        .bg-master { background: linear-gradient(135deg, #064e3b, #059669); border: 1px solid #34d399; box-shadow: 0 0 10px rgba(5, 150, 105, 0.8); }
+        .bg-elite { background: linear-gradient(135deg, #4c0519, #e11d48); border: 1px solid #fda4af; box-shadow: 0 0 12px rgba(225, 29, 72, 0.9); }
+        .bg-legend { background: linear-gradient(135deg, #0f172a, #7e22ce, #be185d); border: 1px solid #f472b6; box-shadow: 0 0 15px rgba(190, 24, 93, 0.95); text-shadow: 0 0 3px rgba(255, 255, 255, 0.6); }
+        .bg-mythic { background: linear-gradient(135deg, #083344, #0891b2, #2dd4bf); border: 1px solid #a5f3fc; box-shadow: 0 0 18px rgba(6, 182, 212, 1); }
+        .bg-prodigy {
+            background: linear-gradient(135deg, #4a044e, #c026d3, #a855f7);
+            border: 1px solid #f5d0fe;
+            box-shadow: 0 0 22px rgba(192, 38, 211, 0.85);
+            color: #ffffff;
+            text-shadow: 0 0 3px rgba(0, 0, 0, 0.6);
+        }
+        .bg-celestial { background: linear-gradient(135deg, #1e3a8a, #60a5fa, #e0f2fe); border: 1px solid #ffffff; box-shadow: 0 0 25px rgba(147, 197, 253, 1); color: #0f172a; }
+        .bg-zenith { background: linear-gradient(135deg, #000000, #18181b); border: 1px solid #fbbf24; box-shadow: 0 0 30px rgba(251, 191, 36, 1); color: #fde047; text-shadow: 0 0 4px rgba(253, 224, 71, 0.8); }
+        
+        /* --- ANIMATIONS FOR ABSOLUTE LEAGUES --- */
+        
+        /* Ascendant: Fast, chaotic, aggressive energy */
+        @keyframes ascendantGrind { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+        
+        /* Omniscient: Sharp, holy shimmer sliding across the ivory */
+        @keyframes holyShine { 
+            0% { background-position: -150% center; } 
+            100% { background-position: 150% center; } 
+        }
+        
+        /* Genesis: Deep cosmic drift with a glowing pulse */
+        @keyframes galaxyDrift { 
+            0% { 
+                background-position: 0px 0px, 0px 0px, 0% 0%; 
+                box-shadow: 0 0 20px rgba(217, 70, 239, 0.7), inset 0 0 15px rgba(139, 92, 246, 0.5);
+            } 
+            50% {
+                box-shadow: 0 0 35px rgba(217, 70, 239, 1), inset 0 0 25px rgba(139, 92, 246, 0.8);
+            }
+            100% { 
+                background-position: -200px -200px, -150px -100px, 100% 100%; 
+                box-shadow: 0 0 20px rgba(217, 70, 239, 0.7), inset 0 0 15px rgba(139, 92, 246, 0.5);
+            } 
+        }
+
+        /* 🌌 14. Ascendant */
+        .bg-ascendant { 
+            background: linear-gradient(45deg, #ef4444, #f59e0b, #10b981, #3b82f6, #8b5cf6, #ef4444); 
+            background-size: 200% 200%; animation: ascendantGrind 4s linear infinite;
+            border: 1px solid #ffffff; box-shadow: 0 0 15px #ef4444, 0 0 25px #3b82f6; 
+            text-shadow: 0 0 5px rgba(255,255,255,0.9); 
+        }
+
+        /* 👁️‍🗨️ 15. Omniscient (The Sacred Manuscript) */
+        .bg-omniscient {
+            /* Ivory base with a sharp white/gold gleam passing through */
+            background: linear-gradient(110deg, #faf7f0 35%, #ffffff 50%, #faf7f0 65%);
+            background-size: 250% 100%;
+            animation: holyShine 3.5s infinite linear;
+            border: 1px solid #d4af37; /* Antique, soft gold */
+            color: #78350f; /* Deep, ancient ink brown */
+            box-shadow: 0 0 20px rgba(212, 175, 55, 0.4), inset 0 0 15px rgba(255,255,255,1);
+            text-shadow: 0 0 3px rgba(255,255,255,0.9);
+            font-weight: 900;
+            letter-spacing: 0.5px;
+        }
+
+        /* ✨ 16-25. Genesis (The Living Nebula) */
+        .bg-genesis {
+            /* Layer 1: White Stars, Layer 2: Pink/Gold Dust, Layer 3: Moving Purple Nebula */
+            background-image: 
+                radial-gradient(1px 1px at 20px 30px, rgba(255,255,255,0.9), rgba(0,0,0,0)),
+                radial-gradient(1.5px 1.5px at 50px 70px, rgba(251,207,232,0.8), rgba(0,0,0,0)),
+                linear-gradient(45deg, #020617, #3b0764, #701a75, #020617);
+            background-size: 80px 80px, 120px 120px, 300% 300%;
+            animation: galaxyDrift 8s infinite linear;
+            border: 1px solid #fbbf24; /* Sharp, explosive solid gold outline */
+            color: #ffffff;
+            text-shadow: 0 0 8px #f472b6, 0 0 15px #e879f9; /* Intense glowing text */
+            font-weight: 900;
+            letter-spacing: 1px;
+        }
+
+        /* --- ROW TINTING FOR THE DASHBOARD BACKGROUNDS --- */
+        /* Soft, pristine ivory glow for Omniscient rows */
+        .row-bg-omniscient { background: #faf8f5 !important; border-color: #f3e8d5 !important; box-shadow: inset 0 0 15px rgba(212, 175, 55, 0.1) !important; }
+        .mod-bg-omniscient { background: linear-gradient(180deg, #faf8f5 0%, #f4f6f8 220px) !important; }
+
+        /* Deep magical purple glow for Genesis rows */
+        .row-bg-genesis { background: #fdf4ff !important; border-color: #fbcfe8 !important; box-shadow: inset 0 0 15px rgba(217, 70, 239, 0.15) !important; }
+        .mod-bg-genesis { background: linear-gradient(180deg, #fdf4ff 0%, #f4f6f8 220px) !important; }
+        
+        /* --- LEAGUE TINT CLASSES --- */
+        .row-bg-unranked {
+            background: white;
+        }
+        .row-bg-bronze { background: #fff7ed !important; border-color: #ffedd5 !important; }
+        .row-bg-silver {
+            background: #f8fafc !important;
+            border-color: #f1f5f9 !important;
+        }
+        .row-bg-gold { background: #fefce8 !important; border-color: #fef08a !important; }
+        .row-bg-plat { background: #f0f9ff !important; border-color: #e0f2fe !important; }
+        .row-bg-dia { background: #faf5ff !important; border-color: #f3e8ff !important; }
+        .row-bg-champ { background: #fef2f2 !important; border-color: #fee2e2 !important; }
+
+        .row-bg-master { background: #f0fdf4 !important; border-color: #dcfce7 !important; }
+        .row-bg-elite { background: #fff1f2 !important; border-color: #ffe4e6 !important; }
+        .row-bg-legend { background: #fdf2f8 !important; border-color: #fbcfe8 !important; }
+        .row-bg-mythic { background: #ecfeff !important; border-color: #cffafe !important; }
+        .row-bg-prodigy {
+            background: #fdf4ff !important;
+            border-color: #fae8ff !important;
+        }
+        .row-bg-celestial { background: #eff6ff !important; border-color: #dbeafe !important; }
+        .row-bg-zenith { background: #fafafa !important; border-color: #f4f4f5 !important; }
+        .row-bg-ascendant { background: #f5f3ff !important; border-color: #ede9fe !important; }
+
+        .mod-bg-unranked { background: #f4f6f8 !important; }
+        .mod-bg-bronze { background: linear-gradient(180deg, #fff7ed 0%, #f4f6f8 220px) !important; }
+        .mod-bg-silver { background: linear-gradient(180deg, #f1f5f9 0%, #f4f6f8 220px) !important; }
+        .mod-bg-gold { background: linear-gradient(180deg, #fefce8 0%, #f4f6f8 220px) !important; }
+        .mod-bg-plat { background: linear-gradient(180deg, #f0f9ff 0%, #f4f6f8 220px) !important; }
+        .mod-bg-dia { background: linear-gradient(180deg, #faf5ff 0%, #f4f6f8 220px) !important; }
+        .mod-bg-champ { background: linear-gradient(180deg, #fef2f2 0%, #f4f6f8 220px) !important; }
+
+        .mod-bg-master { background: linear-gradient(180deg, #f0fdf4 0%, #f4f6f8 220px) !important; }
+        .mod-bg-elite { background: linear-gradient(180deg, #fff1f2 0%, #f4f6f8 220px) !important; }
+        .mod-bg-legend { background: linear-gradient(180deg, #fdf2f8 0%, #f4f6f8 220px) !important; }
+        .mod-bg-mythic { background: linear-gradient(180deg, #ecfeff 0%, #f4f6f8 220px) !important; }
+        .mod-bg-prodigy {
+            background: linear-gradient(180deg, #fdf4ff 0%, #f4f6f8 220px) !important;
+        }
+        .mod-bg-celestial { background: linear-gradient(180deg, #eff6ff 0%, #f4f6f8 220px) !important; }
+        .mod-bg-zenith { background: linear-gradient(180deg, #fafafa 0%, #f4f6f8 220px) !important; }
+        .mod-bg-ascendant { background: linear-gradient(180deg, #f5f3ff 0%, #f4f6f8 220px) !important; }
+
+        /* --- HOW IT WORKS MODAL UI --- */
+        .how-wrapper { margin-bottom: 15px; }
+        .how-btn { background: #e0f2fe; color: #0369a1; padding: 12px; text-align: center; border-radius: 12px; font-weight: 700; cursor: pointer; border: 1px solid #bae6fd; font-size: 0.95em; box-shadow: 0 2px 4px rgba(3, 105, 161, 0.1); transition: 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px;}
+        .how-btn:active { transform: scale(0.98); }
+        .how-box { max-height: 0; overflow: hidden; transition: max-height 0.5s ease-in-out, opacity 0.4s ease; opacity: 0; }
+        .how-box.active { max-height: 1000px; opacity: 1; margin-top: 10px; overflow-y: auto;}
+        .how-inner { background: white; padding: 15px; border-radius: 12px; border: 1px solid #edf1f5; box-shadow: 0 4px 10px rgba(0,0,0,0.03); }
+
+        .how-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 15px; }
+        .how-item { text-align: center; font-size: 0.8em; background: #f8fafc; padding: 12px 8px; border-radius: 10px; border: 1px solid #e2e8f0; color: #475569; display: flex; flex-direction: column; align-items: center; justify-content: center;}
+        .how-item strong { font-size: 1.5em; color: #0f172a; display: block; margin-top: 5px; }
+
+        .info-card { background: #f8fafc; border: 1px solid #edf1f5; border-radius: 10px; padding: 15px; margin-bottom: 12px; }
+        .info-card h4 { margin: 0 0 8px 0; color: #1e3c72; font-size: 0.95em; display: flex; align-items: center; gap: 6px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;}
+        .info-card p { margin: 0; font-size: 0.85em; color: #475569; line-height: 1.6; }
+        .info-card b { color: #0f172a; }
+
+        .league-track { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 0.85em; margin: 10px 0; padding: 10px; background: white; border-radius: 8px; border: 1px dashed #cbd5e1; justify-content: center;}
+        .league-track .league-badge { font-size: 0.65em; }
+        .league-arrow { color: #94a3b8; font-size: 0.8em; font-weight: bold; }
+
+        .cut-off-alert { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; font-size: 0.85em; line-height: 1.5; color: #475569; background: white; padding: 10px; border-radius: 8px; border: 1px solid #e2e8f0;}
+
+        /* --- DASHBOARD MODAL STYLES --- */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(15, 23, 42, 0.35);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            z-index: 100;
+            flex-direction: column;
+            justify-content: flex-end;
+            opacity: 0;
+            /* FAST fade in for the background */
+            transition: opacity 0.25s ease-out;
+        }
+        .modal-overlay.active { display: flex; opacity: 1; }
+        .modal-content {
+            background: #f4f6f8;
+            width: 100%;
+            height: 90vh;
+            border-radius: 32px 32px 0 0;
+            padding: 24px 20px;
+            box-sizing: border-box;
+            overflow-y: auto;
+            transform: translateY(100%);
+            transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), background 0.3s ease;
+            box-shadow: 0 -10px 40px rgba(0,0,0,0.15);
+
+            /* NEW: Momentum scrolling + prevents background snagging */
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior-y: contain;
+        }
+        .modal-overlay.active .modal-content { transform: translateY(0); }
+        .close-indicator {
+            width: 48px;
+            height: 6px;
+            background: #cbd5e1;
+            border-radius: 10px;
+            margin: 0 auto 24px auto;
+            cursor: pointer;
+            transition: background 0.2s, transform 0.2s;
+        }
+        .close-indicator:active {
+            background: #94a3b8;
+            transform: scale(0.9);
+        }
+
+        /* --- DASHBOARD CARDS --- */
+        .dash-card { background: white; border-radius: 16px; padding: 20px; margin-bottom: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.03); border: 1px solid #edf1f5; }
+        .profile-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .profile-info h2 { margin: 0; font-size: 1.6em; color: #0f172a; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;}
+        .profile-info p { margin: 5px 0 0 0; color: #64748b; font-weight: 500; display: flex; align-items: center; gap: 8px;}
+
+        /* Top 4 Stats Grid */
+        .stats-grid-4 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 15px; }
+        .mini-stat {
+            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            border: 1px solid #e2e8f0;
+            border-radius: 16px;
+            padding: 15px;
+            text-align: center;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.03), inset 0 2px 4px rgba(255,255,255,1);
+            transition: transform 0.2s ease;
+        }
+        .mini-stat:active { transform: scale(0.96); }
+        .mini-stat-val {
+            font-size: 1.8em; font-weight: 900; margin-bottom: 5px;
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        .mini-stat-label { font-size: 0.7em; color: #64748b; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; }
+
+        /* Gradient text colours for the specific stats */
+        .val-blue   { background-image: linear-gradient(135deg, #2563eb, #60a5fa); }
+        .val-green  { background-image: linear-gradient(135deg, #059669, #34d399); }
+        .val-purple { background-image: linear-gradient(135deg, #7c3aed, #a78bfa); }
+        .val-amber  { background-image: linear-gradient(135deg, #d97706, #fbbf24); }
+
+        /* Charts Section */
+        .section-title { font-size: 1.1em; font-weight: 700; color: #334155; margin-bottom: 15px; display: flex; align-items: center; gap: 8px; justify-content: space-between;}
+        .chart-container { position: relative; height: 260px; width: 100%; margin-bottom: 15px; }
+        .chart-summary { background: #f8fafc; border-radius: 10px; padding: 12px; display: flex; justify-content: space-around; border: 1px solid #edf1f5; margin-top: 10px; }
+        .cs-item { text-align: center; }
+        .cs-val { font-weight: 800; color: #0f172a; font-size: 1.1em; }
+        .cs-label { font-size: 0.75em; color: #64748b; display: flex; align-items: center; gap: 4px; justify-content: center; }
+
+        /* Comparative Performance Table */
+        .doughnut-layout { display: flex; align-items: flex-start; justify-content: space-between; }
+        .doughnut-wrap { width: 110px; height: 110px; position: relative; flex-shrink: 0; }
+        .performance-table { flex: 1; margin-left: 15px; font-size: 0.85em; overflow-x: auto; }
+        .perf-table { width: 100%; border-collapse: collapse; text-align: center; }
+        .perf-table th { color: #64748b; font-weight: 600; padding-bottom: 10px; border-bottom: 1px solid #f1f5f9; }
+        .perf-table td { padding: 10px 0; border-bottom: 1px solid #f1f5f9; }
+        .perf-table tr:last-child td { border-bottom: none; }
+        .tbl-label { text-align: left; color: #475569; }
+
+        /* Golden Topper Banner */
+        .topper-banner {
+            background: linear-gradient(135deg, #fffbeb 0%, #fef08a 100%);
+            border: 1px solid #fde047;
+            border-radius: 16px;
+            padding: 14px 18px;
+            margin-top: 20px;
+            display: flex; justify-content: space-between; align-items: center;
+            font-size: 0.9em;
+            box-shadow: 0 4px 15px rgba(250, 204, 21, 0.25), inset 0 2px 5px rgba(255,255,255,0.8);
+        }
+        .topper-banner-title { display: flex; align-items: center; gap: 8px; font-weight: 900; color: #b45309; text-transform: uppercase; letter-spacing: 0.5px; }
+        .topper-banner-info { font-weight: 700; color: #92400e; }
+
+        /* Recent Activity Table */
+        .activity-row { display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #f1f5f9; font-size: 0.95em; font-weight: 500; color: #475569;}
+        .activity-row:last-child { border-bottom: none; }
+        .act-day { width: 60px; font-weight: 600; color: #0f172a;}
+        .act-stats { flex: 1; display: flex; gap: 15px; justify-content: center; }
+
+        .text-green { color: #10b981; } .text-red { color: #ef4444; } .text-blue { color: #3b82f6; }
