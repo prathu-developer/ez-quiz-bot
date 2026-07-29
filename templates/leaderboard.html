@@ -25,6 +25,67 @@
         <div style="text-align: center; color: #8c939d; margin-top: 30px;">Fetching magical records...</div>
     </div>
 
+    <!-- ✨ RESTORED: HOW IT WORKS SECTION -->
+    <div style="padding: 0 15px 120px 15px;">
+        <div class="how-wrapper">
+            <div class="how-btn" onclick="document.getElementById('howBox').classList.toggle('active')">
+                <span>📖 How the Ranking Works</span>
+                <span style="font-size: 0.8em;">▼</span>
+            </div>
+            <div class="how-box" id="howBox">
+                <div class="how-inner">
+                    <div class="info-card">
+                        <h4>⚔️ The House Cup</h4>
+                        <p>You earn points for every correct answer, but lose points for every wrong answer. Harder questions give more points!</p>
+                    </div>
+                    
+                    <div class="info-card">
+                        <h4>📈 Promotion & Demotion</h4>
+                        <p>To level up your League, your final score must be <b>above the Class Average</b> at the end of the week. If you fall below it, you drop a League.</p>
+                        <div class="cut-off-alert">
+                            <div><b>Current Class Average:</b> The green/red arrows next to your score show if you are currently safe.</div>
+                        </div>
+                    </div>
+
+                    <div class="info-card">
+                        <h4>🏅 League Tiers</h4>
+                        <p>Climb the ranks from Unranked to the ultimate Genesis leagues.</p>
+                        
+                        <div class="league-track">
+                            <span class="league-badge bg-unranked">🛡️ Unranked</span> <span class="league-arrow">➔</span>
+                            <span class="league-badge bg-bronze">🥉 Bronze</span> <span class="league-arrow">➔</span>
+                            <span class="league-badge bg-silver">🥈 Silver</span> <span class="league-arrow">➔</span>
+                            <span class="league-badge bg-gold">🥇 Gold</span>
+                        </div>
+                        <div class="league-track">
+                            <span class="league-badge bg-plat">💠 Platinum</span> <span class="league-arrow">➔</span>
+                            <span class="league-badge bg-dia">💎 Diamond</span> <span class="league-arrow">➔</span>
+                            <span class="league-badge bg-champ">👑 Champion</span>
+                        </div>
+                        <div class="league-track">
+                            <span class="league-badge bg-master">🎖️ Master</span> <span class="league-arrow">➔</span>
+                            <span class="league-badge bg-elite">⚡ Elite</span> <span class="league-arrow">➔</span>
+                            <span class="league-badge bg-legend">🌟 Legend</span>
+                        </div>
+                        <div class="league-track">
+                            <span class="league-badge bg-mythic">🔮 Mythic</span> <span class="league-arrow">➔</span>
+                            <span class="league-badge bg-prodigy">⚛️ Prodigy</span> <span class="league-arrow">➔</span>
+                            <span class="league-badge bg-celestial">☄️ Celestial</span>
+                        </div>
+                        <div class="league-track">
+                            <span class="league-badge bg-zenith">🧿 Zenith</span> <span class="league-arrow">➔</span>
+                            <span class="league-badge bg-ascendant">🌌 Ascendant</span> <span class="league-arrow">➔</span>
+                            <span class="league-badge bg-omniscient">👁️‍🗨️ Omniscient</span>
+                        </div>
+                        <div class="league-track" style="background: linear-gradient(45deg, #020617, #3b0764, #701a75, #020617); border: 1px solid #fbbf24;">
+                            <span class="league-badge bg-genesis" style="font-size: 0.85em;">✨ GENESIS ✨</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- FLOATING SCROLL BUTTON & FOOTER -->
     <div class="floating-scroll-btn" id="scrollBtn" onclick="scrollToDemotionZone()" title="Scroll to Demotion Zone">🔻</div>
     <div class="user-footer" id="footer">Loading your rank...</div>
