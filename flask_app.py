@@ -2674,27 +2674,16 @@ def get_mini_app_leaderboard():
     target_avg = master_data.get("target_average", 0)
     demotion_count = 0
     
-    # ✨ FIX: Include ALL Promotion + 10 Demotion + Requesting User
     for index, u in enumerate(master_data["leaderboard"]):
         is_me = (u["id"] == user_id)
-        is_topper = (index == 0)
         is_promo = u["score"] >= target_avg
         
         if not is_promo:
             demotion_count += 1
             
         if is_promo or demotion_count <= 10 or is_me:
-            light_u = u.copy() 
-            
-            # ✨ PREVENT CRASH: Send empty arrays instead of stripping completely!
-            if not is_me and not is_topper:
-                light_u["history"] = {
-                    "accuracy": u["history"]["accuracy"], "correct": u["history"]["correct"], "wrong": u["history"]["wrong"],
-                    "labels": [], "scores": [], "daily_correct": [], "daily_attempts": []
-                }
-                light_u["rank_history"] = []
-                
-            custom_leaderboard.append(light_u)
+            # ✨ RESTORED: We send the FULL data (including charts and history) for all visible students!
+            custom_leaderboard.append(u)
 
     custom_elo = []
     for index, eu in enumerate(master_data["elo_ranking"]):
@@ -2705,7 +2694,7 @@ def get_mini_app_leaderboard():
         "current_week": master_data["current_week"],
         "total_quizzes": master_data["total_quizzes"],
         "target_average": target_avg, 
-        "total_active": master_data.get("total_active", len(master_data["leaderboard"])), # ✨ Sent true active count
+        "total_active": master_data.get("total_active", len(master_data["leaderboard"])), 
         "topper_history": master_data["topper_history"],
         "class_avg_history": master_data["class_avg_history"],
         "leaderboard": custom_leaderboard,
