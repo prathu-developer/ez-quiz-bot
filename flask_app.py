@@ -2682,7 +2682,7 @@ def get_mini_app_leaderboard():
             demotion_count += 1
             
         if is_promo or demotion_count <= 10 or is_me:
-            # ✨ RESTORED: We send the FULL data (including charts and history) for all visible students!
+            # ✨ RESTORED: Send the full chart and history data so profiles work perfectly!
             custom_leaderboard.append(u)
 
     custom_elo = []
@@ -2694,7 +2694,7 @@ def get_mini_app_leaderboard():
         "current_week": master_data["current_week"],
         "total_quizzes": master_data["total_quizzes"],
         "target_average": target_avg, 
-        "total_active": master_data.get("total_active", len(master_data["leaderboard"])), 
+        "total_active": master_data.get("total_active", len(master_data["leaderboard"])),
         "topper_history": master_data["topper_history"],
         "class_avg_history": master_data["class_avg_history"],
         "leaderboard": custom_leaderboard,
@@ -2704,7 +2704,7 @@ def get_mini_app_leaderboard():
     res = Response(json.dumps(response_data), mimetype='application/json')
     res.headers["Cache-Control"] = "public, max-age=30"
     return res
-
+    
 @app.route('/cron/refresh_snapshot_0508', methods=['GET', 'POST'])
 def cron_refresh_snapshot():
     # 🔒 SECURITY GATE
