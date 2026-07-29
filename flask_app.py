@@ -2521,7 +2521,7 @@ def bake_miniapp_cache():
         """)
         top_users = c.fetchall()
 
-        # ✨ NEW: Calculate the exact True Average matching the Telegram Group
+        # ✨ NEW: Calculate the EXACT True Average (Matches Telegram Message)
         sum_weighted_points = 0.0
         sum_weights = 0.0
         for user in top_users:
@@ -2636,7 +2636,8 @@ def bake_miniapp_cache():
         RAM_CACHE["master_data"] = {
             "current_week": current_week_val, 
             "total_quizzes": total_quizzes_val, 
-            "target_average": target_average,  # ✨ EXPORTED FOR FRONTEND
+            "target_average": target_average,
+            "total_active": len(top_users), # ✨ Pass the REAL total count
             "leaderboard": leaderboard_list, 
             "topper_history": topper_history_dict, 
             "class_avg_history": class_avg_history_dict, 
@@ -2651,6 +2652,8 @@ def bake_miniapp_cache():
             try: c.close()
             except: pass
             release_db(conn)
+
+from flask import Response
 
 @app.route('/api/leaderboard', methods=['GET'])
 def get_mini_app_leaderboard():
@@ -2671,7 +2674,7 @@ def get_mini_app_leaderboard():
     target_avg = master_data.get("target_average", 0)
     demotion_count = 0
     
-    # ✨ NEW: Include ALL Promotion + 10 Demotion + Requesting User
+    # ✨ FIX: Include ALL Promotion + 10 Demotion + Requesting User
     for index, u in enumerate(master_data["leaderboard"]):
         is_me = (u["id"] == user_id)
         is_topper = (index == 0)
@@ -2683,7 +2686,7 @@ def get_mini_app_leaderboard():
         if is_promo or demotion_count <= 10 or is_me:
             light_u = u.copy() 
             
-            # Prevent JS crashes by sending empty chart arrays instead of deleting them entirely!
+            # ✨ PREVENT CRASH: Send empty arrays instead of stripping completely!
             if not is_me and not is_topper:
                 light_u["history"] = {
                     "accuracy": u["history"]["accuracy"], "correct": u["history"]["correct"], "wrong": u["history"]["wrong"],
@@ -2701,7 +2704,8 @@ def get_mini_app_leaderboard():
     response_data = {
         "current_week": master_data["current_week"],
         "total_quizzes": master_data["total_quizzes"],
-        "target_average": target_avg, # ✨ Sent to JS
+        "target_average": target_avg, 
+        "total_active": master_data.get("total_active", len(master_data["leaderboard"])), # ✨ Sent true active count
         "topper_history": master_data["topper_history"],
         "class_avg_history": master_data["class_avg_history"],
         "leaderboard": custom_leaderboard,
