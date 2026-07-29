@@ -1768,7 +1768,8 @@ def recalculate_dynamic_scores():
             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
         """, (str(total_max_points),))
 
-        c.execute("SELECT user_id, base_elo FROM users")
+        # ⚡ OPTIMIZED: Only pull base Elo for users actively answering quizzes today
+        c.execute("SELECT user_id, base_elo FROM users WHERE weekly_attempts > 0")
         base_elos = {row[0]: (row[1] if row[1] is not None else 1000) for row in c.fetchall()}
 
         c.execute("SELECT user_id, poll_id, is_correct, poll_day FROM user_answers")
@@ -2526,13 +2527,25 @@ def bake_miniapp_cache():
         seven_days_ago = time.time() - (7 * 24 * 3600)
         elo_leaderboard = [{"rank": i + 1, "id": eu[0], "name": eu[1], "elo": round(eu[2] if eu[2] is not None else 1000, 1), "is_active": True if (eu[3] if eu[3] else 0) >= seven_days_ago else False} for i, eu in enumerate(all_elo_users)]
     
-        c.execute("SELECT user_id, week_num, rank, total_members, score, attempts, correct FROM weekly_rank_history ORDER BY week_num DESC")
+        # ⚡ OPTIMIZED: Only fetch history for active players, and only the last 4 weeks!
+        c.execute("""
+            SELECT user_id, week_num, rank, total_members, score, attempts, correct 
+            FROM weekly_rank_history 
+            WHERE user_id IN (SELECT user_id FROM users WHERE weekly_attempts > 0)
+            AND week_num >= %s 
+            ORDER BY week_num DESC
+        """, (current_week_val - 4,))
         rank_hist_dict = {}
         for r in c.fetchall():
             if r[0] not in rank_hist_dict: rank_hist_dict[r[0]] = []
             rank_hist_dict[r[0]].append({"week": r[1], "rank": r[2], "total": r[3], "score": r[4], "attempts": r[5], "correct": r[6]})
     
-        c.execute("SELECT user_id, day_label, score, attempts, correct_answers FROM precise_scores")
+        # ⚡ OPTIMIZED: Ignore thousands of inactive users who aren't on the board this week
+        c.execute("""
+            SELECT user_id, day_label, score, attempts, correct_answers 
+            FROM precise_scores 
+            WHERE user_id IN (SELECT user_id FROM users WHERE weekly_attempts > 0)
+        """)
         precise_scores_dict = {}
         for r in c.fetchall():
             if r[0] not in precise_scores_dict: precise_scores_dict[r[0]] = []
