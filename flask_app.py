@@ -2507,13 +2507,10 @@ def bake_miniapp_cache():
         conn = get_db()
         c = conn.cursor()
 
-        # ⚡ 1. Safely extract the week number as an Integer
         c.execute("SELECT value FROM bot_settings WHERE key='current_week'")
         week_row = c.fetchone()
-        try:
-            current_week_val = int(week_row[0]) if week_row else 14
-        except:
-            current_week_val = 14
+        try: current_week_val = int(week_row[0]) if week_row else 14
+        except: current_week_val = 14
 
         c.execute("SELECT COUNT(*) FROM polls")
         total_quizzes_val = c.fetchone()[0]
@@ -2523,6 +2520,23 @@ def bake_miniapp_cache():
             FROM users WHERE weekly_attempts > 0 ORDER BY weekly_score DESC, last_updated ASC
         """)
         top_users = c.fetchall()
+
+        # ✨ NEW: Calculate the exact True Average matching the Telegram Group
+        sum_weighted_points = 0.0
+        sum_weights = 0.0
+        for user in top_users:
+            u_score = float(user[2]) if user[2] is not None else 0.0
+            u_attempts = int(user[5]) if user[5] is not None else 0
+            u_correct = int(user[7]) if user[7] is not None else 0
+            if u_attempts > 0:
+                accuracy = u_correct / u_attempts
+                volume_weight = u_attempts / (u_attempts + 10.0)
+                final_weight = volume_weight * accuracy
+                if u_score < 0: final_weight = 0.0
+                sum_weighted_points += (u_score * final_weight)
+                sum_weights += final_weight
+                
+        target_average = int((sum_weighted_points / sum_weights) + 0.5) if sum_weights > 0 else 0
     
         c.execute("SELECT user_id, first_name, live_elo, last_updated FROM users ORDER BY live_elo DESC, last_updated ASC")
         all_elo_users = c.fetchall()
@@ -2530,7 +2544,6 @@ def bake_miniapp_cache():
         seven_days_ago = time.time() - (7 * 24 * 3600)
         elo_leaderboard = [{"rank": i + 1, "id": eu[0], "name": eu[1], "elo": round(eu[2] if eu[2] is not None else 1000, 1), "is_active": True if (eu[3] if eu[3] else 0) >= seven_days_ago else False} for i, eu in enumerate(all_elo_users)]
     
-        # ⚡ 2. Safely cast week_num to INTEGER directly in SQL to prevent string math crashes
         c.execute("""
             SELECT user_id, week_num, rank, total_members, score, attempts, correct 
             FROM weekly_rank_history 
@@ -2544,7 +2557,6 @@ def bake_miniapp_cache():
             if r[0] not in rank_hist_dict: rank_hist_dict[r[0]] = []
             rank_hist_dict[r[0]].append({"week": r[1], "rank": r[2], "total": r[3], "score": r[4], "attempts": r[5], "correct": r[6]})
     
-        # ⚡ 3. Only fetch active players for precise scores
         c.execute("""
             SELECT user_id, day_label, score, attempts, correct_answers 
             FROM precise_scores 
@@ -2558,7 +2570,7 @@ def bake_miniapp_cache():
         def get_exact_history_fast(uid): return {row[1]: {"score": row[2], "attempts": row[3], "correct": row[4]} for row in precise_scores_dict.get(uid, [])}
 
         weighted_daily_sums = {"Mon": 0, "Tue": 0, "Wed": 0, "Thu": 0, "Fri": 0, "Sat": 0, "Sun": 0}
-        sum_weights = 0
+        sum_weights_chart = 0
         topper_history_dict = {}
         leaderboard_list = []
         day_order = {"Mon": 1, "Tue": 2, "Wed": 3, "Thu": 4, "Fri": 5, "Sat": 6, "Sun": 7}
@@ -2568,8 +2580,9 @@ def bake_miniapp_cache():
             u_score = int(user[2]) if user[2] % 1 == 0 else round(user[2], 2)
             u_attempts = user[5] if user[5] is not None else 0
             u_correct = user[7] if user[7] is not None else 0
+            
             weight = u_attempts ** 0.5
-            sum_weights += weight
+            sum_weights_chart += weight
 
             user_hist = get_exact_history_fast(uid)
             sorted_user_hist = sorted(user_hist.items(), key=lambda x: day_order.get(x[0], 99))
@@ -2617,13 +2630,13 @@ def bake_miniapp_cache():
                 }
             })
 
-        class_avg_history_dict = {day: round(weighted_daily_sums[day] / sum_weights) if sum_weights > 0 else 0 for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]}
+        class_avg_history_dict = {day: round(weighted_daily_sums[day] / sum_weights_chart) if sum_weights_chart > 0 else 0 for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]}
 
-        # ⚡ 4. Store directly as a Python Dictionary!
         global RAM_CACHE
         RAM_CACHE["master_data"] = {
             "current_week": current_week_val, 
             "total_quizzes": total_quizzes_val, 
+            "target_average": target_average,  # ✨ EXPORTED FOR FRONTEND
             "leaderboard": leaderboard_list, 
             "topper_history": topper_history_dict, 
             "class_avg_history": class_avg_history_dict, 
@@ -2638,62 +2651,57 @@ def bake_miniapp_cache():
             try: c.close()
             except: pass
             release_db(conn)
-            
-from flask import Response
 
 @app.route('/api/leaderboard', methods=['GET'])
 def get_mini_app_leaderboard():
     global RAM_CACHE
     user_id = request.args.get('user_id', default=0, type=int)
     
-    # 1. Emergency Fallback Bake (Only if the cache is completely empty)
     if not RAM_CACHE["master_data"]:
         with CACHE_LOCK:
             if not RAM_CACHE["master_data"]:
-                try:
-                    bake_miniapp_cache()
-                except Exception as e:
-                    print(f"Error building initial RAM cache: {e}")
-                    return jsonify({"error": "Syncing..."}), 503
+                try: bake_miniapp_cache()
+                except Exception as e: return jsonify({"error": "Syncing..."}), 503
 
     master_data = RAM_CACHE.get("master_data")
-    
-    # ⚡ FIX: If the background cache failed to build, safely tell the app to wait instead of crashing!
     if not master_data:
         return jsonify({"error": "Syncing data, please refresh..."}), 503
         
-    # 2. Slice the Leaderboard (Top 50 + The Requesting User)
     custom_leaderboard = []
+    target_avg = master_data.get("target_average", 0)
+    demotion_count = 0
     
+    # ✨ NEW: Include ALL Promotion + 10 Demotion + Requesting User
     for index, u in enumerate(master_data["leaderboard"]):
         is_me = (u["id"] == user_id)
         is_topper = (index == 0)
+        is_promo = u["score"] >= target_avg
         
-        # Include if they are in the Top 50, OR if they are the user requesting it
-        if index < 50 or is_me:
-            light_u = u.copy() # Shallow copy so we don't overwrite the master RAM
+        if not is_promo:
+            demotion_count += 1
             
-            # STRIP HEAVY ARRAYS: If it's not the user, they don't need full daily chart history
+        if is_promo or demotion_count <= 10 or is_me:
+            light_u = u.copy() 
+            
+            # Prevent JS crashes by sending empty chart arrays instead of deleting them entirely!
             if not is_me and not is_topper:
                 light_u["history"] = {
-                    "accuracy": u["history"]["accuracy"],
-                    "correct": u["history"]["correct"],
-                    "wrong": u["history"]["wrong"]
+                    "accuracy": u["history"]["accuracy"], "correct": u["history"]["correct"], "wrong": u["history"]["wrong"],
+                    "labels": [], "scores": [], "daily_correct": [], "daily_attempts": []
                 }
                 light_u["rank_history"] = []
                 
             custom_leaderboard.append(light_u)
 
-    # 3. Slice the Elo Board (Top 50 + The Requesting User)
     custom_elo = []
     for index, eu in enumerate(master_data["elo_ranking"]):
         if index < 50 or eu["id"] == user_id:
             custom_elo.append(eu)
 
-    # 4. Package and Send
     response_data = {
         "current_week": master_data["current_week"],
         "total_quizzes": master_data["total_quizzes"],
+        "target_average": target_avg, # ✨ Sent to JS
         "topper_history": master_data["topper_history"],
         "class_avg_history": master_data["class_avg_history"],
         "leaderboard": custom_leaderboard,
@@ -2701,7 +2709,6 @@ def get_mini_app_leaderboard():
     }
 
     res = Response(json.dumps(response_data), mimetype='application/json')
-    # Tell the phone to cache this specific payload for 30 seconds
     res.headers["Cache-Control"] = "public, max-age=30"
     return res
 
