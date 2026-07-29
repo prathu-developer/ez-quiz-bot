@@ -237,11 +237,11 @@ def update_live_leaderboard():
         max_pts = total_quizzes * 3 
 
     c.execute("""
-        SELECT u.weekly_score, u.weekly_attempts,
-               (SELECT SUM(is_correct) FROM user_answers WHERE user_id = u.user_id) as correct
-        FROM users u WHERE u.weekly_attempts > 0
+        SELECT weekly_score, weekly_attempts, weekly_correct
+        FROM users WHERE weekly_attempts > 0
     """)
     all_active_users = c.fetchall()
+
     total_active = len(all_active_users)
 
     target_average = 0
@@ -258,8 +258,9 @@ def update_live_leaderboard():
             if attempts == 0:
                 continue
 
-            correct = exact_correct if exact_correct else 0
-            accuracy = correct / attempts
+            correct = exact_correct if exact_correct is not None else 0
+            # Cap accuracy strictly between 0.0 and 1.0 (100%)
+            accuracy = min(1.0, correct / attempts) if attempts > 0 else 0.0
 
             total_correct_global += correct
             total_attempts_global += attempts
