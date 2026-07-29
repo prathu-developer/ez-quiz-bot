@@ -63,7 +63,8 @@ http_session = requests.Session()
 
 # --- IN-MEMORY CACHE TO SAVE BANDWIDTH ---
 RAM_CACHE = {
-    "miniapp_snapshot": None
+    "master_data": None,
+    "last_bake_time": 0
 }
 CACHE_LOCK = threading.Lock() # ✨ NEW: Protects Render from Cache Stampedes
 POLL_CACHE = {} # ✨ NEW: Caches poll correct options in RAM
@@ -2608,11 +2609,17 @@ def bake_miniapp_cache():
 
         class_avg_history_dict = {day: round(weighted_daily_sums[day] / sum_weights) if sum_weights > 0 else 0 for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]}
 
-        json_string = json.dumps({"current_week": current_week_val, "total_quizzes": total_quizzes_val, "leaderboard": leaderboard_list, "topper_history": topper_history_dict, "class_avg_history": class_avg_history_dict, "elo_ranking": elo_leaderboard})
-        
-        # Save to Python's RAM instead of the remote database
+        # Save the structured Python dictionary directly to RAM (Do NOT json.dump here!)
         global RAM_CACHE
-        RAM_CACHE["miniapp_snapshot"] = json_string
+        RAM_CACHE["master_data"] = {
+            "current_week": current_week_val, 
+            "total_quizzes": total_quizzes_val, 
+            "leaderboard": leaderboard_list, 
+            "topper_history": topper_history_dict, 
+            "class_avg_history": class_avg_history_dict, 
+            "elo_ranking": elo_leaderboard
+        }
+        RAM_CACHE["last_bake_time"] = time.time()
         
     except Exception as e:
         print(f"🚨 Cache Bake Error: {e}")
@@ -2628,24 +2635,72 @@ from flask import Response
 @app.route('/api/leaderboard', methods=['GET'])
 def get_mini_app_leaderboard():
     global RAM_CACHE
+    user_id = request.args.get('user_id', default=0, type=int)
     
-    # Auto-bake RAM cache if empty after a deployment or server restart
-    if not RAM_CACHE["miniapp_snapshot"]:
-        with CACHE_LOCK: # ✨ The Traffic Light!
-            # Double-check inside the lock in case another thread just finished baking it
-            if not RAM_CACHE["miniapp_snapshot"]:
+    # 1. Emergency Fallback Bake (Only if the cache is completely empty)
+    if not RAM_CACHE["master_data"]:
+        with CACHE_LOCK:
+            if not RAM_CACHE["master_data"]:
                 try:
                     bake_miniapp_cache()
                 except Exception as e:
                     print(f"Error building initial RAM cache: {e}")
+                    return jsonify({"error": "Syncing..."}), 503
 
-    if RAM_CACHE["miniapp_snapshot"]:
-        res = Response(RAM_CACHE["miniapp_snapshot"], mimetype='application/json')
-        # ✨ Allow user devices to cache the leaderboard for 30s to prevent rapid re-downloads
-        res.headers["Cache-Control"] = "public, max-age=30"
-        return res
+    master_data = RAM_CACHE["master_data"]
+    
+    # 2. Slice the Leaderboard (Top 50 + The Requesting User)
+    custom_leaderboard = []
+    
+    for index, u in enumerate(master_data["leaderboard"]):
+        is_me = (u["id"] == user_id)
+        is_topper = (index == 0)
         
-    return jsonify({"error": "Syncing..."}), 503
+        # Include if they are in the Top 50, OR if they are the user requesting it
+        if index < 50 or is_me:
+            light_u = u.copy() # Shallow copy so we don't overwrite the master RAM
+            
+            # STRIP HEAVY ARRAYS: If it's not the user, they don't need full daily chart history
+            if not is_me and not is_topper:
+                light_u["history"] = {
+                    "accuracy": u["history"]["accuracy"],
+                    "correct": u["history"]["correct"],
+                    "wrong": u["history"]["wrong"]
+                }
+                light_u["rank_history"] = []
+                
+            custom_leaderboard.append(light_u)
+
+    # 3. Slice the Elo Board (Top 50 + The Requesting User)
+    custom_elo = []
+    for index, eu in enumerate(master_data["elo_ranking"]):
+        if index < 50 or eu["id"] == user_id:
+            custom_elo.append(eu)
+
+    # 4. Package and Send
+    response_data = {
+        "current_week": master_data["current_week"],
+        "total_quizzes": master_data["total_quizzes"],
+        "topper_history": master_data["topper_history"],
+        "class_avg_history": master_data["class_avg_history"],
+        "leaderboard": custom_leaderboard,
+        "elo_ranking": custom_elo
+    }
+
+    res = Response(json.dumps(response_data), mimetype='application/json')
+    # Tell the phone to cache this specific payload for 30 seconds
+    res.headers["Cache-Control"] = "public, max-age=30"
+    return res
+
+@app.route('/cron/refresh_snapshot_0508', methods=['GET', 'POST'])
+def cron_refresh_snapshot():
+    # 🔒 SECURITY GATE
+    if request.headers.get("X-Cron-Secret") != CRON_SECRET:
+        return "Unauthorized", 401
+
+    # Triggers the cache bake in the background instantly
+    threading.Thread(target=bake_miniapp_cache).start()
+    return "RAM Snapshot refresh triggered in background!", 200
     
 def run_word_of_the_day():
     # ==========================================
