@@ -1544,7 +1544,8 @@ def run_heavy_math_background():
     conn = None
     try:
         recalculate_dynamic_scores()
-        bake_miniapp_cache()
+        # ❌ REMOVED: bake_miniapp_cache() to prevent duplicate egress pulls. 
+        # The separate cron job handles this now.
         
         conn = get_db()
         c = conn.cursor()
@@ -2539,12 +2540,20 @@ def bake_miniapp_cache():
                 
         target_average = int((sum_weighted_points / sum_weights) + 0.5) if sum_weights > 0 else 0
     
-        c.execute("SELECT user_id, first_name, live_elo, last_updated FROM users ORDER BY live_elo DESC, last_updated ASC")
+        # ⚡ OPTIMIZED: Only pull users who are active and have an Elo rating
+        seven_days_ago = time.time() - (7 * 24 * 3600)
+        
+        c.execute("""
+            SELECT user_id, first_name, live_elo, last_updated 
+            FROM users 
+            WHERE live_elo IS NOT NULL 
+              AND (weekly_attempts > 0 OR last_updated >= %s)
+            ORDER BY live_elo DESC, last_updated ASC
+        """, (seven_days_ago,))
         all_elo_users = c.fetchall()
     
-        seven_days_ago = time.time() - (7 * 24 * 3600)
         elo_leaderboard = [{"rank": i + 1, "id": eu[0], "name": eu[1], "elo": round(eu[2] if eu[2] is not None else 1000, 1), "is_active": True if (eu[3] if eu[3] else 0) >= seven_days_ago else False} for i, eu in enumerate(all_elo_users)]
-    
+        
         c.execute("""
             SELECT user_id, week_num, rank, total_members, score, attempts, correct 
             FROM weekly_rank_history 
