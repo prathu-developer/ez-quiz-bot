@@ -1737,17 +1737,25 @@ def recalculate_dynamic_scores():
         c.execute("UPDATE users SET weekly_score = 0, daily_score = 0")
         c.execute("DELETE FROM precise_scores")
 
-        c.execute("SELECT poll_id, poll_day FROM polls")
-        active_polls = c.fetchall()
+        # ⚡ OPTIMIZED: Single grouped query instead of N+1 loop per poll
+        c.execute("""
+            SELECT 
+                p.poll_id, 
+                p.poll_day, 
+                COUNT(ua.user_id) as total_attempts, 
+                SUM(ua.is_correct) as total_correct
+            FROM polls p
+            LEFT JOIN user_answers ua ON p.poll_id = ua.poll_id
+            GROUP BY p.poll_id, p.poll_day
+        """)
+        aggregated_polls = c.fetchall()
+        
         poll_values = {}
         total_max_points = 0.0
 
-        for poll in active_polls:
-            p_id, p_day = poll[0], poll[1]
-            c.execute("SELECT COUNT(*), SUM(is_correct) FROM user_answers WHERE poll_id = %s", (p_id,))
-            result = c.fetchone()
-            total_attempts = result[0]
-            total_correct = result[1] if result[1] else 0
+        for poll in aggregated_polls:
+            p_id, p_day, total_attempts, total_correct = poll
+            total_correct = total_correct if total_correct else 0
 
             if total_attempts == 0:
                 total_max_points += 3.0
