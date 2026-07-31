@@ -1099,7 +1099,8 @@ def run_weekly_reset_background():
             promotion_rate = round((promoted_count / total_active_students) * 100) if total_active_students > 0 else 0
 
             # 3. Elo Gain/Loss Calculation
-            c.execute("SELECT first_name, live_elo, base_elo FROM users WHERE live_elo IS NOT NULL")
+            # ⚡ OPTIMIZED: Only pull users who actually competed this week
+            c.execute("SELECT first_name, live_elo, base_elo FROM users WHERE live_elo IS NOT NULL AND weekly_attempts > 0")
             elo_users = c.fetchall()
             highest_elo_val = 1000
             biggest_gain = 0
