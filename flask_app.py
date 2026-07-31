@@ -1553,6 +1553,11 @@ def run_heavy_math_background():
             INSERT INTO bot_settings (key, value) VALUES ('telegram_needs_update', '1') 
             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
         """)
+        # ✨ NEW: Tell the Snapshot cron that fresh math is ready!
+        c.execute("""
+            INSERT INTO bot_settings (key, value) VALUES ('needs_snapshot', '1') 
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+        """)
         conn.commit()
         c.close()
     except Exception as e:
@@ -2729,9 +2734,34 @@ def cron_refresh_snapshot():
     if request.headers.get("X-Cron-Secret") != CRON_SECRET:
         return "Unauthorized", 401
 
-    # Triggers the cache bake in the background instantly
-    threading.Thread(target=bake_miniapp_cache).start()
-    return "RAM Snapshot refresh triggered in background!", 200
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        # Check if Heavy Math actually ran and requested a snapshot
+        c.execute("SELECT value FROM bot_settings WHERE key='needs_snapshot'")
+        row = c.fetchone()
+        
+        if row and row[0] == '1':
+            # Reset the flag so it doesn't run again until the next math cycle
+            c.execute("UPDATE bot_settings SET value='0' WHERE key='needs_snapshot'")
+            conn.commit()
+            
+            # Trigger the cache bake in the background
+            threading.Thread(target=bake_miniapp_cache).start()
+            msg = "RAM Snapshot refresh triggered in background!"
+        else:
+            msg = "No new math calculated. Snapshot skipped to save egress."
+            
+    except Exception as e:
+        msg = f"Error: {e}"
+    finally:
+        if conn:
+            try: c.close()
+            except: pass
+            release_db(conn)
+            
+    return msg, 200
     
 def run_word_of_the_day():
     # ==========================================
