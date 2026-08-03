@@ -13,7 +13,7 @@ from google.genai import types
 
 # --- DATABASE CONFIGURATION ---
 # We use environment variables so your password isn't exposed on GitHub
-DB_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:FlUVu8dA8xy02woL@db.wuhoozvbufnwjsfpkojp.supabase.co:5432/postgres")
+DB_URL = os.environ.get("DATABASE_URL")
 
 # High-speed connection pool to handle massive group traffic instantly
 db_pool = psycopg2.pool.ThreadedConnectionPool(1, 8, DB_URL)
@@ -48,9 +48,9 @@ def release_db(conn):
 
 # --- AI Configuration ---
 API_KEYS = [
-    "AIzaSyDb5THxDk58CrdPJ7nVKJov6gL87_G2hQ0g",
-    "AQ.Ab8RN6L9w5YfLZE350_jxGvWS7NYJnTeYVoRH6yHoZlIDMnP1A",
-    "AQ.Ab8RN6LTnLSW4d1ge6MHadn7YTOO1z608dB9ulQ8qNG3EOJHdw"
+    os.environ.get("GEMINI_KEY_1"),
+    os.environ.get("GEMINI_KEY_2"),
+    os.environ.get("GEMINI_KEY_3")
 ]
 
 current_key_index = 0
@@ -77,7 +77,7 @@ RAM_CACHE = {
 CACHE_LOCK = threading.Lock() # ✨ NEW: Protects Render from Cache Stampedes
 POLL_CACHE = {} # ✨ NEW: Caches poll correct options in RAM
 
-TELEGRAM_TOKEN = "8730359477:AAE4D3_koGNb6EHv40muYod79mV03JEntOQ"
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = "-1003875580290"
 LIVE_MESSAGE_ID = 2662 
 ADD_DB_KEY = "X19712006"
