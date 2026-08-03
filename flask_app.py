@@ -58,6 +58,14 @@ LAST_AI_REPLY_TIME = 0  # ✨ NEW: Tracks Lixie's cooldown directly in local RAM
 app = Flask(__name__)
 Compress(app)
 
+# ✨ NEW: Enable CORS so GitHub Pages can fetch data from Render
+@app.after_request
+def add_cors_headers(response):
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization'
+    response.headers['Access-Control-Allow-Methods'] = 'GET,PUT,POST,DELETE,OPTIONS'
+    return response
+
 # ✨ NEW: The High-Speed Tunnel to Telegram and GitHub
 http_session = requests.Session()
 
@@ -708,7 +716,7 @@ def webhook():
         # ✨ Use Telegram's secret join request bypass ID
         user_chat_id = join_req.get('user_chat_id', user_id)
         
-        MINI_APP_URL = "https://ez-editorials-bot.onrender.com/captcha?mode=compact"
+        MINI_APP_URL = "https://prathu-developer.github.io/ez-editorials-assets/captcha.html?mode=compact"
         markup = {"inline_keyboard": [[{"text": "⚡️ Complete Entrance Trial (10Q)", "web_app": {"url": MINI_APP_URL}}]]}
         
         if query_id:
@@ -2407,10 +2415,6 @@ def process_ranking_command(chat_id, user_id, message_id, thread_id):
     except Exception as e:
         print(f"🚨 Error executing /rank command: {e}")
 
-@app.route('/miniapp')
-def serve_mini_app():
-    return render_template('leaderboard.html')
-
 def bake_miniapp_cache():
     conn = None
     try:
@@ -2848,10 +2852,6 @@ Output EXACTLY in this format:
 def trigger_word_of_the_day():
     threading.Thread(target=run_word_of_the_day).start()
     return "Word of the Day triggered!", 200
-    
-@app.route('/captcha')
-def serve_captcha():
-    return render_template('captcha.html')
 
 def background_approve_user(user_id):
     # ✨ NEW: Automatically store the approved user in Supabase with today's timestamp!
@@ -2912,10 +2912,6 @@ def approve_captcha():
     # Instantly tell the Mini App to close without waiting!
     return jsonify({"status": "success"}), 200
 
-@app.route("/privacy")
-def privacy():
-    return render_template("privacy.html")
-    
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
