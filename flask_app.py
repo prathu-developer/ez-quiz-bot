@@ -1740,125 +1740,19 @@ def recalculate_dynamic_scores():
     try:
         conn = get_db()
         c = conn.cursor()
-        c.execute("UPDATE users SET weekly_score = 0, daily_score = 0")
-        c.execute("DELETE FROM precise_scores")
-
-        # ⚡ OPTIMIZED: Single grouped query instead of N+1 loop per poll
-        c.execute("""
-            SELECT 
-                p.poll_id, 
-                p.poll_day, 
-                COUNT(ua.user_id) as total_attempts, 
-                SUM(ua.is_correct) as total_correct
-            FROM polls p
-            LEFT JOIN user_answers ua ON p.poll_id = ua.poll_id
-            GROUP BY p.poll_id, p.poll_day
-        """)
-        aggregated_polls = c.fetchall()
         
-        poll_values = {}
-        total_max_points = 0.0
-
-        for poll in aggregated_polls:
-            p_id, p_day, total_attempts, total_correct = poll
-            total_correct = total_correct if total_correct else 0
-
-            if total_attempts == 0:
-                total_max_points += 3.0
-                continue
-
-            accuracy = (total_correct / total_attempts) * 100
-            if accuracy >= 86: pts, pen, q_elo = 1.0, -0.42, 800
-            elif accuracy >= 72: pts, pen, q_elo = 2.0, -0.60, 1000
-            elif accuracy >= 58: pts, pen, q_elo = 3.0, -0.75, 1200
-            elif accuracy >= 44: pts, pen, q_elo = 4.0, -0.60, 1500
-            else: pts, pen, q_elo = 5.0, -0.42, 1800
-
-            poll_values[p_id] = {"pts": pts, "pen": pen, "day": p_day, "elo": q_elo}
-            total_max_points += pts
-
-        if total_max_points > 0: total_max_points += 0.24
-
-        c.execute("""
-            INSERT INTO bot_settings (key, value) VALUES ('live_max_points', %s) 
-            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-        """, (str(total_max_points),))
-
-        # ⚡ OPTIMIZED: Only pull base Elo for users actively answering quizzes today
-        c.execute("SELECT user_id, base_elo FROM users WHERE weekly_attempts > 0")
-        base_elos = {row[0]: (row[1] if row[1] is not None else 1000) for row in c.fetchall()}
-
-        c.execute("SELECT user_id, poll_id, is_correct, poll_day FROM user_answers")
-        all_answers = c.fetchall()
-        current_day_str = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%a')
-        user_scores = {}
-
-        for ans in all_answers:
-            u_id, p_id, is_correct, p_day = ans
-            if p_id not in poll_values: continue
-
-            val = poll_values[p_id]
-            points_awarded = val["pts"] if is_correct else val["pen"]
-            
-            if u_id not in user_scores:
-                # ✨ FIX 1: Added 'weekly_attempts' to the tracker
-                user_scores[u_id] = {"weekly": 0, "daily": 0, "weekly_correct": 0, "weekly_attempts": 0, "expected_wins": 0.0, "actual_wins": 0, "precise": {}, "tier_bonus": 0.0, "played_today": False}
-
-            user_scores[u_id]["weekly"] += points_awarded
-            user_scores[u_id]["weekly_correct"] += int(is_correct)
-            
-            # ✨ FIX 2: Manually count the attempts based on the true user_answers table!
-            user_scores[u_id]["weekly_attempts"] += 1 
-
-            if p_day == current_day_str:
-                user_scores[u_id]["daily"] += points_awarded
-                user_scores[u_id]["played_today"] = True
-
-            if p_day not in user_scores[u_id]["precise"]:
-                user_scores[u_id]["precise"][p_day] = {"score": 0, "attempts": 0, "correct": 0}
-
-            user_scores[u_id]["precise"][p_day]["score"] += points_awarded
-            user_scores[u_id]["precise"][p_day]["attempts"] += 1
-            user_scores[u_id]["precise"][p_day]["correct"] += int(is_correct)
-
-            if is_correct: user_scores[u_id]["tier_bonus"] += (val["pts"] - 1.0) * 0.0002
-            u_base = base_elos.get(u_id, 1000)
-            user_scores[u_id]["expected_wins"] += 1 / (1 + 10 ** ((val["elo"] - u_base) / 400.0))
-            user_scores[u_id]["actual_wins"] += int(is_correct)
-
-        for u_id, totals in user_scores.items():
-            u_base = base_elos.get(u_id, 1000)
-            new_live_elo = max(500.0, u_base + 0.5 * (totals["actual_wins"] - totals["expected_wins"]))
-            
-            elo_fraction = max(0.0, min(1.0, (new_live_elo - 500) / 2000.0))
-            total_sweetener = round(min(0.24, (elo_fraction * 0.12) + totals["tier_bonus"]), 2)
-
-            final_weekly = totals["weekly"] + total_sweetener
-            final_daily = totals["daily"] + total_sweetener if totals["played_today"] else 0
-
-            # ✨ FIX 3: Force the database to update the broken weekly_attempts counter
-            c.execute("UPDATE users SET weekly_score=%s, daily_score=%s, weekly_correct=%s, weekly_attempts=%s, live_elo=%s WHERE user_id=%s",
-                      (final_weekly, final_daily, totals["weekly_correct"], totals["weekly_attempts"], new_live_elo, u_id))
-
-            for day, day_data in totals["precise"].items():
-                c.execute("""
-                    INSERT INTO precise_scores (user_id, day_label, score, attempts, correct_answers) 
-                    VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT (user_id, day_label) DO UPDATE SET 
-                        score = EXCLUDED.score, attempts = EXCLUDED.attempts, correct_answers = EXCLUDED.correct_answers
-                """, (u_id, day, day_data["score"], day_data["attempts"], day_data["correct"]))
-
+        # ⚡ 100% Zero-Egress Native Database Execution
+        c.execute("SELECT recalculate_dynamic_scores();")
         conn.commit()
+        
     except Exception as e:
-        print(f"🚨 Math Engine Error: {e}")
+        print(f"🚨 Native Math Engine Error: {e}")
         if conn:
-            conn.rollback() # ✨ FIX 4: Clear the deadlocks so the server doesn't crash
+            conn.rollback()
     finally:
         if conn:
-            try:
-                c.close()
-            except:
-                pass
+            try: c.close()
+            except: pass
             release_db(conn)
 
 # ==========================================
