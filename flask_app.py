@@ -496,6 +496,7 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
     total_quizzes_available = 0
     total_active_participants = 0
     exam_context = ""
+    db_key_index = 0  # ✨ NEW: Prevents Lixie from crashing if the DB hiccups
 
     try:
         c.execute("SELECT COUNT(*) FROM polls")
@@ -2284,20 +2285,20 @@ def process_ranking_command(chat_id, user_id, message_id, thread_id):
 
         # 2. ⚡ READ DIRECTLY FROM RAM CACHE (No DB Query)
         global RAM_CACHE
-        if not RAM_CACHE["miniapp_snapshot"]:
+        if not RAM_CACHE.get("master_data"):
             try:
                 bake_miniapp_cache()
             except Exception as e:
                 print(f"Error auto-baking cache for /rank: {e}")
 
-        if not RAM_CACHE["miniapp_snapshot"]:
+        master_data = RAM_CACHE.get("master_data")
+        if not master_data:
             return
 
-        # Parse the JSON cache directly from memory
-        cache_data = json.loads(RAM_CACHE["miniapp_snapshot"])
-        leaderboard = cache_data.get('leaderboard', [])
-        elo_ranking = cache_data.get('elo_ranking', [])
-        total_quizzes = cache_data.get('total_quizzes', 0)
+        # Read directly from the python dictionary (No JSON parsing needed!)
+        leaderboard = master_data.get('leaderboard', [])
+        elo_ranking = master_data.get('elo_ranking', [])
+        total_quizzes = master_data.get('total_quizzes', 0)
 
         # 3. Find the Student's pre-calculated stats
         user_stats = next((u for u in leaderboard if u['id'] == user_id), None)
