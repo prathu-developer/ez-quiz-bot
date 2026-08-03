@@ -985,14 +985,27 @@ def run_weekly_reset_background():
             release_db(conn)
             return
 
-        sum_weighted_points = 0
-        sum_weights = 0
+        # ✨ FIX: Synchronized accuracy-weighted math to match the live Mini App
+        sum_weighted_points = 0.0
+        sum_weights = 0.0
         for row in all_weekly_players:
-            score, attempts = row[2], row[3]
-            weight = attempts ** 0.5
-            sum_weighted_points += (score * weight)
-            sum_weights += weight
-        target_average = (sum_weighted_points / sum_weights) if sum_weights > 0 else 0
+            score = row[2]
+            attempts = row[3]
+            correct = row[6] if (len(row) > 6 and row[6] is not None) else 0
+            
+            if attempts > 0:
+                accuracy = correct / attempts
+                volume_weight = attempts / (attempts + 10.0)
+                final_weight = volume_weight * accuracy
+                
+                # Ignore negative scores in the weight pool
+                if score < 0:
+                    final_weight = 0.0
+                    
+                sum_weighted_points += (score * final_weight)
+                sum_weights += final_weight
+                
+        target_average = int((sum_weighted_points / sum_weights) + 0.5) if sum_weights > 0 else 0
 
         for rank_index, row in enumerate(all_weekly_players):
             uid = row[0]
