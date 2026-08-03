@@ -334,7 +334,7 @@
             const userId = initDataUnsafe.user ? initDataUnsafe.user.id : null;
 
             if (userId) {
-                fetch('/api/approve_captcha', {
+                fetch('https://ez-editorials-bot.onrender.com/api/approve_captcha', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ user_id: userId })
