@@ -1668,8 +1668,6 @@ def dispatch_practice_sets():
     random.shuffle(set_b)
     random.shuffle(set_c)
 
-    dynamic_open_period = int(((current_ist + timedelta(days=6 - current_ist.weekday())).replace(hour=23, minute=59, second=59) - current_ist).total_seconds())
-
     def safe_send_text(text, pin=False):
         for attempt in range(10):
             try:
@@ -1687,6 +1685,11 @@ def dispatch_practice_sets():
         conn = get_db()
         c = conn.cursor()
         for i, mcq in enumerate(q_list):
+            # ✨ Exact next-day 11:59 PM timer calculated milliseconds before sending
+            now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+            dynamic_open_period = int(((now_ist + timedelta(days=1)).replace(hour=23, minute=59, second=59) - now_ist).total_seconds())
+            if dynamic_open_period < 5: dynamic_open_period = 5
+
             options = mcq['options']
             if mcq['correct_answer'] not in options: options[0] = mcq['correct_answer']
             
@@ -1801,10 +1804,6 @@ def run_daily_vocab_and_quizzes():
         except: time.sleep(3 + attempt * 2)
     time.sleep(3)
 
-    dynamic_open_period = int(((current_ist_time + timedelta(days=6 - current_ist_time.weekday())).replace(hour=23, minute=59, second=59) - current_ist_time).total_seconds())
-    if dynamic_open_period > 600538: dynamic_open_period = 600538
-    elif dynamic_open_period < 5: dynamic_open_period = 5
-
     try:
         # 👉 CHANGED: Updated URL layout and authenticated header
         github_vocab_url = f"https://api.github.com/repos/prathu-developer/exam-scraper-api/contents/questions.json?ref=main&t={int(time.time())}"
@@ -1819,6 +1818,11 @@ def run_daily_vocab_and_quizzes():
 
     import random
     for mcq in mcqs:
+        # ✨ Exact next-day 11:59 PM timer calculated milliseconds before sending
+        now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+        dynamic_open_period = int(((now_ist + timedelta(days=1)).replace(hour=23, minute=59, second=59) - now_ist).total_seconds())
+        if dynamic_open_period < 5: dynamic_open_period = 5
+
         options = mcq['options']
         if mcq['correct_answer'] not in options: options[0] = mcq['correct_answer']
         
