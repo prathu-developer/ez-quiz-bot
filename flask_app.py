@@ -18,7 +18,7 @@ DB_URL = os.environ.get("DATABASE_URL")
 # High-speed connection pool to handle massive group traffic instantly
 db_pool = psycopg2.pool.ThreadedConnectionPool(1, 8, DB_URL)
 
-CRON_SECRET = os.environ.get("CRON_SECRET", "Ez_Master_Key_77")
+CRON_SECRET = os.environ.get("CRON_SECRET")
 
 GITHUB_PAT = os.environ.get("GITHUB_PAT", "")
 
@@ -80,7 +80,7 @@ POLL_CACHE = {} # ✨ NEW: Caches poll correct options in RAM
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = "-1003875580290"
 LIVE_MESSAGE_ID = 2662 
-ADD_DB_KEY = "X19712006"
+ADD_DB_KEY = os.environ.get("ADD_DB_KEY")
 TELEGRAM_THREAD_ID = '2972'
 ANNOUNCEMENT_THREAD_ID = 11 
 
