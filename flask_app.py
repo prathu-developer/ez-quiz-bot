@@ -1393,7 +1393,7 @@ def run_weekly_reset_background():
 
         # ✨ 2. SECOND: Execute "The Great Wipe" securely
         c.execute("UPDATE users SET faction = NULL WHERE weekly_score < %s", (target_average,))
-        c.execute("UPDATE users SET base_elo = live_elo, weekly_score = 0, weekly_attempts = 0, is_captain = 0")
+        c.execute("UPDATE users SET base_elo = live_elo, weekly_score = 0, weekly_attempts = 0, weekly_correct = 0, is_captain = 0")
         c.execute("DELETE FROM precise_scores")
 
         # ✨ 3. THIRD: Reinstate the House Captains with their badges
