@@ -1878,13 +1878,14 @@ def run_sunday_reminder():
     ]
 
     for target in targets:
+        # ✨ REVAMPED TEXT: Clarifies that only Saturday's quizzes are left
         text = (
-            f"⏳ ⟪ **THE HOUSE CUP COUNTDOWN** ⟫ ⏳\n"
+            f"⏳ ⟪ **THE HOUSE Cup COUNTDOWN** ⟫ ⏳\n"
             f"📅 `{date_str}`\n"
             f"🎯 **{target['drill']}**\n"
             f"🚨 **Last Chance!** 🚨\n"
-            f"Today is the **absolute final day** to complete your weekly quizzes! The Great Hall hourglasses are locking soon.\n"
-            f"Every point shifts the balance of power. Finish your magical trials before tonight's final tally! 🏆✨"
+            f"Today is the **absolute final day** to complete **Saturday's final quizzes**! *(All previous days are now strictly locked).* \n"
+            f"Every point shifts the balance of power. Finish your last magical trials before tonight's final tally! 🏆✨"
         )
         
         for attempt in range(10):
@@ -1909,28 +1910,8 @@ def run_sunday_final_reminder():
     total_seconds = int((current_ist.replace(hour=23, minute=59, second=59) - current_ist).total_seconds())
     time_str = f"{total_seconds // 3600} Hours and {(total_seconds % 3600) // 60} Minutes" if total_seconds > 0 else "0 Minutes"
 
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        c.execute("SELECT COUNT(*) FROM polls")
-        total_quizzes = c.fetchone()[0]
-        c.execute("SELECT u.weekly_score, u.weekly_attempts, (SELECT SUM(is_correct) FROM user_answers WHERE user_id = u.user_id) FROM users u WHERE u.weekly_attempts > 0")
-        all_active_users = c.fetchall()
-        
-        target_average, sum_weights, sum_weighted = 0, 0, 0
-        for score, attempts, correct in all_active_users:
-            if attempts == 0: continue
-            w = (attempts / (attempts + 10.0)) * ((correct or 0) / attempts)
-            if score >= 0: sum_weighted += score * w; sum_weights += w
-        if sum_weights > 0: target_average = int((sum_weighted / sum_weights) + 0.5)
-
-        cleared = sum(1 for r in all_active_users if r[0] >= target_average)
-        slackers = sum(1 for r in all_active_users if r[1] < total_quizzes)
-        c.close()
-        release_db(conn)
-    except: return
-
-    text = f"<blockquote>⏱ <b>{time_str} Remaining:</b> The weekly leaderboard officially locks tonight at midnight.\n\n📈 <b>Promotion Cut-off:</b> The current class cut-off score is <b>{target_average} pts</b>.\n\n📊 <b>Live Stats:</b>\n• <b>{cleared}</b> out of <b>{len(all_active_users)}</b> active students are currently in the Promotion Zone.\n• <b>{slackers}</b> out of <b>{len(all_active_users)}</b> active students have not yet completed all <b>{total_quizzes}</b> available quizzes this week.\n\n⚡️ If you are below the cut-off, complete your pending quizzes before midnight to secure your rank!</blockquote>"
+    # ✨ REVAMPED: Simple, punchy, and zero database math required!
+    text = f"<blockquote>⏱ <b>{time_str} Remaining:</b> The weekly leaderboard officially locks tonight at midnight!\n\n⚡️ This is your final reminder to complete your pending <b>Vocab and Grammar</b> quizzes before time runs out. Every point counts towards the House Cup!</blockquote>"
 
     for attempt in range(10):
         try:
@@ -1940,7 +1921,7 @@ def run_sunday_final_reminder():
                 notify_prathu("⏱️ **Sunday Final Midnight Reminder** posted successfully!")
                 break
         except: time.sleep(3 + attempt * 2)
-
+            
 @app.route('/sunday_final_reminder/0508', methods=['GET', 'POST'])
 def trigger_sunday_final_reminder():
     threading.Thread(target=run_sunday_final_reminder).start()
