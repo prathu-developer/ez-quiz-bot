@@ -3048,75 +3048,115 @@ def trigger_miniapp_ingestion():
 # ==========================================
 from flask import jsonify
 
+# --- MASTER SPEC: UPDATED /api/quiz/today ---
 @app.route('/api/quiz/today', methods=['GET'])
 def get_todays_quizzes():
-    # The frontend will pass the user_id so we know if they already took the quiz
     user_id = request.args.get('user_id', type=int)
-    
     current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
-    today_date = current_ist.date()
     
     conn = None
     try:
         conn = get_db()
         c = conn.cursor()
         
-        # 1. Fetch all active quizzes (including yesterday's that haven't closed yet)
+        # Fetch active quizzes using close_time
         c.execute("""
-            SELECT id, topic, question_count, duration_seconds, drop_time, close_time 
+            SELECT id, topic, quiz_day, question_count, duration_seconds, drop_time, close_time 
             FROM quiz_sets 
-            WHERE close_time >= %s
-            ORDER BY drop_time ASC
+            WHERE close_time > %s
+            ORDER BY quiz_day DESC, id ASC
         """, (current_ist,))
         
-        quiz_sets = c.fetchall()
-        response_data = []
+        grouped_quizzes = {"Today": [], "Yesterday": []}
         
-        for q_set in quiz_sets:
-            set_id, topic, q_count, duration, drop_time, close_time = q_set
-            
-            # ✨ FIX: Strip the timezone label so Python can compare them safely
+        for q_set in c.fetchall():
+            set_id, topic, q_day, q_count, duration, drop_time, close_time = q_set
             drop_time = drop_time.replace(tzinfo=None)
             close_time = close_time.replace(tzinfo=None)
             
-            # 2. Check if the user already took this specific quiz
             attempted = False
             score = None
             if user_id:
-                c.execute("SELECT score FROM quiz_attempts WHERE user_id = %s AND quiz_set_id = %s", (user_id, set_id))
+                c.execute("SELECT score FROM quiz_attempts WHERE user_id = %s AND quiz_set_id = %s AND submitted_at IS NOT NULL", (user_id, set_id))
                 attempt_row = c.fetchone()
                 if attempt_row:
                     attempted = True
                     score = attempt_row[0]
             
-            # 3. Determine the Live Status of the tile
-            if current_ist < drop_time:
-                status = "locked"
-            elif current_ist > close_time:
-                status = "closed"
-            elif attempted:
-                status = "completed"
-            else:
-                status = "unlocked"
+            if current_ist < drop_time: status = "locked"
+            elif current_ist > close_time: status = "closed"
+            elif attempted: status = "completed"
+            else: status = "unlocked"
                 
-            response_data.append({
-                "id": set_id,
-                "topic": topic,
-                "question_count": q_count,
-                "duration_seconds": duration,
-                "drop_time": drop_time.isoformat(),
-                "close_time": close_time.isoformat(),
-                "status": status,
-                "score": score
-            })
+            quiz_data = {
+                "id": set_id, "topic": topic, "question_count": q_count,
+                "duration_seconds": duration, "drop_time": drop_time.isoformat(),
+                "status": status, "score": score
+            }
             
-        return jsonify({"server_time": current_ist.isoformat(), "quizzes": response_data}), 200
-        
+            if q_day == current_ist.date():
+                grouped_quizzes["Today"].append(quiz_data)
+            else:
+                grouped_quizzes["Yesterday"].append(quiz_data)
+                
+        return jsonify({"quizzes": grouped_quizzes}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     finally:
         if conn: release_db(conn)
 
+# --- MASTER SPEC: NEW READ-ONLY ENDPOINTS ---
+@app.route('/api/word-of-day', methods=['GET'])
+def get_wotd():
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT word FROM lifetime_words ORDER BY id DESC LIMIT 1")
+        row = c.fetchone()
+        return jsonify({"word_of_the_day": row[0] if row else "N/A"}), 200
+    except Exception as e: return jsonify({"error": str(e)}), 500
+    finally:
+        if conn: release_db(conn)
+
+@app.route('/api/upcoming-exams', methods=['GET'])
+def get_upcoming_exams():
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT name, status, display_date FROM upcoming_exams ORDER BY exam_date ASC LIMIT 3")
+        exams = [{"name": r[0], "status": r[1], "date": r[2]} for r in c.fetchall()]
+        return jsonify({"exams": exams}), 200
+    except Exception as e: return jsonify({"error": str(e)}), 500
+    finally:
+        if conn: release_db(conn)
+
+@app.route('/api/profile/me', methods=['GET'])
+def get_profile():
+    user_id = request.args.get('user_id', type=int)
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("""
+            SELECT first_name, weekly_score, live_elo, league_tier, weekly_correct, weekly_attempts 
+            FROM users WHERE user_id = %s
+        """, (user_id,))
+        user_row = c.fetchone()
+        
+        if not user_row: return jsonify({"error": "User not found"}), 404
+        
+        name, score, elo, league, correct, attempts = user_row
+        accuracy = round((correct / attempts) * 100) if attempts and attempts > 0 else 0
+        
+        return jsonify({
+            "name": name, "score": score, "elo": elo, "league": league,
+            "performance": {"accuracy": accuracy, "quiz_history_count": attempts}
+        }), 200
+    except Exception as e: return jsonify({"error": str(e)}), 500
+    finally:
+        if conn: release_db(conn)
 
 @app.route('/api/quiz/start', methods=['POST'])
 def start_quiz():
