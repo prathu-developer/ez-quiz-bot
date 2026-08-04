@@ -2911,6 +2911,107 @@ def approve_captcha():
     # Instantly tell the Mini App to close without waiting!
     return jsonify({"status": "success"}), 200
 
+# ==========================================
+# PHASE 2: MINI APP CONTENT INGESTION
+# ==========================================
+def run_mini_app_ingestion():
+    import random
+    
+    current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    today_date = current_ist.date()
+    
+    # 1. Set the exact Drop Time (Today 7:00 PM) and Close Time (Tomorrow 11:59 PM)
+    drop_time = current_ist.replace(hour=19, minute=0, second=0, microsecond=0)
+    close_time = (current_ist + timedelta(days=1)).replace(hour=23, minute=59, second=59, microsecond=0)
+
+    try:
+        # 2. Fetch both JSONs from GitHub
+        cache_buster = int(time.time())
+        headers = {
+            "Authorization": f"token {GITHUB_PAT}",
+            "Accept": "application/vnd.github.v3.raw"
+        }
+        
+        vocab_url = f"https://api.github.com/repos/prathu-developer/exam-scraper-api/contents/questions.json?ref=main&t={cache_buster}"
+        grammar_url = f"https://api.github.com/repos/prathu-developer/exam-scraper-api/contents/grammar.json?ref=main&t={cache_buster}"
+        
+        vocab_data = http_session.get(vocab_url, headers=headers, timeout=15).json()
+        grammar_data = http_session.get(grammar_url, headers=headers, timeout=15).json()
+        
+        set_a = grammar_data.get("set_a", [])
+        set_b = grammar_data.get("set_b", [])
+        set_c = grammar_data.get("set_c", [])
+
+        # Shuffle the questions for the Mini App just like we do for Telegram
+        random.shuffle(vocab_data)
+        random.shuffle(set_a)
+        random.shuffle(set_b)
+        random.shuffle(set_c)
+
+        # 3. Define the 4 Quiz Sets (Topic, Questions, Count, Duration)
+        quiz_configurations = [
+            {"topic": "Vocab Quiz", "data": vocab_data, "duration": 900},          # 15 mins
+            {"topic": "Error Detection", "data": set_a, "duration": 300},          # 5 mins
+            {"topic": "Sentence Improvement", "data": set_b, "duration": 300},     # 5 mins
+            {"topic": "Fill in the Blank", "data": set_c, "duration": 240}         # 4 mins
+        ]
+
+        conn = get_db()
+        c = conn.cursor()
+
+        for config in quiz_configurations:
+            q_list = config["data"]
+            if not q_list:
+                continue
+                
+            # Create the Quiz Set and grab its new ID
+            c.execute("""
+                INSERT INTO quiz_sets (topic, quiz_day, question_count, duration_seconds, drop_time, close_time)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (config["topic"], today_date, len(q_list), config["duration"], drop_time, close_time))
+            
+            quiz_set_id = c.fetchone()[0]
+
+            # Insert all questions for this set
+            for mcq in q_list:
+                options = mcq['options']
+                if mcq['correct_answer'] not in options: 
+                    options[0] = mcq['correct_answer']
+                
+                random.shuffle(options)
+                correct_index = options.index(mcq['correct_answer'])
+                
+                # Handle grammar vs vocab text formatting
+                q_text = mcq.get('custom_ui', f'Choose the best replacement for the words "{mcq.get("target_phrase", "")}".' if 'target_phrase' in mcq else mcq.get('question', ''))
+                full_question = f"{q_text}\n\n{mcq.get('sentence', '')}".strip()
+
+                c.execute("""
+                    INSERT INTO quiz_questions (quiz_set_id, question_text, options, correct_index, explanation)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (quiz_set_id, full_question, json.dumps(options), correct_index, mcq.get('explanation', '')))
+
+        conn.commit()
+        notify_prathu("✅ **Mini App Ingestion Job** generated and safely stored in the database!")
+
+    except Exception as e:
+        if conn: conn.rollback()
+        notify_prathu(f"🚨 **CRITICAL ERROR (Mini App Ingestion):**\n`{e}`")
+    finally:
+        if conn:
+            try: c.close()
+            except: pass
+            release_db(conn)
+
+# Manual Trigger for Phase 2 Testing
+@app.route('/cron/ingest_miniapp_0508', methods=['GET', 'POST'])
+def trigger_miniapp_ingestion():
+    if request.headers.get("X-Cron-Secret") != CRON_SECRET:
+        return "Unauthorized", 401
+    
+    threading.Thread(target=run_mini_app_ingestion).start()
+    return "Mini App Ingestion triggered!", 200
+
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
