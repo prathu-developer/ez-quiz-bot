@@ -1950,11 +1950,14 @@ def trigger_sunday_final_reminder():
 # ==========================================
 def run_countdown_and_commentary():
     fetch_and_update_exams_db()
-    time.sleep(3)
-    update_exam_countdown()
-    time.sleep(5)
-    generate_and_send_commentary()
-    notify_prathu("📅 **Exam Countdown & AI Commentary** updated successfully!")
+    
+    # --- MASTER SPEC: Migrated to Mini App (Section 4) ---
+    # time.sleep(3)
+    # update_exam_countdown()
+    # time.sleep(5)
+    # generate_and_send_commentary()
+    
+    notify_prathu("📅 **Exam Database** synced successfully! (Telegram posts disabled per migration)")
 
 @app.route('/update_countdown/0508', methods=['GET', 'POST'])
 def trigger_countdown_update():
@@ -3106,6 +3109,50 @@ def get_todays_quizzes():
         if conn: release_db(conn)
 
 # --- MASTER SPEC: NEW READ-ONLY ENDPOINTS ---
+@app.route('/api/weekly-results', methods=['GET'])
+def get_weekly_results():
+    week_num = request.args.get('week_num', type=int)
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        
+        if not week_num:
+            # Find the most recently completed week automatically
+            c.execute("SELECT MAX(CAST(week_num AS INTEGER)) FROM weekly_rank_history")
+            max_week_row = c.fetchone()
+            week_num = max_week_row[0] if max_week_row and max_week_row[0] else None
+            
+        if not week_num:
+            return jsonify({"results": [], "week_num": None}), 200
+            
+        c.execute("""
+            SELECT h.rank, h.user_id, u.first_name, h.score, u.faction, u.league_tier, u.live_elo
+            FROM weekly_rank_history h
+            JOIN users u ON h.user_id = u.user_id
+            WHERE h.week_num = %s
+            ORDER BY h.rank ASC
+            LIMIT 10
+        """, (str(week_num),))
+        
+        results = []
+        for row in c.fetchall():
+            results.append({
+                "rank": row[0],
+                "id": row[1],
+                "name": row[2],
+                "score": row[3],
+                "house": row[4],
+                "league": row[5],
+                "elo": row[6]
+            })
+            
+        return jsonify({"results": results, "week_num": week_num}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn: release_db(conn)
+
 @app.route('/api/word-of-day', methods=['GET'])
 def get_wotd():
     conn = None
@@ -3125,10 +3172,12 @@ def get_upcoming_exams():
     try:
         conn = get_db()
         c = conn.cursor()
-        c.execute("SELECT name, status, display_date FROM upcoming_exams ORDER BY exam_date ASC LIMIT 3")
-        exams = [{"name": r[0], "status": r[1], "date": r[2]} for r in c.fetchall()]
+        # Removed the LIMIT so all active exams show in the app
+        c.execute("SELECT name, status, display_date, exam_date, is_exact_date FROM upcoming_exams ORDER BY exam_date ASC")
+        exams = [{"name": r[0], "status": r[1], "display_date": r[2], "exam_date": r[3], "is_exact": bool(r[4])} for r in c.fetchall()]
         return jsonify({"exams": exams}), 200
-    except Exception as e: return jsonify({"error": str(e)}), 500
+    except Exception as e: 
+        return jsonify({"error": str(e)}), 500
     finally:
         if conn: release_db(conn)
 
