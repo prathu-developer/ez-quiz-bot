@@ -3174,7 +3174,7 @@ def start_quiz():
             questions.append({
                 "question_id": q[0],
                 "text": q[1],
-                "options": json.loads(q[2])
+                "options": q[2]              # ✅ Just use q[2] directly
             })
             
         conn.commit()
@@ -3338,7 +3338,7 @@ def get_quiz_result(attempt_id):
             question_details.append({
                 "question_id": q_id,
                 "text": text,
-                "options": json.loads(options),
+                "options": options,             # ✅ Just use options directly
                 "correct_index": c_idx,
                 "explanation": exp,
                 "user_selected_index": s_idx,
