@@ -2911,6 +2911,459 @@ def approve_captcha():
     # Instantly tell the Mini App to close without waiting!
     return jsonify({"status": "success"}), 200
 
+# ==========================================
+# PHASE 2: MINI APP CONTENT INGESTION
+# ==========================================
+def run_mini_app_ingestion():
+    import random
+    
+    current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    today_date = current_ist.date()
+    
+    # 1. Set the exact Drop Time (Today 7:00 PM) and Close Time (Tomorrow 11:59 PM)
+    drop_time = current_ist.replace(hour=19, minute=0, second=0, microsecond=0)
+    close_time = (current_ist + timedelta(days=1)).replace(hour=23, minute=59, second=59, microsecond=0)
+
+    conn = None
+    try:
+        # 2. Fetch both JSONs from GitHub
+        cache_buster = int(time.time())
+        headers = {
+            "Authorization": f"token {GITHUB_PAT}",
+            "Accept": "application/vnd.github.v3.raw"
+        }
+        
+        vocab_url = f"https://api.github.com/repos/prathu-developer/exam-scraper-api/contents/questions.json?ref=main&t={cache_buster}"
+        grammar_url = f"https://api.github.com/repos/prathu-developer/exam-scraper-api/contents/grammar.json?ref=main&t={cache_buster}"
+        
+        # Raise an error if GitHub denies the request
+        vocab_resp = http_session.get(vocab_url, headers=headers, timeout=15)
+        vocab_resp.raise_for_status()
+        vocab_data = vocab_resp.json()
+        
+        grammar_resp = http_session.get(grammar_url, headers=headers, timeout=15)
+        grammar_resp.raise_for_status()
+        grammar_data = grammar_resp.json()
+        
+        # Failsafe: Ensure data structures match expectations
+        if not isinstance(vocab_data, list):
+            vocab_data = []
+
+        set_a = grammar_data.get("set_a", []) if isinstance(grammar_data, dict) else []
+        set_b = grammar_data.get("set_b", []) if isinstance(grammar_data, dict) else []
+        set_c = grammar_data.get("set_c", []) if isinstance(grammar_data, dict) else []
+
+        # Shuffle the questions for the Mini App just like we do for Telegram
+        random.shuffle(vocab_data)
+        random.shuffle(set_a)
+        random.shuffle(set_b)
+        random.shuffle(set_c)
+
+        # 3. Define the 4 Quiz Sets
+        quiz_configurations = [
+            {"topic": "Vocab Quiz", "data": vocab_data, "duration": 900},          # 15 mins
+            {"topic": "Error Detection", "data": set_a, "duration": 300},          # 5 mins
+            {"topic": "Sentence Improvement", "data": set_b, "duration": 300},     # 5 mins
+            {"topic": "Fill in the Blank", "data": set_c, "duration": 240}         # 4 mins
+        ]
+
+        conn = get_db()
+        c = conn.cursor()
+
+        # Clean slate: Erase duplicate test sets for today if triggered multiple times
+        c.execute("DELETE FROM quiz_sets WHERE quiz_day = %s", (today_date,))
+
+        report_lines = []
+
+        for config in quiz_configurations:
+            q_list = config["data"]
+            if not q_list or len(q_list) == 0:
+                report_lines.append(f"⚠️ {config['topic']}: Skipped (0 questions found)")
+                continue
+                
+            # Create the Quiz Set and grab its new ID
+            c.execute("""
+                INSERT INTO quiz_sets (topic, quiz_day, question_count, duration_seconds, drop_time, close_time)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (config["topic"], today_date, len(q_list), config["duration"], drop_time, close_time))
+            
+            quiz_set_id = c.fetchone()[0]
+            inserted_count = 0
+
+            # Insert all questions for this set
+            for mcq in q_list:
+                options = mcq.get('options', [])
+                correct_ans = mcq.get('correct_answer', '')
+                
+                # Failsafe: Skip broken question formats
+                if not options or not correct_ans:
+                    continue 
+
+                if correct_ans not in options: 
+                    options.append(correct_ans)
+                
+                random.shuffle(options)
+                correct_index = options.index(correct_ans)
+                
+                q_text = mcq.get('custom_ui', f'Choose the best replacement for the words "{mcq.get("target_phrase", "")}".' if 'target_phrase' in mcq else mcq.get('question', ''))
+                full_question = f"{q_text}\n\n{mcq.get('sentence', '')}".strip()
+
+                c.execute("""
+                    INSERT INTO quiz_questions (quiz_set_id, question_text, options, correct_index, explanation)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (quiz_set_id, full_question, json.dumps(options), correct_index, mcq.get('explanation', '')))
+                
+                inserted_count += 1
+                
+            report_lines.append(f"✅ {config['topic']}: {inserted_count} questions inserted")
+
+        conn.commit()
+        report_text = "\n".join(report_lines)
+        notify_prathu(f"🤖 **Mini App Ingestion Complete!**\n\n{report_text}")
+
+    except Exception as e:
+        if conn: conn.rollback()
+        notify_prathu(f"🚨 **CRITICAL ERROR (Mini App Ingestion):**\n`{e}`")
+    finally:
+        if conn:
+            try: c.close()
+            except: pass
+            release_db(conn)
+
+# Manual Trigger for Phase 2 Testing
+@app.route('/cron/ingest_miniapp_0508', methods=['GET', 'POST'])
+def trigger_miniapp_ingestion():
+    # ✨ FIX: Allow checking both the hidden header AND the URL parameters for easy browser testing
+    secret_provided = request.headers.get("X-Cron-Secret") or request.args.get("secret")
+    
+    if secret_provided != CRON_SECRET:
+        return "Unauthorized! Did you forget the secret?", 401
+    
+    threading.Thread(target=run_mini_app_ingestion).start()
+    return "Mini App Ingestion triggered! Check your Telegram DMs.", 200
+
+# ==========================================
+# PHASE 3: MINI APP API ENDPOINTS (Part 1)
+# ==========================================
+from flask import jsonify
+
+@app.route('/api/quiz/today', methods=['GET'])
+def get_todays_quizzes():
+    # The frontend will pass the user_id so we know if they already took the quiz
+    user_id = request.args.get('user_id', type=int)
+    
+    current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    today_date = current_ist.date()
+    
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        
+        # 1. Fetch all active quizzes (including yesterday's that haven't closed yet)
+        c.execute("""
+            SELECT id, topic, question_count, duration_seconds, drop_time, close_time 
+            FROM quiz_sets 
+            WHERE close_time >= %s
+            ORDER BY drop_time ASC
+        """, (current_ist,))
+        
+        quiz_sets = c.fetchall()
+        response_data = []
+        
+        for q_set in quiz_sets:
+            set_id, topic, q_count, duration, drop_time, close_time = q_set
+            
+            # ✨ FIX: Strip the timezone label so Python can compare them safely
+            drop_time = drop_time.replace(tzinfo=None)
+            close_time = close_time.replace(tzinfo=None)
+            
+            # 2. Check if the user already took this specific quiz
+            attempted = False
+            score = None
+            if user_id:
+                c.execute("SELECT score FROM quiz_attempts WHERE user_id = %s AND quiz_set_id = %s", (user_id, set_id))
+                attempt_row = c.fetchone()
+                if attempt_row:
+                    attempted = True
+                    score = attempt_row[0]
+            
+            # 3. Determine the Live Status of the tile
+            if current_ist < drop_time:
+                status = "locked"
+            elif current_ist > close_time:
+                status = "closed"
+            elif attempted:
+                status = "completed"
+            else:
+                status = "unlocked"
+                
+            response_data.append({
+                "id": set_id,
+                "topic": topic,
+                "question_count": q_count,
+                "duration_seconds": duration,
+                "drop_time": drop_time.isoformat(),
+                "close_time": close_time.isoformat(),
+                "status": status,
+                "score": score
+            })
+            
+        return jsonify({"server_time": current_ist.isoformat(), "quizzes": response_data}), 200
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn: release_db(conn)
+
+
+@app.route('/api/quiz/start', methods=['POST'])
+def start_quiz():
+    data = request.get_json()
+    user_id = data.get('user_id')
+    quiz_set_id = data.get('quiz_set_id')
+    
+    if not user_id or not quiz_set_id:
+        return jsonify({"error": "Missing user_id or quiz_set_id"}), 400
+        
+    current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        
+        # FIX BUG #2: Fetch duration_seconds from the database
+        c.execute("SELECT drop_time, close_time, duration_seconds FROM quiz_sets WHERE id = %s", (quiz_set_id,))
+        quiz_meta = c.fetchone()
+        if not quiz_meta:
+            return jsonify({"error": "Quiz not found"}), 404
+            
+        drop_time, close_time, duration_seconds = quiz_meta
+        drop_time = drop_time.replace(tzinfo=None)
+        close_time = close_time.replace(tzinfo=None)
+        
+        if current_ist < drop_time or current_ist > close_time:
+            return jsonify({"error": "Quiz is currently locked or closed"}), 403
+            
+        # FIX BUG #1: Safely handle abandoned/unsubmitted attempts
+        c.execute("SELECT id, submitted_at FROM quiz_attempts WHERE user_id = %s AND quiz_set_id = %s", (user_id, quiz_set_id))
+        attempt_row = c.fetchone()
+        
+        if attempt_row:
+            attempt_id, submitted_at = attempt_row
+            if submitted_at is not None:
+                return jsonify({"error": "You have already completed this quiz"}), 403
+            else:
+                # It's an abandoned attempt! Restart their timer safely.
+                c.execute("UPDATE quiz_attempts SET started_at = %s WHERE id = %s", (current_ist, attempt_id))
+        else:
+            # It's a brand new attempt
+            c.execute("""
+                INSERT INTO quiz_attempts (user_id, quiz_set_id, started_at) 
+                VALUES (%s, %s, %s) RETURNING id
+            """, (user_id, quiz_set_id, current_ist))
+            attempt_id = c.fetchone()[0]
+        
+        # Fetch Questions
+        c.execute("SELECT id, question_text, options FROM quiz_questions WHERE quiz_set_id = %s ORDER BY id ASC", (quiz_set_id,))
+        questions = [{"question_id": q[0], "text": q[1], "options": q[2]} for q in c.fetchall()]
+            
+        conn.commit()
+        
+        # Pass the true duration to the frontend
+        return jsonify({
+            "attempt_id": attempt_id,
+            "duration_seconds": duration_seconds,
+            "started_at": current_ist.isoformat(),
+            "questions": questions
+        }), 200
+        
+    except Exception as e:
+        if conn: conn.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn: release_db(conn)
+
+# ==========================================
+# PHASE 3: MINI APP API ENDPOINTS (Part 2)
+# ==========================================
+
+@app.route('/api/quiz/submit', methods=['POST'])
+def submit_quiz():
+    data = request.get_json()
+    attempt_id = data.get('attempt_id')
+    user_responses = data.get('responses', []) # Expected: [{"question_id": 1, "selected_index": 2}, ...]
+    
+    current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        
+        # 1. Fetch Attempt & Validate
+        c.execute("""
+            SELECT a.user_id, a.quiz_set_id, a.started_at, a.submitted_at, s.duration_seconds
+            FROM quiz_attempts a
+            JOIN quiz_sets s ON a.quiz_set_id = s.id
+            WHERE a.id = %s
+        """, (attempt_id,))
+        attempt_meta = c.fetchone()
+        
+        if not attempt_meta:
+            return jsonify({"error": "Attempt not found"}), 404
+            
+        user_id, quiz_set_id, started_at, submitted_at, duration_seconds = attempt_meta
+        
+        if submitted_at is not None:
+            return jsonify({"error": "Quiz already submitted"}), 403
+            
+        started_at = started_at.replace(tzinfo=None)
+        
+        # 2. Server-Side Timer Validation (+15 second grace period for network latency)
+        time_taken = (current_ist - started_at).total_seconds()
+        if time_taken > (duration_seconds + 15):
+            return jsonify({"error": "Time limit exceeded. Submission rejected."}), 403
+            
+        # 3. Fetch Correct Answers for Scoring
+        c.execute("SELECT id, correct_index FROM quiz_questions WHERE quiz_set_id = %s", (quiz_set_id,))
+        correct_map = {row[0]: row[1] for row in c.fetchall()}
+        
+        total_score = 0.0
+        responses_to_insert = []
+        
+        for r in user_responses:
+            q_id = r.get('question_id')
+            s_idx = r.get('selected_index') # Will be None if skipped/unattempted
+            
+            if q_id not in correct_map:
+                continue
+                
+            is_correct = False
+            if s_idx is not None:
+                if s_idx == correct_map[q_id]:
+                    is_correct = True
+                    total_score += 1.0
+                else:
+                    total_score -= 0.25 # Negative Marking
+                    
+            responses_to_insert.append((attempt_id, q_id, s_idx, is_correct))
+            
+        # 4. Save Responses & Update Attempt Score
+        if responses_to_insert:
+            c.executemany("""
+                INSERT INTO quiz_responses (attempt_id, question_id, selected_index, is_correct)
+                VALUES (%s, %s, %s, %s)
+            """, responses_to_insert)
+        
+        c.execute("""
+            UPDATE quiz_attempts 
+            SET submitted_at = %s, score = %s
+            WHERE id = %s
+        """, (current_ist, total_score, attempt_id))
+        
+        conn.commit()
+        
+        return jsonify({"success": True, "score": total_score}), 200
+        
+    except Exception as e:
+        if conn: conn.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn: release_db(conn)
+
+
+@app.route('/api/quiz/result/<int:attempt_id>', methods=['GET'])
+def get_quiz_result(attempt_id):
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        
+        # 1. SQL-Side Aggregation: Rank & Percentile (Faster time breaks ties!)
+        c.execute("""
+            WITH ranks AS (
+                SELECT id, score,
+                       RANK() OVER (ORDER BY score DESC, (submitted_at - started_at) ASC) as rank_val,
+                       PERCENT_RANK() OVER (ORDER BY score DESC, (submitted_at - started_at) ASC) as pct_val,
+                       COUNT(*) OVER () as total_participants,
+                       EXTRACT(EPOCH FROM (submitted_at - started_at)) as time_taken,
+                       quiz_set_id
+                FROM quiz_attempts
+                WHERE quiz_set_id = (SELECT quiz_set_id FROM quiz_attempts WHERE id = %s)
+                  AND submitted_at IS NOT NULL
+            )
+            SELECT rank_val, pct_val, total_participants, score, time_taken, quiz_set_id 
+            FROM ranks WHERE id = %s
+        """, (attempt_id, attempt_id))
+        
+        rank_row = c.fetchone()
+        if not rank_row:
+            return jsonify({"error": "Result not found or not submitted yet"}), 404
+            
+        rank_val, pct_val, total_participants, score, time_taken, quiz_set_id = rank_row
+        
+        # 2. Get Sectional Summary & Explanations
+        c.execute("""
+            SELECT q.id, q.question_text, q.options, q.correct_index, q.explanation, 
+                   r.selected_index, r.is_correct
+            FROM quiz_questions q
+            LEFT JOIN quiz_responses r ON q.id = r.question_id AND r.attempt_id = %s
+            WHERE q.quiz_set_id = %s
+            ORDER BY q.id ASC
+        """, (attempt_id, quiz_set_id))
+        
+        correct_count = 0
+        wrong_count = 0
+        unattempted_count = 0
+        question_details = []
+        
+        for row in c.fetchall():
+            q_id, text, options, c_idx, exp, s_idx, is_corr = row
+            
+            if s_idx is None:
+                unattempted_count += 1
+            elif is_corr:
+                correct_count += 1
+            else:
+                wrong_count += 1
+                
+            question_details.append({
+                "question_id": q_id,
+                "text": text,
+                "options": options,             # ✅ Just use options directly
+                "correct_index": c_idx,
+                "explanation": exp,
+                "user_selected_index": s_idx,
+                "is_correct": is_corr
+            })
+        
+        # Calculate Accuracy %
+        total_attempted = correct_count + wrong_count
+        accuracy = (correct_count / total_attempted * 100) if total_attempted > 0 else 0
+        
+        return jsonify({
+            "summary": {
+                "score": score,
+                "rank": rank_val,
+                "total_participants": total_participants,
+                "percentile": round(pct_val * 100, 1),
+                "accuracy": round(accuracy, 1),
+                "time_spent_seconds": int(time_taken),
+                "correct": correct_count,
+                "wrong": wrong_count,
+                "unattempted": unattempted_count
+            },
+            "solutions": question_details
+        }), 200
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn: release_db(conn)
+
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
