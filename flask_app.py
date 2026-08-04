@@ -3075,6 +3075,10 @@ def get_todays_quizzes():
         for q_set in quiz_sets:
             set_id, topic, q_count, duration, drop_time, close_time = q_set
             
+            # ✨ FIX: Strip the timezone label so Python can compare them safely
+            drop_time = drop_time.replace(tzinfo=None)
+            close_time = close_time.replace(tzinfo=None)
+            
             # 2. Check if the user already took this specific quiz
             attempted = False
             score = None
@@ -3137,6 +3141,11 @@ def start_quiz():
             return jsonify({"error": "Quiz not found"}), 404
             
         drop_time, close_time = quiz_meta
+        
+        # ✨ FIX: Strip the timezone label here too
+        drop_time = drop_time.replace(tzinfo=None)
+        close_time = close_time.replace(tzinfo=None)
+        
         if current_ist < drop_time or current_ist > close_time:
             return jsonify({"error": "Quiz is currently locked or closed"}), 403
             
