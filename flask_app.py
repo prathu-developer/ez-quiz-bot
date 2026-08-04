@@ -3191,6 +3191,184 @@ def start_quiz():
     finally:
         if conn: release_db(conn)
 
+# ==========================================
+# PHASE 3: MINI APP API ENDPOINTS (Part 2)
+# ==========================================
+
+@app.route('/api/quiz/submit', methods=['POST'])
+def submit_quiz():
+    data = request.get_json()
+    attempt_id = data.get('attempt_id')
+    user_responses = data.get('responses', []) # Expected: [{"question_id": 1, "selected_index": 2}, ...]
+    
+    current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        
+        # 1. Fetch Attempt & Validate
+        c.execute("""
+            SELECT a.user_id, a.quiz_set_id, a.started_at, a.submitted_at, s.duration_seconds
+            FROM quiz_attempts a
+            JOIN quiz_sets s ON a.quiz_set_id = s.id
+            WHERE a.id = %s
+        """, (attempt_id,))
+        attempt_meta = c.fetchone()
+        
+        if not attempt_meta:
+            return jsonify({"error": "Attempt not found"}), 404
+            
+        user_id, quiz_set_id, started_at, submitted_at, duration_seconds = attempt_meta
+        
+        if submitted_at is not None:
+            return jsonify({"error": "Quiz already submitted"}), 403
+            
+        started_at = started_at.replace(tzinfo=None)
+        
+        # 2. Server-Side Timer Validation (+15 second grace period for network latency)
+        time_taken = (current_ist - started_at).total_seconds()
+        if time_taken > (duration_seconds + 15):
+            return jsonify({"error": "Time limit exceeded. Submission rejected."}), 403
+            
+        # 3. Fetch Correct Answers for Scoring
+        c.execute("SELECT id, correct_index FROM quiz_questions WHERE quiz_set_id = %s", (quiz_set_id,))
+        correct_map = {row[0]: row[1] for row in c.fetchall()}
+        
+        total_score = 0.0
+        responses_to_insert = []
+        
+        for r in user_responses:
+            q_id = r.get('question_id')
+            s_idx = r.get('selected_index') # Will be None if skipped/unattempted
+            
+            if q_id not in correct_map:
+                continue
+                
+            is_correct = False
+            if s_idx is not None:
+                if s_idx == correct_map[q_id]:
+                    is_correct = True
+                    total_score += 1.0
+                else:
+                    total_score -= 0.25 # Negative Marking
+                    
+            responses_to_insert.append((attempt_id, q_id, s_idx, is_correct))
+            
+        # 4. Save Responses & Update Attempt Score
+        if responses_to_insert:
+            c.executemany("""
+                INSERT INTO quiz_responses (attempt_id, question_id, selected_index, is_correct)
+                VALUES (%s, %s, %s, %s)
+            """, responses_to_insert)
+        
+        c.execute("""
+            UPDATE quiz_attempts 
+            SET submitted_at = %s, score = %s
+            WHERE id = %s
+        """, (current_ist, total_score, attempt_id))
+        
+        conn.commit()
+        
+        return jsonify({"success": True, "score": total_score}), 200
+        
+    except Exception as e:
+        if conn: conn.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn: release_db(conn)
+
+
+@app.route('/api/quiz/result/<int:attempt_id>', methods=['GET'])
+def get_quiz_result(attempt_id):
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        
+        # 1. SQL-Side Aggregation: Rank & Percentile (Faster time breaks ties!)
+        c.execute("""
+            WITH ranks AS (
+                SELECT id, score,
+                       RANK() OVER (ORDER BY score DESC, (submitted_at - started_at) ASC) as rank_val,
+                       PERCENT_RANK() OVER (ORDER BY score DESC, (submitted_at - started_at) ASC) as pct_val,
+                       COUNT(*) OVER () as total_participants,
+                       EXTRACT(EPOCH FROM (submitted_at - started_at)) as time_taken,
+                       quiz_set_id
+                FROM quiz_attempts
+                WHERE quiz_set_id = (SELECT quiz_set_id FROM quiz_attempts WHERE id = %s)
+                  AND submitted_at IS NOT NULL
+            )
+            SELECT rank_val, pct_val, total_participants, score, time_taken, quiz_set_id 
+            FROM ranks WHERE id = %s
+        """, (attempt_id, attempt_id))
+        
+        rank_row = c.fetchone()
+        if not rank_row:
+            return jsonify({"error": "Result not found or not submitted yet"}), 404
+            
+        rank_val, pct_val, total_participants, score, time_taken, quiz_set_id = rank_row
+        
+        # 2. Get Sectional Summary & Explanations
+        c.execute("""
+            SELECT q.id, q.question_text, q.options, q.correct_index, q.explanation, 
+                   r.selected_index, r.is_correct
+            FROM quiz_questions q
+            LEFT JOIN quiz_responses r ON q.id = r.question_id AND r.attempt_id = %s
+            WHERE q.quiz_set_id = %s
+            ORDER BY q.id ASC
+        """, (attempt_id, quiz_set_id))
+        
+        correct_count = 0
+        wrong_count = 0
+        unattempted_count = 0
+        question_details = []
+        
+        for row in c.fetchall():
+            q_id, text, options, c_idx, exp, s_idx, is_corr = row
+            
+            if s_idx is None:
+                unattempted_count += 1
+            elif is_corr:
+                correct_count += 1
+            else:
+                wrong_count += 1
+                
+            question_details.append({
+                "question_id": q_id,
+                "text": text,
+                "options": json.loads(options),
+                "correct_index": c_idx,
+                "explanation": exp,
+                "user_selected_index": s_idx,
+                "is_correct": is_corr
+            })
+        
+        # Calculate Accuracy %
+        total_attempted = correct_count + wrong_count
+        accuracy = (correct_count / total_attempted * 100) if total_attempted > 0 else 0
+        
+        return jsonify({
+            "summary": {
+                "score": score,
+                "rank": rank_val,
+                "total_participants": total_participants,
+                "percentile": round(pct_val * 100, 1),
+                "accuracy": round(accuracy, 1),
+                "time_spent_seconds": int(time_taken),
+                "correct": correct_count,
+                "wrong": wrong_count,
+                "unattempted": unattempted_count
+            },
+            "solutions": question_details
+        }), 200
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn: release_db(conn)
+
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
