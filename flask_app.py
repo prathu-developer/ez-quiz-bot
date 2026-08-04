@@ -3404,6 +3404,53 @@ def get_quiz_result(attempt_id):
     finally:
         if conn: release_db(conn)
 
+# ==========================================
+# PHASE 4: MINI APP API ENDPOINTS (Part 3)
+# ==========================================
+
+# --- MASTER SPEC: READ-ONLY CONTENT ENDPOINTS ---
+@app.route('/api/foreign-expressions', methods=['GET'])
+def get_foreign_expressions():
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT word FROM foreign_expressions WHERE is_used = TRUE ORDER BY id DESC LIMIT 1")
+        row = c.fetchone()
+        return jsonify({"expression": row[0] if row else "N/A"}), 200
+    except Exception as e: return jsonify({"error": str(e)}), 500
+    finally:
+        if conn: release_db(conn)
+
+@app.route('/api/progress/me', methods=['GET'])
+def get_my_progress():
+    user_id = request.args.get('user_id', type=int)
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        # Fetch real quiz attempts grouped by day for the Progress Tab
+        c.execute("""
+            SELECT s.topic, s.quiz_day, a.score, a.started_at 
+            FROM quiz_attempts a
+            JOIN quiz_sets s ON a.quiz_set_id = s.id
+            WHERE a.user_id = %s AND a.submitted_at IS NOT NULL
+            ORDER BY a.started_at DESC LIMIT 15
+        """, (user_id,))
+        
+        history = []
+        for row in c.fetchall():
+            history.append({
+                "topic": row[0],
+                "date": row[1].strftime('%A, %d %b'),
+                "score": row[2]
+            })
+            
+        return jsonify({"history": history}), 200
+    except Exception as e: return jsonify({"error": str(e)}), 500
+    finally:
+        if conn: release_db(conn)
+
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
