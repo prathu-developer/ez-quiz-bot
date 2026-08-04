@@ -3043,6 +3043,145 @@ def trigger_miniapp_ingestion():
     threading.Thread(target=run_mini_app_ingestion).start()
     return "Mini App Ingestion triggered! Check your Telegram DMs.", 200
 
+# ==========================================
+# PHASE 3: MINI APP API ENDPOINTS (Part 1)
+# ==========================================
+from flask import jsonify
+
+@app.route('/api/quiz/today', methods=['GET'])
+def get_todays_quizzes():
+    # The frontend will pass the user_id so we know if they already took the quiz
+    user_id = request.args.get('user_id', type=int)
+    
+    current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    today_date = current_ist.date()
+    
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        
+        # 1. Fetch today's 4 quiz sets
+        c.execute("""
+            SELECT id, topic, question_count, duration_seconds, drop_time, close_time 
+            FROM quiz_sets 
+            WHERE quiz_day = %s
+            ORDER BY id ASC
+        """, (today_date,))
+        
+        quiz_sets = c.fetchall()
+        response_data = []
+        
+        for q_set in quiz_sets:
+            set_id, topic, q_count, duration, drop_time, close_time = q_set
+            
+            # 2. Check if the user already took this specific quiz
+            attempted = False
+            score = None
+            if user_id:
+                c.execute("SELECT score FROM quiz_attempts WHERE user_id = %s AND quiz_set_id = %s", (user_id, set_id))
+                attempt_row = c.fetchone()
+                if attempt_row:
+                    attempted = True
+                    score = attempt_row[0]
+            
+            # 3. Determine the Live Status of the tile
+            if current_ist < drop_time:
+                status = "locked"
+            elif current_ist > close_time:
+                status = "closed"
+            elif attempted:
+                status = "completed"
+            else:
+                status = "unlocked"
+                
+            response_data.append({
+                "id": set_id,
+                "topic": topic,
+                "question_count": q_count,
+                "duration_seconds": duration,
+                "drop_time": drop_time.isoformat(),
+                "close_time": close_time.isoformat(),
+                "status": status,
+                "score": score
+            })
+            
+        return jsonify({"server_time": current_ist.isoformat(), "quizzes": response_data}), 200
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn: release_db(conn)
+
+
+@app.route('/api/quiz/start', methods=['POST'])
+def start_quiz():
+    data = request.get_json()
+    user_id = data.get('user_id')
+    quiz_set_id = data.get('quiz_set_id')
+    
+    if not user_id or not quiz_set_id:
+        return jsonify({"error": "Missing user_id or quiz_set_id"}), 400
+        
+    current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        
+        # 1. Verify the quiz exists and is actively unlocked
+        c.execute("SELECT drop_time, close_time FROM quiz_sets WHERE id = %s", (quiz_set_id,))
+        quiz_meta = c.fetchone()
+        if not quiz_meta:
+            return jsonify({"error": "Quiz not found"}), 404
+            
+        drop_time, close_time = quiz_meta
+        if current_ist < drop_time or current_ist > close_time:
+            return jsonify({"error": "Quiz is currently locked or closed"}), 403
+            
+        # 2. Prevent duplicate attempts (Security)
+        c.execute("SELECT id FROM quiz_attempts WHERE user_id = %s AND quiz_set_id = %s", (user_id, quiz_set_id))
+        if c.fetchone():
+            return jsonify({"error": "You have already attempted this quiz"}), 403
+            
+        # 3. Start the official Server Timer!
+        c.execute("""
+            INSERT INTO quiz_attempts (user_id, quiz_set_id, started_at) 
+            VALUES (%s, %s, %s) RETURNING id
+        """, (user_id, quiz_set_id, current_ist))
+        attempt_id = c.fetchone()[0]
+        
+        # 4. Fetch Questions (WITHOUT correct answers!)
+        c.execute("""
+            SELECT id, question_text, options 
+            FROM quiz_questions 
+            WHERE quiz_set_id = %s 
+            ORDER BY id ASC
+        """, (quiz_set_id,))
+        
+        questions = []
+        for q in c.fetchall():
+            questions.append({
+                "question_id": q[0],
+                "text": q[1],
+                "options": json.loads(q[2])
+            })
+            
+        conn.commit()
+        
+        return jsonify({
+            "attempt_id": attempt_id,
+            "started_at": current_ist.isoformat(),
+            "questions": questions
+        }), 200
+        
+    except Exception as e:
+        if conn: conn.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn: release_db(conn)
+
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
