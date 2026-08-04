@@ -2924,6 +2924,7 @@ def run_mini_app_ingestion():
     drop_time = current_ist.replace(hour=19, minute=0, second=0, microsecond=0)
     close_time = (current_ist + timedelta(days=1)).replace(hour=23, minute=59, second=59, microsecond=0)
 
+    conn = None
     try:
         # 2. Fetch both JSONs from GitHub
         cache_buster = int(time.time())
@@ -2935,12 +2936,22 @@ def run_mini_app_ingestion():
         vocab_url = f"https://api.github.com/repos/prathu-developer/exam-scraper-api/contents/questions.json?ref=main&t={cache_buster}"
         grammar_url = f"https://api.github.com/repos/prathu-developer/exam-scraper-api/contents/grammar.json?ref=main&t={cache_buster}"
         
-        vocab_data = http_session.get(vocab_url, headers=headers, timeout=15).json()
-        grammar_data = http_session.get(grammar_url, headers=headers, timeout=15).json()
+        # Raise an error if GitHub denies the request
+        vocab_resp = http_session.get(vocab_url, headers=headers, timeout=15)
+        vocab_resp.raise_for_status()
+        vocab_data = vocab_resp.json()
         
-        set_a = grammar_data.get("set_a", [])
-        set_b = grammar_data.get("set_b", [])
-        set_c = grammar_data.get("set_c", [])
+        grammar_resp = http_session.get(grammar_url, headers=headers, timeout=15)
+        grammar_resp.raise_for_status()
+        grammar_data = grammar_resp.json()
+        
+        # Failsafe: Ensure data structures match expectations
+        if not isinstance(vocab_data, list):
+            vocab_data = []
+
+        set_a = grammar_data.get("set_a", []) if isinstance(grammar_data, dict) else []
+        set_b = grammar_data.get("set_b", []) if isinstance(grammar_data, dict) else []
+        set_c = grammar_data.get("set_c", []) if isinstance(grammar_data, dict) else []
 
         # Shuffle the questions for the Mini App just like we do for Telegram
         random.shuffle(vocab_data)
@@ -2948,7 +2959,7 @@ def run_mini_app_ingestion():
         random.shuffle(set_b)
         random.shuffle(set_c)
 
-        # 3. Define the 4 Quiz Sets (Topic, Questions, Count, Duration)
+        # 3. Define the 4 Quiz Sets
         quiz_configurations = [
             {"topic": "Vocab Quiz", "data": vocab_data, "duration": 900},          # 15 mins
             {"topic": "Error Detection", "data": set_a, "duration": 300},          # 5 mins
@@ -2959,9 +2970,15 @@ def run_mini_app_ingestion():
         conn = get_db()
         c = conn.cursor()
 
+        # Clean slate: Erase duplicate test sets for today if triggered multiple times
+        c.execute("DELETE FROM quiz_sets WHERE quiz_day = %s", (today_date,))
+
+        report_lines = []
+
         for config in quiz_configurations:
             q_list = config["data"]
-            if not q_list:
+            if not q_list or len(q_list) == 0:
+                report_lines.append(f"⚠️ {config['topic']}: Skipped (0 questions found)")
                 continue
                 
             # Create the Quiz Set and grab its new ID
@@ -2972,17 +2989,23 @@ def run_mini_app_ingestion():
             """, (config["topic"], today_date, len(q_list), config["duration"], drop_time, close_time))
             
             quiz_set_id = c.fetchone()[0]
+            inserted_count = 0
 
             # Insert all questions for this set
             for mcq in q_list:
-                options = mcq['options']
-                if mcq['correct_answer'] not in options: 
-                    options[0] = mcq['correct_answer']
+                options = mcq.get('options', [])
+                correct_ans = mcq.get('correct_answer', '')
+                
+                # Failsafe: Skip broken question formats
+                if not options or not correct_ans:
+                    continue 
+
+                if correct_ans not in options: 
+                    options[0] = correct_ans
                 
                 random.shuffle(options)
-                correct_index = options.index(mcq['correct_answer'])
+                correct_index = options.index(correct_ans)
                 
-                # Handle grammar vs vocab text formatting
                 q_text = mcq.get('custom_ui', f'Choose the best replacement for the words "{mcq.get("target_phrase", "")}".' if 'target_phrase' in mcq else mcq.get('question', ''))
                 full_question = f"{q_text}\n\n{mcq.get('sentence', '')}".strip()
 
@@ -2990,9 +3013,14 @@ def run_mini_app_ingestion():
                     INSERT INTO quiz_questions (quiz_set_id, question_text, options, correct_index, explanation)
                     VALUES (%s, %s, %s, %s, %s)
                 """, (quiz_set_id, full_question, json.dumps(options), correct_index, mcq.get('explanation', '')))
+                
+                inserted_count += 1
+                
+            report_lines.append(f"✅ {config['topic']}: {inserted_count} questions inserted")
 
         conn.commit()
-        notify_prathu("✅ **Mini App Ingestion Job** generated and safely stored in the database!")
+        report_text = "\n".join(report_lines)
+        notify_prathu(f"🤖 **Mini App Ingestion Complete!**\n\n{report_text}")
 
     except Exception as e:
         if conn: conn.rollback()
