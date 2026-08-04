@@ -2666,7 +2666,7 @@ def cron_refresh_snapshot():
     
 def run_word_of_the_day():
     # ==========================================
-    # PART 1: LIFETIME WORD OF THE DAY (Thread 2343)
+    # PART 1: LIFETIME WORD OF THE DAY
     # ==========================================
     conn = get_db()
     c = conn.cursor()
@@ -2674,7 +2674,6 @@ def run_word_of_the_day():
         c.execute("SELECT word FROM lifetime_words")
         used_words = [row[0] for row in c.fetchall()]
     except Exception as e:
-        print(f"DB Read Error (WOTD): {e}")
         used_words = []
     finally:
         c.close()
@@ -2717,7 +2716,7 @@ Connotation Guide:
 = = Neutral (descriptive)"""
 
     wotd_text = None
-    successful_key_idx = 0 # ✨ Track which key does the heavy lifting
+    successful_key_idx = 0 
     
     for idx, key in enumerate(API_KEYS):
         try:
@@ -2725,46 +2724,39 @@ Connotation Guide:
             response = temp_client.models.generate_content(model='gemini-3.6-flash', contents=wotd_prompt, config=types.GenerateContentConfig(temperature=0.5))
             if response.text:
                 wotd_text = response.text.strip()
-                successful_key_idx = idx # Lock in the successful key
+                successful_key_idx = idx
                 break
         except: continue
 
     if wotd_text:
-        for attempt in range(10):
-            try:
-                res = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": 2343, "text": wotd_text}, timeout=20)
-                if res.status_code == 200:
-                    try:
-                        lines = [line.strip() for line in wotd_text.split('\n') if line.strip()]
-                        extracted_word = lines[1].split(' ')[0].strip().lower()
-                        conn = get_db()
-                        c = conn.cursor()
-                        c.execute("INSERT INTO lifetime_words (word) VALUES (%s) ON CONFLICT (word) DO NOTHING", (extracted_word,))
-                        conn.commit()
-                        c.close()
-                        release_db(conn)
-                    except: pass
-                    notify_prathu("📖 **Word of the Day** generated successfully!")
-                    break
-                elif res.status_code == 429: time.sleep(res.json().get("parameters", {}).get("retry_after", 5) + 1)
-                else: time.sleep(2)
-            except: time.sleep(3 + attempt * 2)
+        try:
+            lines = [line.strip() for line in wotd_text.split('\n') if line.strip()]
+            extracted_word = lines[1].split(' ')[0].strip().lower()
+            conn = get_db()
+            c = conn.cursor()
+            c.execute("INSERT INTO lifetime_words (word) VALUES (%s) ON CONFLICT (word) DO NOTHING", (extracted_word,))
+            # --- MASTER SPEC: Save full text for Mini App ---
+            c.execute("INSERT INTO bot_settings (key, value) VALUES ('latest_wotd_text', %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (wotd_text,))
+            conn.commit()
+            c.close()
+            release_db(conn)
+            notify_prathu("📖 **Word of the Day** saved to Mini App successfully! (Telegram posts disabled)")
+        except Exception as e:
+            print(e)
     else:
         notify_prathu("🚨 **ERROR:** WOTD generation failed!")
 
     # ==========================================
-    # PART 2: FOREIGN EXPRESSIONS (Thread 11028)
+    # PART 2: FOREIGN EXPRESSIONS
     # ==========================================
     time.sleep(5) 
     
     conn = get_db()
     c = conn.cursor()
     try:
-        # Fetch the next 3 unused words sequentially
         c.execute("SELECT id, word FROM foreign_expressions WHERE is_used = FALSE ORDER BY id ASC LIMIT 3")
         foreign_batch = c.fetchall()
     except Exception as e:
-        print(f"DB Read Error (Foreign Words): {e}")
         foreign_batch = []
     finally:
         c.close()
@@ -2793,7 +2785,7 @@ Output EXACTLY in this format:
 💡 <Short, simple meaning in English>.
 (<Hindi meaning>)
 
-📰 <Write one short human scenario or reaction in clear, natural English (approximately CEFR B1–B2). It MUST strictly reflect the specific political, economic, or social theme of the article. Do NOT use generic dictionary examples or unrelated business scenarios, and it should help students naturally remember the word.>
+📰 <Write one short human scenario or reaction in clear, natural English (approximately CEFR B1–B2). It MUST strictly reflect the specific political, economic, or social theme of the article.>
 
 2️⃣ <Expression 2> (<Language of origin>)
 
@@ -2802,7 +2794,7 @@ Output EXACTLY in this format:
 💡 <Short, simple meaning in English>.
 (<Hindi meaning>)
 
-📰 <Write one short human scenario or reaction in clear, natural English (approximately CEFR B1–B2). It MUST strictly reflect the specific political, economic, or social theme of the article. Do NOT use generic dictionary examples or unrelated business scenarios, and it should help students naturally remember the word.>
+📰 <Write one short human scenario or reaction in clear, natural English (approximately CEFR B1–B2). It MUST strictly reflect the specific political, economic, or social theme of the article.>
 
 3️⃣ <Expression 3> (<Language of origin>)
 
@@ -2811,11 +2803,9 @@ Output EXACTLY in this format:
 💡 <Short, simple meaning in English>.
 (<Hindi meaning>)
 
-📰 <Write one short human scenario or reaction in clear, natural English (approximately CEFR B1–B2). It MUST strictly reflect the specific political, economic, or social theme of the article. Do NOT use generic dictionary examples or unrelated business scenarios, and it should help students naturally remember the word.>"""
+📰 <Write one short human scenario or reaction in clear, natural English (approximately CEFR B1–B2). It MUST strictly reflect the specific political, economic, or social theme of the article.>"""
 
         foreign_text = None
-        
-        # ✨ LOAD BALANCER: Shift the array to start with the NEXT key in line
         shifted_keys = API_KEYS[successful_key_idx + 1:] + API_KEYS[:successful_key_idx + 1]
         
         for key in shifted_keys:
@@ -2828,28 +2818,22 @@ Output EXACTLY in this format:
             except: continue
             
         if foreign_text:
-            for attempt in range(10):
-                try:
-                    res = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": 11028, "text": foreign_text}, timeout=20)
-                    if res.status_code == 200:
-                        try:
-                            conn = get_db()
-                            c = conn.cursor()
-                            c.execute("UPDATE foreign_expressions SET is_used = TRUE WHERE id IN %s", (tuple(words_ids),))
-                            conn.commit()
-                            c.close()
-                            release_db(conn)
-                        except: pass
-                        notify_prathu("🌍 **Foreign Expressions** drop executed successfully!")
-                        break
-                    elif res.status_code == 429: time.sleep(res.json().get("parameters", {}).get("retry_after", 5) + 1)
-                    else: time.sleep(2)
-                except: time.sleep(3 + attempt * 2)
+            try:
+                conn = get_db()
+                c = conn.cursor()
+                c.execute("UPDATE foreign_expressions SET is_used = TRUE WHERE id IN %s", (tuple(words_ids),))
+                # --- MASTER SPEC: Save full text for Mini App ---
+                c.execute("INSERT INTO bot_settings (key, value) VALUES ('latest_foreign_text', %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (foreign_text,))
+                conn.commit()
+                c.close()
+                release_db(conn)
+                notify_prathu("🌍 **Foreign Expressions** saved to Mini App successfully! (Telegram posts disabled)")
+            except: pass
         else:
             notify_prathu("🚨 **ERROR:** Foreign Expressions AI generation failed!")
     elif len(foreign_batch) < 3:
         notify_prathu("🚨 **ALERT:** You are out of Foreign Expressions! The master list of 250 has been completed.")
-
+        
 @app.route('/word_of_the_day/0508', methods=['GET', 'POST'])
 def trigger_word_of_the_day():
     threading.Thread(target=run_word_of_the_day).start()
@@ -3497,6 +3481,80 @@ def get_my_progress():
             
         return jsonify({"history": history}), 200
     except Exception as e: return jsonify({"error": str(e)}), 500
+    finally:
+        if conn: release_db(conn)
+
+@app.route('/api/digest/today', methods=['GET'])
+def get_daily_digest():
+    user_id = request.args.get('user_id', type=int)
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        
+        c.execute("SELECT value FROM bot_settings WHERE key = 'latest_wotd_text'")
+        wotd_row = c.fetchone()
+        wotd_content = wotd_row[0] if wotd_row else "Check back later for today's word!"
+        
+        c.execute("SELECT value FROM bot_settings WHERE key = 'latest_foreign_text'")
+        fe_row = c.fetchone()
+        fe_content = fe_row[0] if fe_row else "Check back later for today's expressions!"
+        
+        current_date = (datetime.utcnow() + timedelta(hours=5, minutes=30)).date()
+        
+        # Check Read Status
+        c.execute("""
+            SELECT content_type FROM content_read_status 
+            WHERE user_id = %s AND content_date = %s
+        """, (user_id, current_date))
+        read_types = [r[0] for r in c.fetchall()]
+        
+        digest_items = [
+            {
+                "id": "wotd",
+                "title": "📖 Word of the Day",
+                "content": wotd_content,
+                "is_read": "wotd" in read_types
+            },
+            {
+                "id": "foreign",
+                "title": "🌍 Foreign Expressions",
+                "content": fe_content,
+                "is_read": "foreign" in read_types
+            }
+        ]
+        
+        return jsonify({"items": digest_items}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn: release_db(conn)
+
+@app.route('/api/digest/mark-read', methods=['POST'])
+def mark_digest_read():
+    data = request.get_json()
+    user_id = data.get('user_id')
+    content_type = data.get('content_type')
+    
+    if not user_id or not content_type:
+        return jsonify({"error": "Missing data"}), 400
+        
+    current_date = (datetime.utcnow() + timedelta(hours=5, minutes=30)).date()
+    
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO content_read_status (user_id, content_type, content_date, read_at)
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (user_id, content_type, content_date) DO NOTHING
+        """, (user_id, content_type, current_date))
+        conn.commit()
+        return jsonify({"success": True}), 200
+    except Exception as e:
+        if conn: conn.rollback()
+        return jsonify({"error": str(e)}), 500
     finally:
         if conn: release_db(conn)
 
