@@ -3001,7 +3001,7 @@ def run_mini_app_ingestion():
                     continue 
 
                 if correct_ans not in options: 
-                    options[0] = correct_ans
+                    options.append(correct_ans)
                 
                 random.shuffle(options)
                 correct_index = options.index(correct_ans)
@@ -3061,13 +3061,13 @@ def get_todays_quizzes():
         conn = get_db()
         c = conn.cursor()
         
-        # 1. Fetch today's 4 quiz sets
+        # 1. Fetch all active quizzes (including yesterday's that haven't closed yet)
         c.execute("""
             SELECT id, topic, question_count, duration_seconds, drop_time, close_time 
             FROM quiz_sets 
-            WHERE quiz_day = %s
-            ORDER BY id ASC
-        """, (today_date,))
+            WHERE close_time >= %s
+            ORDER BY drop_time ASC
+        """, (current_ist,))
         
         quiz_sets = c.fetchall()
         response_data = []
@@ -3134,53 +3134,48 @@ def start_quiz():
         conn = get_db()
         c = conn.cursor()
         
-        # 1. Verify the quiz exists and is actively unlocked
-        c.execute("SELECT drop_time, close_time FROM quiz_sets WHERE id = %s", (quiz_set_id,))
+        # FIX BUG #2: Fetch duration_seconds from the database
+        c.execute("SELECT drop_time, close_time, duration_seconds FROM quiz_sets WHERE id = %s", (quiz_set_id,))
         quiz_meta = c.fetchone()
         if not quiz_meta:
             return jsonify({"error": "Quiz not found"}), 404
             
-        drop_time, close_time = quiz_meta
-        
-        # ✨ FIX: Strip the timezone label here too
+        drop_time, close_time, duration_seconds = quiz_meta
         drop_time = drop_time.replace(tzinfo=None)
         close_time = close_time.replace(tzinfo=None)
         
         if current_ist < drop_time or current_ist > close_time:
             return jsonify({"error": "Quiz is currently locked or closed"}), 403
             
-        # 2. Prevent duplicate attempts (Security)
-        c.execute("SELECT id FROM quiz_attempts WHERE user_id = %s AND quiz_set_id = %s", (user_id, quiz_set_id))
-        if c.fetchone():
-            return jsonify({"error": "You have already attempted this quiz"}), 403
-            
-        # 3. Start the official Server Timer!
-        c.execute("""
-            INSERT INTO quiz_attempts (user_id, quiz_set_id, started_at) 
-            VALUES (%s, %s, %s) RETURNING id
-        """, (user_id, quiz_set_id, current_ist))
-        attempt_id = c.fetchone()[0]
+        # FIX BUG #1: Safely handle abandoned/unsubmitted attempts
+        c.execute("SELECT id, submitted_at FROM quiz_attempts WHERE user_id = %s AND quiz_set_id = %s", (user_id, quiz_set_id))
+        attempt_row = c.fetchone()
         
-        # 4. Fetch Questions (WITHOUT correct answers!)
-        c.execute("""
-            SELECT id, question_text, options 
-            FROM quiz_questions 
-            WHERE quiz_set_id = %s 
-            ORDER BY id ASC
-        """, (quiz_set_id,))
+        if attempt_row:
+            attempt_id, submitted_at = attempt_row
+            if submitted_at is not None:
+                return jsonify({"error": "You have already completed this quiz"}), 403
+            else:
+                # It's an abandoned attempt! Restart their timer safely.
+                c.execute("UPDATE quiz_attempts SET started_at = %s WHERE id = %s", (current_ist, attempt_id))
+        else:
+            # It's a brand new attempt
+            c.execute("""
+                INSERT INTO quiz_attempts (user_id, quiz_set_id, started_at) 
+                VALUES (%s, %s, %s) RETURNING id
+            """, (user_id, quiz_set_id, current_ist))
+            attempt_id = c.fetchone()[0]
         
-        questions = []
-        for q in c.fetchall():
-            questions.append({
-                "question_id": q[0],
-                "text": q[1],
-                "options": q[2]              # ✅ Just use q[2] directly
-            })
+        # Fetch Questions
+        c.execute("SELECT id, question_text, options FROM quiz_questions WHERE quiz_set_id = %s ORDER BY id ASC", (quiz_set_id,))
+        questions = [{"question_id": q[0], "text": q[1], "options": q[2]} for q in c.fetchall()]
             
         conn.commit()
         
+        # Pass the true duration to the frontend
         return jsonify({
             "attempt_id": attempt_id,
+            "duration_seconds": duration_seconds,
             "started_at": current_ist.isoformat(),
             "questions": questions
         }), 200
