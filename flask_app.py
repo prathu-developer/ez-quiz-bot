@@ -3034,11 +3034,14 @@ def run_mini_app_ingestion():
 # Manual Trigger for Phase 2 Testing
 @app.route('/cron/ingest_miniapp_0508', methods=['GET', 'POST'])
 def trigger_miniapp_ingestion():
-    if request.headers.get("X-Cron-Secret") != CRON_SECRET:
-        return "Unauthorized", 401
+    # ✨ FIX: Allow checking both the hidden header AND the URL parameters for easy browser testing
+    secret_provided = request.headers.get("X-Cron-Secret") or request.args.get("secret")
+    
+    if secret_provided != CRON_SECRET:
+        return "Unauthorized! Did you forget the secret?", 401
     
     threading.Thread(target=run_mini_app_ingestion).start()
-    return "Mini App Ingestion triggered!", 200
+    return "Mini App Ingestion triggered! Check your Telegram DMs.", 200
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
