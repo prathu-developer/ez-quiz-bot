@@ -2614,6 +2614,24 @@ def get_mini_app_leaderboard():
         if index < 50 or eu["id"] == user_id:
             custom_elo.append(eu)
 
+    # --- FIX: EXTRACT OR CONSTRUCT CURRENT_USER DATA ---
+    current_user_data = next((u for u in master_data["leaderboard"] if u["id"] == user_id), None)
+    if not current_user_data:
+        current_user_data = {
+            "id": user_id,
+            "name": "You",
+            "score": 0,
+            "rank": "N/A",
+            "league": 0,
+            "house": "🏳️ Unsorted",
+            "is_captain": 0,
+            "elo": 1000,
+            "attempts": 0,
+            "lifetime_growth": "Calibrating...",
+            "rank_history": [],
+            "history": {"labels": [], "scores": [], "accuracy": 0, "correct": 0, "wrong": 0}
+        }
+
     response_data = {
         "current_week": master_data["current_week"],
         "total_quizzes": master_data["total_quizzes"],
@@ -2621,6 +2639,7 @@ def get_mini_app_leaderboard():
         "total_active": master_data.get("total_active", len(master_data["leaderboard"])),
         "topper_history": master_data["topper_history"],
         "class_avg_history": master_data["class_avg_history"],
+        "current_user": current_user_data,  # <--- INJECTED FIELD FIX
         "leaderboard": custom_leaderboard,
         "elo_ranking": custom_elo
     }
