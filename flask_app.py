@@ -167,19 +167,6 @@ def process_answer(c, queue_id, user_id, first_name, poll_id, chosen_option):
                 ON CONFLICT (user_id) DO UPDATE SET first_name = EXCLUDED.first_name
             """, (user_id, first_name))
 
-            c.execute("SELECT faction FROM users WHERE user_id=%s", (user_id,))
-            current_faction_row = c.fetchone()
-            current_faction = current_faction_row[0] if current_faction_row else None
-
-            if current_faction is None:
-                houses = ['Gryffindor 🦁🔥', 'Slytherin 🐍💧', 'Ravenclaw 🦅💨', 'Hufflepuff 🦡🌍']
-                counts = {}
-                for h in houses:
-                    c.execute("SELECT COUNT(*) FROM users WHERE faction=%s", (h,))
-                    counts[h] = c.fetchone()[0]
-                assigned_faction = min(counts, key=counts.get)
-                c.execute("UPDATE users SET faction=%s WHERE user_id=%s", (assigned_faction, user_id))
-
             c.execute("""
                 INSERT INTO user_answers (user_id, poll_id, is_correct, poll_day, chosen_option)
                 VALUES (%s, %s, %s, %s, %s)
@@ -289,41 +276,6 @@ def update_live_leaderboard():
         if total_attempts_global > 0:
             global_accuracy_pct = int((total_correct_global / total_attempts_global) * 100)
 
-    c.execute("SELECT faction, SUM(weekly_score) FROM users WHERE faction IS NOT NULL GROUP BY faction")
-    team_scores = dict(c.fetchall())
-
-    for house in ['Gryffindor 🦁🔥', 'Slytherin 🐍💧', 'Ravenclaw 🦅💨', 'Hufflepuff 🦡🌍']:
-        if house not in team_scores:
-            team_scores[house] = 0
-
-    sorted_houses = sorted(team_scores.items(), key=lambda x: x[1], reverse=True)
-    top_house, top_score = sorted_houses[0]
-    second_score = sorted_houses[1][1]
-
-    house_abbrev = {
-        'Gryffindor 🦁🔥': '🦁 Gryffindor',
-        'Slytherin 🐍💧': '🐍 Slytherin',
-        'Ravenclaw 🦅💨': '🦅 Ravenclaw',
-        'Hufflepuff 🦡🌍': '🦡 Hufflepuff'
-    }
-
-    house_text = ""
-    medals_house = ["🥇", "🥈", "🥉", "4️⃣"]
-    for i, (house, score) in enumerate(sorted_houses):
-        abbrev = house_abbrev.get(house, "🏳️ Unknown")
-        clean_score = int(score) if score % 1 == 0 else round(score, 2)
-        house_text += f"{medals_house[i]} {abbrev} — {clean_score} pts\n"
-
-    if top_score > second_score:
-        margin = top_score - second_score
-        clean_margin = int(margin) if margin % 1 == 0 else round(margin, 2)
-        house_name_only = top_house.split()[0]
-        lead_text = f"🏆 {house_name_only} leads the House Cup by {clean_margin} pts!"
-    elif top_score > 0 and top_score == second_score:
-        lead_text = "⚖️ The House Cup is currently tied!"
-    else:
-        lead_text = "⚖️ No points have been earned yet!"
-
     # 1. Fetch House Cup Top 10
     c.execute("SELECT user_id, first_name, weekly_score, faction, is_captain FROM users WHERE weekly_attempts > 0 ORDER BY weekly_score DESC, last_updated ASC LIMIT 10")
     top_10 = c.fetchall()
@@ -348,11 +300,6 @@ def update_live_leaderboard():
     msg_text += f"⏳ {phase_text}\n"
     msg_text += "━━━━━━━━━━━━━━━━━━━━\n\n"
 
-    msg_text += "⚔️ **HOUSE WAR**\n\n"
-    msg_text += f"{house_text}\n"
-    msg_text += f"{lead_text}\n"
-    msg_text += "━━━━━━━━━━━━━━━━━━━━\n\n"
-
     msg_text += "📊 **COMMUNITY PULSE**\n\n"
     msg_text += f"➪ Quizzes Released: {total_quizzes}\n"
     msg_text += f"➪ Maximum Score: {max_pts} pts\n"
@@ -367,16 +314,7 @@ def update_live_leaderboard():
 
     for i, user in enumerate(top_10):
         u_id, name, score, faction_val, is_captain = user
-        faction_val = str(faction_val)
-        clean_score = int(score) if score % 1 == 0 else round(score, 2)
-
-        if "Gryffindor" in faction_val: faction_emoji = "🦁"
-        elif "Slytherin" in faction_val: faction_emoji = "🐍"
-        elif "Ravenclaw" in faction_val: faction_emoji = "🦅"
-        elif "Hufflepuff" in faction_val: faction_emoji = "🦡"
-        else: faction_emoji = "🏳️"
-
-        captain_emoji = "🪄 " if is_captain == 1 else ""
+        
         msg_text += f"{medals[i]} {faction_emoji} {captain_emoji}[{name}](tg://user?id={u_id}) ➪ {clean_score} pts\n"
 
     msg_text += "\n━━━━━━━━━━━━━━━━━━━━"
@@ -1248,12 +1186,6 @@ def run_weekly_reset_background():
             }
             c.execute("INSERT INTO bot_settings (key, value) VALUES ('wow_stats', %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (json.dumps(current_stats),))
 
-            # 7. House Wars
-            c.execute("SELECT faction, SUM(weekly_score) FROM users WHERE faction IS NOT NULL GROUP BY faction")
-            team_scores = dict(c.fetchall())
-            finals = {'Gryffindor 🦁🔥': team_scores.get('Gryffindor 🦁🔥', 0), 'Slytherin 🐍💧': team_scores.get('Slytherin 🐍💧', 0), 'Ravenclaw 🦅💨': team_scores.get('Ravenclaw 🦅💨', 0), 'Hufflepuff 🦡🌍': team_scores.get('Hufflepuff 🦡🌍', 0)}
-            sorted_finals = sorted(finals.items(), key=lambda x: x[1], reverse=True)
-            
             current_ist_time = datetime.utcnow() + timedelta(hours=5, minutes=30)
             end_date = current_ist_time - timedelta(days=1)
             start_date = current_ist_time - timedelta(days=7)
@@ -1395,52 +1327,13 @@ def run_weekly_reset_background():
         except Exception as e:
             print(f"🚨 Error generating Elo Bleed DM: {e}")
 
-        # ✨ 1. FIRST: Select the captains while the scores are still intact!
-        c.execute("SELECT user_id, first_name FROM users WHERE faction='Gryffindor 🦁🔥' AND weekly_attempts > 0 ORDER BY weekly_score DESC LIMIT 1")
-        top_gryffindor = c.fetchone()
-        c.execute("SELECT user_id, first_name FROM users WHERE faction='Slytherin 🐍💧' AND weekly_attempts > 0 ORDER BY weekly_score DESC LIMIT 1")
-        top_slytherin = c.fetchone()
-        c.execute("SELECT user_id, first_name FROM users WHERE faction='Ravenclaw 🦅💨' AND weekly_attempts > 0 ORDER BY weekly_score DESC LIMIT 1")
-        top_ravenclaw = c.fetchone()
-        c.execute("SELECT user_id, first_name FROM users WHERE faction='Hufflepuff 🦡🌍' AND weekly_attempts > 0 ORDER BY weekly_score DESC LIMIT 1")
-        top_hufflepuff = c.fetchone()
-
-        # ✨ 2. SECOND: Execute "The Great Wipe" securely
-        c.execute("UPDATE users SET faction = NULL WHERE weekly_score < %s", (target_average,))
-        c.execute("UPDATE users SET base_elo = live_elo, weekly_score = 0, weekly_attempts = 0, weekly_correct = 0, is_captain = 0")
+        # ✨ Execute "The Great Wipe" securely (No factions/captains)
+        c.execute("UPDATE users SET base_elo = live_elo, weekly_score = 0, weekly_attempts = 0, weekly_correct = 0")
         c.execute("DELETE FROM precise_scores")
-
-        # ✨ 3. THIRD: Reinstate the House Captains with their badges
-        if top_gryffindor: c.execute("UPDATE users SET faction='Gryffindor 🦁🔥', is_captain=1 WHERE user_id=%s", (top_gryffindor[0],))
-        if top_slytherin: c.execute("UPDATE users SET faction='Slytherin 🐍💧', is_captain=1 WHERE user_id=%s", (top_slytherin[0],))
-        if top_ravenclaw: c.execute("UPDATE users SET faction='Ravenclaw 🦅💨', is_captain=1 WHERE user_id=%s", (top_ravenclaw[0],))
-        if top_hufflepuff: c.execute("UPDATE users SET faction='Hufflepuff 🦡🌍', is_captain=1 WHERE user_id=%s", (top_hufflepuff[0],))
-
-        gryf_cap = f"[{top_gryffindor[1]}](tg://user?id={top_gryffindor[0]})" if top_gryffindor else "None"
-        slyth_cap = f"[{top_slytherin[1]}](tg://user?id={top_slytherin[0]})" if top_slytherin else "None"
-        rav_cap = f"[{top_ravenclaw[1]}](tg://user?id={top_ravenclaw[0]})" if top_ravenclaw else "None"
-        huff_cap = f"[{top_hufflepuff[1]}](tg://user?id={top_hufflepuff[0]})" if top_hufflepuff else "None"
-
-        winner_house = sorted_finals[0][0]
-        winner_score = sorted_finals[0][1]
-        second_score = sorted_finals[1][1] if len(sorted_finals) > 1 else 0
-
-        winning_banner = ""
-        if winner_score > second_score:
-            house_name, emoji = winner_house.split()[0].upper(), winner_house.split()[1]
-            clean_win_score = int(winner_score) if winner_score % 1 == 0 else round(winner_score, 2)
-            winning_banner = f"🥇 **TEAM {house_name} WINS!** {emoji}\nSecuring the top spot with **{clean_win_score}** points! Your reigning Team Captains for this new week are:\n\n"
-        elif winner_score > 0 and winner_score == second_score:
-            clean_win_score = int(winner_score) if winner_score % 1 == 0 else round(winner_score, 2)
-            winning_banner = f"⚖️ **TEAM TIE!**\nThe top teams tied with **{clean_win_score}** points. Your reigning Team Captains for this new week are:\n\n"
-        else:
-            winning_banner = "⚖️ **THE WEEK HAS ENDED!**\nNo points were earned this week. Your reigning Team Captains for this new week are:\n\n"
 
         cutoff_change_text = ""
 
         announcement_text = "🏆 ✨ **WEEKLY CUP WRAP-UP & ANALYSIS** ✨ 🏆\n\n"
-        announcement_text += winning_banner
-        announcement_text += f"🦁 **Gryffindor:** 👑 {gryf_cap}\n🐍 **Slytherin:** 👑 {slyth_cap}\n🦅 **Ravenclaw:** 👑 {rav_cap}\n🦡 **Hufflepuff:** 👑 {huff_cap}\n\n"
         announcement_text += "📊 **Community Performance Analysis:**\n"
         announcement_text += f"• **Active Challengers:** **{total_active_students}** students consistently competed this week.\n"
         announcement_text += f"• **Total Engagement:** A massive **{total_weekly_attempts}** questions were attempted collectively!\n"
