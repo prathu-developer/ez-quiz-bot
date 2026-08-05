@@ -2820,10 +2820,11 @@ def run_mini_app_ingestion():
     current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
     today_date = current_ist.date()
     
-    # 1. Set the exact Drop Time (Today 7:00 PM) and Close Time (Tomorrow 11:59 PM)
+    # 1. Set the exact Drop Time (Today 7:00 PM) and Close Time (Sunday 11:59 PM)
     drop_time = current_ist.replace(hour=19, minute=0, second=0, microsecond=0)
-    close_time = (current_ist + timedelta(days=1)).replace(hour=23, minute=59, second=59, microsecond=0)
-
+    days_until_sunday = 6 - current_ist.weekday()
+    close_time = (current_ist + timedelta(days=days_until_sunday)).replace(hour=23, minute=59, second=59, microsecond=0)
+    
     conn = None
     try:
         # 2. Fetch both JSONs from GitHub
@@ -2967,7 +2968,7 @@ def get_todays_quizzes():
             ORDER BY quiz_day DESC, id ASC
         """, (current_ist,))
         
-        grouped_quizzes = {"Today": [], "Yesterday": []}
+        grouped_quizzes = {"Today": [], "Pending": []}
         
         for q_set in c.fetchall():
             set_id, topic, q_day, q_count, duration, drop_time, close_time = q_set
@@ -2996,8 +2997,8 @@ def get_todays_quizzes():
             
             if q_day == current_ist.date():
                 grouped_quizzes["Today"].append(quiz_data)
-            else:
-                grouped_quizzes["Yesterday"].append(quiz_data)
+            elif q_day < current_ist.date():
+                grouped_quizzes["Pending"].append(quiz_data)
                 
         return jsonify({"quizzes": grouped_quizzes}), 200
     except Exception as e:
