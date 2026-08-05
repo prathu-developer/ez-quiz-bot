@@ -1328,18 +1328,16 @@ def run_weekly_reset_background():
         except Exception as e:
             print(f"🚨 Error generating Elo Bleed DM: {e}")
 
-        # ✨ Execute "The Great Wipe" securely (No factions/captains)
+        # ✨ Execute "The Great Wipe" securely
         c.execute("UPDATE users SET base_elo = live_elo, weekly_score = 0, weekly_attempts = 0, weekly_correct = 0")
         c.execute("DELETE FROM precise_scores")
-
-        cutoff_change_text = ""
 
         announcement_text = "🏆 ✨ **WEEKLY CUP WRAP-UP & ANALYSIS** ✨ 🏆\n\n"
         announcement_text += "📊 **Community Performance Analysis:**\n"
         announcement_text += f"• **Active Challengers:** **{total_active_students}** students consistently competed this week.\n"
         announcement_text += f"• **Total Engagement:** A massive **{total_weekly_attempts}** questions were attempted collectively!\n"
         announcement_text += f"• **Overall Accuracy:** The class achieved a combined accuracy rate of **{overall_accuracy}%**.\n"
-        announcement_text += f"• **League Progress:** The final promotion cut-off landed at **{int(target_average)} pts**{cutoff_change_text}, with **{promoted_count}** students successfully levelling up their league tier.\n\n"
+        announcement_text += f"• **League Progress:** The final promotion cut-off landed at **{int(target_average)} pts**, with **{promoted_count}** students successfully levelling up their league tier.\n\n"
         announcement_text += "⚡️ The leaderboards have been wiped clean. Attempt your first quiz today at 7:00 PM to kick off the new week!"
 
         for attempt in range(5):
