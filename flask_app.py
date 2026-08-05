@@ -314,8 +314,9 @@ def update_live_leaderboard():
 
     for i, user in enumerate(top_10):
         u_id, name, score, faction_val, is_captain = user
+        clean_score = int(score) if score % 1 == 0 else round(score, 2)
         
-        msg_text += f"{medals[i]} {faction_emoji} {captain_emoji}[{name}](tg://user?id={u_id}) ➪ {clean_score} pts\n"
+        msg_text += f"{medals[i]} [{name}](tg://user?id={u_id}) ➪ {clean_score} pts\n"
 
     msg_text += "\n━━━━━━━━━━━━━━━━━━━━"
 
