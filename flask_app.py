@@ -3240,16 +3240,19 @@ def start_quiz():
             return jsonify({"error": "Quiz is currently locked or closed"}), 403
             
         # FIX BUG #1: Safely handle abandoned/unsubmitted attempts
-        c.execute("SELECT id, submitted_at FROM quiz_attempts WHERE user_id = %s AND quiz_set_id = %s", (user_id, quiz_set_id))
+        c.execute("SELECT id, submitted_at, started_at FROM quiz_attempts WHERE user_id = %s AND quiz_set_id = %s", (user_id, quiz_set_id))
         attempt_row = c.fetchone()
         
         if attempt_row:
-            attempt_id, submitted_at = attempt_row
+            attempt_id, submitted_at, prev_started_at = attempt_row
             if submitted_at is not None:
                 return jsonify({"error": "You have already completed this quiz"}), 403
             else:
-                # It's an abandoned attempt! Restart their timer safely.
-                c.execute("UPDATE quiz_attempts SET started_at = %s WHERE id = %s", (current_ist, attempt_id))
+                # It's an abandoned attempt! Enforce original timer.
+                prev_started_at = prev_started_at.replace(tzinfo=None)
+                time_elapsed = (current_ist - prev_started_at).total_seconds()
+                if time_elapsed > duration_seconds:
+                    return jsonify({"error": "Your time for this quiz has already expired."}), 403
         else:
             # It's a brand new attempt
             c.execute("""
