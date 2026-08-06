@@ -2975,12 +2975,17 @@ def get_todays_quizzes():
             
             attempted = False
             score = None
+            attempt_id = None  # Add this variable
+            
             if user_id:
-                c.execute("SELECT score FROM quiz_attempts WHERE user_id = %s AND quiz_set_id = %s AND submitted_at IS NOT NULL", (user_id, set_id))
+                # Update the SQL to select both 'id' and 'score'
+                c.execute("SELECT id, score FROM quiz_attempts WHERE user_id = %s AND quiz_set_id = %s AND submitted_at IS NOT NULL", (user_id, set_id))
                 attempt_row = c.fetchone()
+                
                 if attempt_row:
                     attempted = True
-                    score = attempt_row[0]
+                    attempt_id = attempt_row[0] # Grab the attempt_id
+                    score = attempt_row[1]      # Grab the score
             
             if current_ist < drop_time: status = "locked"
             elif current_ist > close_time: status = "closed"
@@ -2990,7 +2995,8 @@ def get_todays_quizzes():
             quiz_data = {
                 "id": set_id, "topic": topic, "question_count": q_count,
                 "duration_seconds": duration, "drop_time": drop_time.isoformat(),
-                "status": status, "score": score
+                "status": status, "score": score,
+                "attempt_id": attempt_id  # Pass it to the frontend!
             }
             
             if q_day == current_ist.date():
