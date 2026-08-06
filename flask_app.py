@@ -351,52 +351,6 @@ def update_live_leaderboard():
         except requests.exceptions.RequestException as e:
             time.sleep(3 + attempt)
 
-    # --- ✨ BUILD ELO LEADERBOARD MESSAGE (MESSAGE 10948) ---
-    elo_msg_text = "🏆 **CLASS TOPPERS LEADERBOARD** 🏆\n"
-    elo_msg_text += "*(Based on Global Elo Rating)*\n"
-    elo_msg_text += "━━━━━━━━━━━━━━━━━━━━\n\n"
-
-    elo_medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
-
-    if not top_10_elo:
-        elo_msg_text += "No active students found this week.\n"
-    else:
-        for i, user in enumerate(top_10_elo):
-            u_id, name, elo = user
-            # ✨ Changed to round to the nearest whole number for display
-            clean_elo = int(round(elo))
-            elo_msg_text += f"{elo_medals[i]} [{name}](tg://user?id={u_id}) ➪ {clean_elo} Elo\n"
-
-    elo_msg_text += "\n━━━━━━━━━━━━━━━━━━━━"
-
-    elo_payload = {
-        "chat_id": CHAT_ID,
-        "message_id": 10948,
-        "text": elo_msg_text,
-        "parse_mode": "Markdown",
-        "reply_markup": {
-            "inline_keyboard": [[
-                {
-                    "text": "📊 View Full Elo Leaderboard",
-                    "url": "https://t.me/Ez_vocab_bot/leaderboard?startapp=elo"
-                }
-            ]]
-        }
-    }
-
-    for attempt in range(max_retries):
-        try:
-            res = http_session.post(url, json=elo_payload, timeout=10)
-            if res.status_code == 200 or (res.status_code == 400 and "message is not modified" in res.text.lower()):
-                break
-            elif res.status_code == 429:
-                sleep_time = res.json().get("parameters", {}).get("retry_after", 3)
-                time.sleep(sleep_time + 1)
-            else:
-                time.sleep(2)
-        except requests.exceptions.RequestException as e:
-            time.sleep(3 + attempt)
-
 def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, replied_text=None):
     text_lower = text.lower()
     ADMIN_IDS = [716496729, 5103843488, 6251430317]
@@ -897,10 +851,8 @@ def run_weekly_reset_background():
     # ✨ NEW: The Live Status Tracker
     reset_status = {
         "Database_Reset": "🔴 Failed",
-        "Top10_Announcement": "🔴 Failed",
         "Admin_Debrief": "🔴 Failed",
-        "Elo_Bleed_DM": "🔴 Failed",
-        "Public_WrapUp": "🔴 Failed"
+        "Elo_Bleed_DM": "🔴 Failed"
     }
     
     conn = None
@@ -993,43 +945,6 @@ def run_weekly_reset_background():
         c.execute("SELECT value FROM bot_settings WHERE key='current_week'")
         if week_row := c.fetchone():
             c.execute("UPDATE bot_settings SET value=%s WHERE key='current_week'", (str(int(week_row[0]) + 1),))
-
-        # --- 1. GROUP ANNOUNCEMENT (TOP 10) ---
-        top_10 = all_weekly_players[:10]
-        medals = ["🥇 Rank 1", "🥈 Rank 2", "🥉 Rank 3", "4th", "5th", "6th", "7th", "8th", "9th", "10th"]
-
-        current_ist_time = datetime.utcnow() + timedelta(hours=5, minutes=30)
-        end_date = current_ist_time - timedelta(days=1)
-        start_date = current_ist_time - timedelta(days=7)
-        date_range = f"{start_date.strftime('%d %B')} - {end_date.strftime('%d %B')}"
-
-        group_text = f"🌟 **WEEKLY EXAM RESULTS ARE IN!** 🌟\n📅 **{date_range}**\n\n"
-
-        for i, user in enumerate(top_10):
-            u_id, name, score, faction_val = user[0], user[1], user[2], str(user[4])
-            clean_score = int(score) if score % 1 == 0 else round(score, 2)
-            if "Gryffindor" in faction_val: faction_emoji = "🦁 "
-            elif "Slytherin" in faction_val: faction_emoji = "🐍 "
-            elif "Ravenclaw" in faction_val: faction_emoji = "🦅 "
-            elif "Hufflepuff" in faction_val: faction_emoji = "🦡 "
-            else: faction_emoji = ""
-            group_text += f"{medals[i]}: {faction_emoji}[{name}](tg://user?id={u_id}) ({clean_score} pts)\n"
-
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        for attempt in range(5):
-            try:
-                res = http_session.post(url, json={"chat_id": CHAT_ID, "text": group_text, "parse_mode": "Markdown", "message_thread_id": TELEGRAM_THREAD_ID}, timeout=10)
-                if res.json().get("ok"):
-                    reset_status["Top10_Announcement"] = "🟢 Success"
-                    for _ in range(3):
-                        try:
-                            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False}, timeout=5)
-                            break
-                        except: time.sleep(2)
-                    break
-                elif res.json().get("error_code") == 429: time.sleep(res.json().get("parameters", {}).get("retry_after", 3) + 1)
-                else: break
-            except: time.sleep(3 + attempt * 2)
 
         # --- THE ADMIN MASTERY FUNNEL DEBRIEF ---
         try:
@@ -1372,11 +1287,9 @@ def run_weekly_reset_background():
         report_msg = (
             "🏆 **WEEKLY RESET STATUS REPORT** 🏆\n\n"
             f"🗄️ **Database Integrity:** {reset_status['Database_Reset']}\n"
-            f"🥇 **Top 10 Blast:** {reset_status['Top10_Announcement']}\n"
             f"🔐 **Admin Debrief:** {reset_status['Admin_Debrief']}\n"
             f"🩸 **Elo Bleed DM:** {reset_status['Elo_Bleed_DM']}\n"
-            f"🏰 **Final Wrap-Up:** {reset_status['Public_WrapUp']}\n"
-        )
+        )    
         
         # ✨ Send explicitly ONLY to Prathu and EZ
         for admin_id in [716496729, 5103843488]:
@@ -1774,47 +1687,6 @@ def trigger_daily_vocab():
     threading.Thread(target=run_daily_vocab_and_quizzes).start()
     return "Daily Vocab triggered!", 200
 
-# ==========================================
-# BACKGROUND WORKER: SUNDAY REMINDERS RESTORED
-# ==========================================
-def run_sunday_reminder():
-    current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
-    date_str = f"[ {(current_ist - timedelta(days=6)).strftime('%d %B')} ➪ {(current_ist - timedelta(days=1)).strftime('%d %B')} ]"
-    
-    # Target threads and their specific drill names
-    targets = [
-        {"thread_id": 246, "drill": "Vocab Drill"},
-        {"thread_id": 10123, "drill": "Topic Drill"}
-    ]
-
-    for target in targets:
-        # ✨ REVAMPED TEXT: Clarifies that only Saturday's quizzes are left
-        text = (
-            f"⏳ ⟪ **THE HOUSE Cup COUNTDOWN** ⟫ ⏳\n"
-            f"📅 `{date_str}`\n"
-            f"🎯 **{target['drill']}**\n"
-            f"🚨 **Last Chance!** 🚨\n"
-            f"Today is the **absolute final day** to complete **Saturday's final quizzes**! *(All previous days are now strictly locked).* \n"
-            f"Every point shifts the balance of power. Finish your last magical trials before tonight's final tally! 🏆✨"
-        )
-        
-        for attempt in range(10):
-            try:
-                res = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": target["thread_id"], "text": text, "parse_mode": "Markdown"}, timeout=20)
-                if res.status_code == 200:
-                    http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False}, timeout=10)
-                    notify_prathu("⏳ **Sunday Warning Reminder** posted successfully!")
-                    break
-            except: 
-                time.sleep(3 + attempt * 2)
-        
-        time.sleep(2)
-
-@app.route('/sunday_reminder/0508', methods=['GET', 'POST'])
-def trigger_sunday_reminder():
-    threading.Thread(target=run_sunday_reminder).start()
-    return "Sunday reminder triggered!", 200
-
 def run_sunday_final_reminder():
     current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
     total_seconds = int((current_ist.replace(hour=23, minute=59, second=59) - current_ist).total_seconds())
@@ -1884,227 +1756,6 @@ def fetch_and_update_exams_db():
         c.close()
         release_db(conn)
     except Exception as e: print(f"⚠️ Failed to update exam dates from private repo: {e}")
-
-def update_exam_countdown():
-    current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
-    dynamic_exams = []
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        c.execute("SELECT name, exam_date, status, is_exact_date, display_date FROM upcoming_exams")
-        for row in c.fetchall():
-            try: dynamic_exams.append({"name": row[0], "date": datetime.strptime(row[1], "%Y-%m-%d"), "status": row[2], "is_exact_date": bool(row[3]), "display_date": row[4]})
-            except ValueError: continue
-        c.close()
-        release_db(conn)
-    except: pass
-
-    text = f"⏳ **UPCOMING EXAM COUNTDOWN** ⏳\n📅 **Today's Date:** {current_ist.strftime('%d %B %Y')}\n━━━━━━━━━━━━━━━━━━━━\n\n"
-    active_exams_found = False
-    for exam in sorted(dynamic_exams, key=lambda x: x['date']):
-        delta = (exam['date'].date() - current_ist.date()).days
-        if delta >= 0:
-            # 🛑 FILTER: Skip placeholder exams that have no official date announced yet
-            if exam.get('display_date', '').lower().strip() == 'to be announced':
-                continue
-                
-            active_exams_found = True
-            text += f"🎯 **{exam['name']}** `[{exam.get('status', 'Expected')}]`\n"
-            if delta == 0: text += f"└ 🚨 **TODAY IS THE EXAM! Best of luck!** 🚨\n\n"
-            elif exam.get('is_exact_date', True): text += f"└ 🗓 {exam.get('display_date', exam['date'].strftime('%d %b %Y'))} ➪ `{delta} Days Left`\n\n"
-            else: text += f"└ 🗓 {exam.get('display_date', exam['date'].strftime('%d %b %Y'))} ➪ `~{delta} Days Left`\n\n"
-
-    if not active_exams_found: text += "No upcoming exams currently scheduled. Keep practicing! 🪄\n\n"
-    text += "━━━━━━━━━━━━━━━━━━━━\n*Keep grinding, future officers!* ✨"
-
-    for attempt in range(10):
-        try:
-            res = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText", json={"chat_id": CHAT_ID, "message_id": COUNTDOWN_MESSAGE_ID, "text": text, "parse_mode": "Markdown"}, timeout=10)
-            if res.status_code == 200: break
-            elif res.status_code == 429: time.sleep(res.json().get("parameters", {}).get("retry_after", 3) + 1)
-            else: break
-        except: time.sleep(3 + attempt * 2)
-
-def generate_and_send_commentary():
-    current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
-    milestones_hit = []
-    
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        c.execute("SELECT name, exam_date, is_exact_date, display_date FROM upcoming_exams ORDER BY exam_date ASC")
-        rows = c.fetchall()
-
-        # STEP 1: Collect ALL exams that hit a milestone today (both exact and tentative)
-        for row in rows:
-            try:
-                exam_name = row[0]
-                exam_date = datetime.strptime(row[1], "%Y-%m-%d").date()
-                is_exact_date = bool(row[2])
-                display_date = row[3]
-                delta = (exam_date - current_ist.date()).days
-
-                if display_date.lower().strip() == "to be announced":
-                    continue
-
-                if delta == 0 and is_exact_date:
-                    milestones_hit.append({
-                        "name": exam_name, "days": 0, "is_today": True, 
-                        "is_exact": True, "display_date": display_date
-                    })
-                elif delta in [90, 60, 30, 15, 7, 1]:
-                    milestones_hit.append({
-                        "name": exam_name, "days": delta, "is_today": False, 
-                        "is_exact": is_exact_date, "display_date": display_date
-                    })
-            except ValueError:
-                continue
-    except Exception as e:
-        print(f"⚠️ Error fetching exam commentary target: {e}")
-        try: c.close(); release_db(conn)
-        except: pass
-        return
-
-    if not milestones_hit:
-        try: c.close(); release_db(conn)
-        except: pass
-        return
-
-    # STEP 2: Sort exams by urgency
-    milestones_hit.sort(key=lambda x: x["days"])
-    
-    primary_exam = milestones_hit[0]
-    secondary_exams = milestones_hit[1:]
-
-    # STEP 3: Formulate Contextual Prompt
-    if primary_exam["is_today"]:
-        prompt = (
-            f"Create a short Telegram exam-day wishing message following this EXACT 3-line structure:\n"
-            f"Line 1: 🚨 {primary_exam['name']} ➪ TODAY IS THE EXAM!\n"
-            f"Line 2: [1 short, encouraging sentence wishing candidates best of luck and advising them to stay calm and confident]\n"
-            f"Line 3: Best of luck to all candidates! 🚀🏆\n"
-            f"Rules: STRICTLY follow the 3-line format. No conversational filler. No hashtags. Keep it clean. ALWAYS use British English spelling."
-        )
-    elif not primary_exam["is_exact"]:
-        prompt = (
-            f"Create a short Telegram exam commentary message following this EXACT 3-line structure:\n"
-            f"Line 1: 🚨 {primary_exam['name']} ➪ Expected: {primary_exam['display_date']}!\n"
-            f"Line 2: [1 short, hype, action-oriented sentence reminding students that the exam timeframe is approaching fast]\n"
-            f"Line 3: [1 short motivational sign-off with emojis]\n"
-            f"Rules: STRICTLY follow the 3-line format. No conversational filler. No hashtags. Keep it clean. ALWAYS use British English spelling."
-        )
-    else:
-        prompt = (
-            f"Create a short Telegram exam commentary message following this EXACT 3-line structure:\n"
-            f"Line 1: 🚨 {primary_exam['name']} ➪ {primary_exam['days']} Days Left!\n"
-            f"Line 2: [1 short, hype, action-oriented sentence about studying/preparing]\n"
-            f"Line 3: [1 short motivational sign-off with emojis]\n"
-            f"Rules: STRICTLY follow the 3-line format. No conversational filler. No hashtags. Keep it clean. ALWAYS use British English spelling."
-        )
-
-    # STEP 4: Database-Backed Key Rotation
-    ai_text = None
-    try:
-        c.execute("SELECT value FROM bot_settings WHERE key='current_key_index'")
-        key_row = c.fetchone()
-        db_key_index = int(key_row[0]) if key_row else 0
-    except:
-        db_key_index = 0
-
-    for attempt in range(len(API_KEYS)):
-        try:
-            active_key = API_KEYS[db_key_index]
-            temp_client = genai.Client(api_key=active_key)
-            response = temp_client.models.generate_content(
-                model='gemini-3.6-flash',
-                contents=prompt
-            )
-            if response.text:
-                ai_text = response.text.strip()
-                break
-        except Exception:
-            db_key_index = (db_key_index + 1) % len(API_KEYS)
-            try:
-                c.execute("INSERT INTO bot_settings (key, value) VALUES ('current_key_index', %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (str(db_key_index),))
-                conn.commit()
-            except: pass
-            continue
-
-    if not ai_text:
-        try: c.close(); release_db(conn)
-        except: pass
-        return
-
-    # STEP 5: Delete YESTERDAY'S messages (Both AI Commentary and Quick Insights)
-    try:
-        c.execute("SELECT value FROM bot_settings WHERE key='last_commentary_msg_id'")
-        if last_msg := c.fetchone():
-            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage", json={"chat_id": CHAT_ID, "message_id": int(last_msg[0])}, timeout=5)
-            
-        c.execute("SELECT value FROM bot_settings WHERE key='last_quick_insights_msg_id'")
-        if last_insights_msg := c.fetchone():
-            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage", json={"chat_id": CHAT_ID, "message_id": int(last_insights_msg[0])}, timeout=5)
-    except: 
-        pass
-
-    # STEP 6: Send MESSAGE 1 (AI Commentary)
-    for attempt in range(3):
-        try:
-            res_main = http_session.post(
-                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
-                json={
-                    "chat_id": CHAT_ID, 
-                    "message_thread_id": COUNTDOWN_THREAD_ID, 
-                    "text": f"🤖 **Daily Exam Insights**\n\n{ai_text}", 
-                    "parse_mode": "Markdown"
-                }, 
-                timeout=10
-            )
-            if res_main.json().get("ok"):
-                new_msg_id = res_main.json()["result"]["message_id"]
-                c.execute("INSERT INTO bot_settings (key, value) VALUES ('last_commentary_msg_id', %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (str(new_msg_id),))
-                conn.commit()
-                break
-            else: 
-                time.sleep(2)
-        except: 
-            time.sleep(3)
-
-    # STEP 7: Send MESSAGE 2 (Quick Insights) - ONLY if there are secondary exams
-    if secondary_exams:
-        quick_insights_text = "📌 **Quick Insights:**\n\n"
-        for sec in secondary_exams:
-            if sec["is_today"]:
-                quick_insights_text += f"• 🚨 **{sec['name']}** ➪ TODAY IS THE EXAM!\n"
-            elif not sec["is_exact"]:
-                quick_insights_text += f"• **{sec['name']}** ➪ Expected: {sec['display_date']}\n"
-            else:
-                quick_insights_text += f"• **{sec['name']}** ➪ {sec['days']} Days Left\n"
-
-        for attempt in range(3):
-            try:
-                res_sec = http_session.post(
-                    f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
-                    json={
-                        "chat_id": CHAT_ID, 
-                        "message_thread_id": COUNTDOWN_THREAD_ID, 
-                        "text": quick_insights_text, 
-                        "parse_mode": "Markdown"
-                    }, 
-                    timeout=10
-                )
-                if res_sec.json().get("ok"):
-                    new_insights_id = res_sec.json()["result"]["message_id"]
-                    c.execute("INSERT INTO bot_settings (key, value) VALUES ('last_quick_insights_msg_id', %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (str(new_insights_id),))
-                    conn.commit()
-                    break
-                else: 
-                    time.sleep(2)
-            except: 
-                time.sleep(3)
-
-    try: c.close(); release_db(conn)
-    except: pass
 
 def relay_message(message_id, target_thread_id):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/copyMessage"
