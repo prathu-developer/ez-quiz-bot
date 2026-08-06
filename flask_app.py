@@ -3227,6 +3227,7 @@ def submit_quiz():
         
         total_score = 0.0
         responses_to_insert = []
+        current_day_str = current_ist.strftime('%a') # NEW: Needed for the Telegram tracking tables
         
         for r in user_responses:
             q_id = r.get('question_id')
@@ -3245,7 +3246,25 @@ def submit_quiz():
                     
             responses_to_insert.append((attempt_id, q_id, s_idx, is_correct))
             
-        # 4. Save Responses & Update Attempt Score
+            # 🟢 THE GHOST POLL BRIDGE: Inject into the Telegram tracking tables!
+            if s_idx is not None:
+                # Register the Mini App question as a "poll" so the math engine sees it
+                c.execute("""
+                    INSERT INTO polls (poll_id, correct_index, poll_day) 
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (poll_id) DO NOTHING
+                """, (str(q_id), correct_map[q_id], current_day_str))
+                
+                # Insert the student's Mini App answer as a "poll answer"
+                c.execute("""
+                    INSERT INTO user_answers (user_id, poll_id, is_correct, poll_day, chosen_option)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (user_id, poll_id) DO UPDATE SET 
+                        is_correct = EXCLUDED.is_correct, 
+                        chosen_option = EXCLUDED.chosen_option
+                """, (user_id, str(q_id), int(is_correct), current_day_str, s_idx))
+            
+        # 4. Save Responses & Update Attempt Score (Original Mini App Tracking)
         if responses_to_insert:
             c.executemany("""
                 INSERT INTO quiz_responses (attempt_id, question_id, selected_index, is_correct)
