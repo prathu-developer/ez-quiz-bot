@@ -2647,7 +2647,8 @@ def get_todays_quizzes():
                 "id": set_id, "topic": topic, "question_count": q_count,
                 "duration_seconds": duration, "drop_time": drop_time.isoformat(),
                 "status": status, "score": score,
-                "attempt_id": attempt_id  # Pass it to the frontend!
+                "attempt_id": attempt_id,
+                "day_num": q_day.weekday() + 1  # 🟢 FIX: Secure day matching for the timeline filter!
             }
             
             if q_day == current_ist.date():
