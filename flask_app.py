@@ -2765,6 +2765,7 @@ def start_quiz():
     data = request.get_json()
     user_id = data.get('user_id')
     quiz_set_id = data.get('quiz_set_id')
+    is_practice = data.get('is_practice', False) # 🟢 NEW: Check for Practice Mode
     
     if not user_id or not quiz_set_id:
         return jsonify({"error": "Missing user_id or quiz_set_id"}), 400
@@ -2776,7 +2777,6 @@ def start_quiz():
         conn = get_db()
         c = conn.cursor()
         
-        # FIX BUG #2: Fetch duration_seconds from the database
         c.execute("SELECT drop_time, close_time, duration_seconds FROM quiz_sets WHERE id = %s", (quiz_set_id,))
         quiz_meta = c.fetchone()
         if not quiz_meta:
@@ -2788,6 +2788,17 @@ def start_quiz():
         
         if current_ist < drop_time or current_ist > close_time:
             return jsonify({"error": "Quiz is currently locked or closed"}), 403
+
+        # 🟢 NEW: If Practice Mode, skip the DB check and instantly return the questions with correct answers!
+        if is_practice:
+            c.execute("SELECT id, question_text, options, correct_index, explanation FROM quiz_questions WHERE quiz_set_id = %s ORDER BY id ASC", (quiz_set_id,))
+            questions = [{"question_id": q[0], "text": q[1], "options": q[2], "correct_index": q[3], "explanation": q[4]} for q in c.fetchall()]
+            return jsonify({
+                "attempt_id": "practice_mode",
+                "duration_seconds": duration_seconds,
+                "started_at": current_ist.isoformat(),
+                "questions": questions
+            }), 200
             
         # FIX BUG #1: Safely handle abandoned/unsubmitted attempts
         c.execute("SELECT id, submitted_at, started_at FROM quiz_attempts WHERE user_id = %s AND quiz_set_id = %s", (user_id, quiz_set_id))
@@ -3004,11 +3015,12 @@ def get_quiz_result(attempt_id):
                 "is_correct": is_corr
             })
         
-        # Calculate Accuracy %
+       # Calculate Accuracy %
         total_attempted = correct_count + wrong_count
         accuracy = (correct_count / total_attempted * 100) if total_attempted > 0 else 0
         
         return jsonify({
+            "quiz_set_id": quiz_set_id,  # 🟢 ADD THIS EXACT LINE HERE
             "summary": {
                 "score": score,
                 "rank": rank_val,
