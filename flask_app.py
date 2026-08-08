@@ -295,7 +295,7 @@ def update_live_leaderboard():
     release_db(conn)
 
     # --- BUILD HOUSE CUP MESSAGE (MESSAGE 7628) ---
-    msg_text = "🏰 **THE BATTLE FOR THE HOUSE CUP** 🏰\n"
+    msg_text = "🏆 **THE ENGLISH SCHOLARS' BATTLE** 🏆\n"
     msg_text += f"📅 {date_range} | 👥 {total_active} Active Students\n"
     msg_text += f"⏳ {phase_text}\n"
     msg_text += "━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -308,7 +308,7 @@ def update_live_leaderboard():
     msg_text += f"➪ Global Accuracy: {global_accuracy_pct}%\n"
     msg_text += "━━━━━━━━━━━━━━━━━━━━\n\n"
 
-    msg_text += "🏆 **TOP 10 WIZARDS & WITCHES**\n\n"
+    msg_text += "🎓 **TOP 10 ENGLISH SCHOLARS**\n\n"
 
     medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
 
