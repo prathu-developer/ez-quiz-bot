@@ -324,13 +324,13 @@ def update_live_leaderboard():
 
     payload = {
         "chat_id": CHAT_ID,
-        "message_id": 7628,
+        "message_id": 12073,
         "text": msg_text,
         "parse_mode": "Markdown",
         "reply_markup": {
             "inline_keyboard": [[
                 {
-                    "text": "💡 See All Ranking",
+                    "text": "👤📊 My Dashboard",
                     "url": "https://t.me/Ez_vocab_bot/leaderboard"
                 }
             ]]
