@@ -2511,7 +2511,7 @@ def run_mini_app_ingestion():
 
         # 3. Define the 4 Quiz Sets
         quiz_configurations = [
-            {"topic": "Vocab Quiz", "data": vocab_data, "duration": 900},          # 15 mins
+            {"topic": "Vocab Quiz", "data": vocab_data, "duration": 600},          # 10 mins
             {"topic": "Error Detection", "data": set_a, "duration": 300},          # 5 mins
             {"topic": "Sentence Improvement", "data": set_b, "duration": 300},     # 5 mins
             {"topic": "Fill in the Blank", "data": set_c, "duration": 240}         # 4 mins
