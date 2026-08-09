@@ -577,6 +577,26 @@ def process_read_receipt(cb_id, user_id, first_name, message_id):
             except: pass
             release_db(conn)
 
+def acknowledge_bug_report(chat_id, user_id, first_name, message_id, thread_id):
+    text = f"Hi [{first_name}](tg://user?id={user_id}), thank you for reporting! 🛠️\n\nOur developer will look into it."
+    
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "Markdown",
+        "reply_to_message_id": message_id,
+        "message_thread_id": thread_id
+    }
+    
+    try:
+        http_session.post(url, json=payload, timeout=10)
+    except Exception as e:
+        pass
+
+@app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
+def webhook():
+
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
 def webhook():
     update = request.get_json()
@@ -697,6 +717,19 @@ def webhook():
         if str(chat_id) == SOURCE_CHAT_ID and thread_id in THREAD_MAPPING:
             target_thread_id = THREAD_MAPPING[thread_id]
             relay_message(message_id=msg['message_id'], target_thread_id=target_thread_id)
+            return 'OK', 200
+
+        # 🟢 NEW: Bug Report Acknowledgment Intercept
+        if str(chat_id) == CHAT_ID and thread_id == 12082:
+            # Prevent the bot from replying to itself to avoid infinite loops
+            if not msg.get('from', {}).get('is_bot', False):
+                threading.Thread(target=acknowledge_bug_report, args=(
+                    chat_id, 
+                    msg['from']['id'], 
+                    msg['from'].get('first_name', 'Student'), 
+                    msg['message_id'], 
+                    thread_id
+                )).start()
             return 'OK', 200
 
         if 'text' in msg:
