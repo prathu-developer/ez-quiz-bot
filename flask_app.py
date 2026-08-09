@@ -2580,8 +2580,9 @@ def run_mini_app_ingestion():
         random.shuffle(set_a)
         random.shuffle(set_b)
         random.shuffle(set_c)
-        random.shuffle(set_rc)
-        random.shuffle(set_cloze)
+        
+        # 🟢 REMOVED: set_rc and set_cloze so their questions stay in chronological order!
+        
         random.shuffle(set_pj)
         random.shuffle(set_wu)
 
