@@ -1,7 +1,7 @@
 import threading
 import os
-from flask import Flask, request, render_template, jsonify
-from flask_compress import Compress  # ✨ 1. Import Compress
+from flask import Flask, request, render_template, jsonify # type: ignore
+from flask_compress import Compress  # type: ignore # ✨ 1. Import Compress
 import requests
 import time
 import json
@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 import psycopg2
 from psycopg2 import pool
 from google import genai
-from google.genai import types
+from google.genai import types # type: ignore
 
 # --- DATABASE CONFIGURATION ---
 # We use environment variables so your password isn't exposed on GitHub
@@ -2120,7 +2120,7 @@ def bake_miniapp_cache():
             except: pass
             release_db(conn)
 
-from flask import Response
+from flask import Response # type: ignore
 
 @app.route('/api/leaderboard', methods=['GET'])
 def get_mini_app_leaderboard():
@@ -2476,7 +2476,7 @@ def run_mini_app_ingestion():
     
     conn = None
     try:
-        # 2. Fetch both JSONs from GitHub
+        # 2. Fetch all JSONs from GitHub
         cache_buster = int(time.time())
         headers = {
             "Authorization": f"token {GITHUB_PAT}",
@@ -2485,8 +2485,9 @@ def run_mini_app_ingestion():
         
         vocab_url = f"https://api.github.com/repos/prathu-developer/exam-scraper-api/contents/questions.json?ref=main&t={cache_buster}"
         grammar_url = f"https://api.github.com/repos/prathu-developer/exam-scraper-api/contents/grammar.json?ref=main&t={cache_buster}"
+        advanced_url = f"https://api.github.com/repos/prathu-developer/exam-scraper-api/contents/comprehension_tests.json?ref=main&t={cache_buster}"
         
-        # Raise an error if GitHub denies the request
+        # Raise an error if GitHub denies the core requests
         vocab_resp = http_session.get(vocab_url, headers=headers, timeout=15)
         vocab_resp.raise_for_status()
         vocab_data = vocab_resp.json()
@@ -2494,6 +2495,14 @@ def run_mini_app_ingestion():
         grammar_resp = http_session.get(grammar_url, headers=headers, timeout=15)
         grammar_resp.raise_for_status()
         grammar_data = grammar_resp.json()
+
+        # Fetch the advanced JSON (with a failsafe in case the file isn't uploaded yet)
+        try:
+            advanced_resp = http_session.get(advanced_url, headers=headers, timeout=15)
+            advanced_resp.raise_for_status()
+            advanced_data = advanced_resp.json()
+        except:
+            advanced_data = {}
         
         # Failsafe: Ensure data structures match expectations
         if not isinstance(vocab_data, list):
@@ -2503,18 +2512,89 @@ def run_mini_app_ingestion():
         set_b = grammar_data.get("set_b", []) if isinstance(grammar_data, dict) else []
         set_c = grammar_data.get("set_c", []) if isinstance(grammar_data, dict) else []
 
+        # --- ADVANCED JSON ADAPTER (Normalizes complex JSON for the App) ---
+        # --- ADVANCED JSON ADAPTER (Normalizes complex JSON for the App) ---
+        set_rc = []
+        if "set_d" in advanced_data:
+            passage = advanced_data["set_d"].get("passage", "")
+            for q in advanced_data["set_d"].get("questions", []):
+                set_rc.append({
+                    "instruction": "Read the following passage and answer the given questions.",
+                    "passage": passage,
+                    "question": q.get('question', ''),
+                    "options": q.get("options", []),
+                    "correct_answer": q.get("answer", ""),
+                    "explanation": q.get("explanation", "")
+                })
+
+        set_cloze = []
+        if "set_e" in advanced_data:
+            passage = advanced_data["set_e"].get("passage", "")
+            for q in advanced_data["set_e"].get("questions", []):
+                set_cloze.append({
+                    "instruction": "In the following passage there are blanks. Find out the appropriate word that fits the blank.",
+                    "passage": passage,
+                    "question": q.get('question', f"Which word fits in blank [{q.get('number', '')}]?"),
+                    "options": q.get("options", []),
+                    "correct_answer": q.get("answer", ""),
+                    "explanation": q.get("explanation", "")
+                })
+
+        set_pj = []
+        if "set_f" in advanced_data:
+            for q in advanced_data["set_f"].get("questions", []):
+                sents = q.get("sentences", {})
+                sent_text = "\n".join([f"{k}) {v}" for k, v in sents.items()])
+                opts_dict = q.get("options", {})
+                opts_list = list(opts_dict.values())
+                ans_key = q.get("correct_answer", "")
+                corr_ans = opts_dict.get(ans_key, "")
+                set_pj.append({
+                    "instruction": "Rearrange the following sentences to form a coherent paragraph.",
+                    "passage": sent_text,
+                    "question": "Which of the following is the correct logical sequence?",
+                    "options": opts_list,
+                    "correct_answer": corr_ans,
+                    "explanation": q.get("explanation", "")
+                })
+
+        set_wu = []
+        if "set_g" in advanced_data:
+            for q in advanced_data["set_g"].get("questions", []):
+                opts_dict = q.get("options", {})
+                opts_list = list(opts_dict.values())
+                ans_key = q.get("answer", "")
+                corr_ans = opts_dict.get(ans_key, "")
+                set_wu.append({
+                    "instruction": f"Word Usage: {q.get('word', '')}",
+                    "passage": "", # No passage needed here
+                    "question": q.get('question', ''),
+                    "options": opts_list,
+                    "correct_answer": corr_ans,
+                    "explanation": q.get("explanation", "")
+                })
+
         # Shuffle the questions for the Mini App just like we do for Telegram
+        import random
         random.shuffle(vocab_data)
         random.shuffle(set_a)
         random.shuffle(set_b)
         random.shuffle(set_c)
+        random.shuffle(set_rc)
+        random.shuffle(set_cloze)
+        random.shuffle(set_pj)
+        random.shuffle(set_wu)
 
-        # 3. Define the 4 Quiz Sets
+        # 3. Define the 8 Quiz Sets
         quiz_configurations = [
             {"topic": "Vocab Quiz", "data": vocab_data, "duration": 600},          # 10 mins
             {"topic": "Error Detection", "data": set_a, "duration": 300},          # 5 mins
             {"topic": "Sentence Improvement", "data": set_b, "duration": 300},     # 5 mins
-            {"topic": "Fill in the Blank", "data": set_c, "duration": 300}         # 5 mins
+            {"topic": "Fill in the Blank", "data": set_c, "duration": 240},        # 4 mins
+            {"topic": "Reading Comprehension", "data": set_rc, "duration": 600},   # 10 mins
+            {"topic": "Cloze Test", "data": set_cloze, "duration": 600},           # 10 mins
+            {"topic": "Para Jumbles", "data": set_pj, "duration": 600},            # 10 mins
+            {"topic": "Word Usage", "data": set_wu, "duration": 600}               # 10 mins
         ]
 
         conn = get_db()
@@ -2559,10 +2639,17 @@ def run_mini_app_ingestion():
                 q_text = mcq.get('custom_ui', f'Choose the best replacement for the words "{mcq.get("target_phrase", "")}".' if 'target_phrase' in mcq else mcq.get('question', ''))
                 full_question = f"{q_text}\n\n{mcq.get('sentence', '')}".strip()
 
+                # Pack the extra fields into the options JSON temporarily so we don't have to alter the DB schema
+                meta_payload = {
+                    "options": options,
+                    "passage": mcq.get('passage', ''),
+                    "instruction": mcq.get('instruction', '')
+                }
+
                 c.execute("""
                     INSERT INTO quiz_questions (quiz_set_id, question_text, options, correct_index, explanation)
                     VALUES (%s, %s, %s, %s, %s)
-                """, (quiz_set_id, full_question, json.dumps(options), correct_index, mcq.get('explanation', '')))
+                """, (quiz_set_id, full_question, json.dumps(meta_payload), correct_index, mcq.get('explanation', '')))
                 
                 inserted_count += 1
                 
@@ -2596,7 +2683,7 @@ def trigger_miniapp_ingestion():
 # ==========================================
 # PHASE 3: MINI APP API ENDPOINTS (Part 1)
 # ==========================================
-from flask import jsonify
+from flask import jsonify # type: ignore
 
 # --- MASTER SPEC: UPDATED /api/quiz/today ---
 @app.route('/api/quiz/today', methods=['GET'])
