@@ -596,9 +596,6 @@ def acknowledge_bug_report(chat_id, user_id, first_name, message_id, thread_id):
 
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
 def webhook():
-
-@app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
-def webhook():
     update = request.get_json()
     if not update:
         return 'OK', 200
