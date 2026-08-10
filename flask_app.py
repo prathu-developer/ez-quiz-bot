@@ -2683,18 +2683,21 @@ def run_mini_app_ingestion():
         set_b = grammar_data.get("set_b", []) if isinstance(grammar_data, dict) else []
         set_c = grammar_data.get("set_c", []) if isinstance(grammar_data, dict) else []
 
-        # --- ADVANCED JSON ADAPTER (Normalizes complex JSON for the App) ---
-        # --- ADVANCED JSON ADAPTER (Normalizes complex JSON for the App) ---
+        # --- ADVANCED JSON ADAPTER (Hyper-Resilient) ---
         set_rc = []
         if "set_d" in advanced_data:
             passage = advanced_data["set_d"].get("passage", "")
             for q in advanced_data["set_d"].get("questions", []):
+                # Safely catch both "answer" and "correct_answer" variations
+                ans = q.get("answer") or q.get("correct_answer") or ""
+                opts = q.get("options") or []
+                if isinstance(opts, dict): opts = list(opts.values())
                 set_rc.append({
                     "instruction": "Read the following passage and answer the given questions.",
                     "passage": passage,
                     "question": q.get('question', ''),
-                    "options": q.get("options", []),
-                    "correct_answer": q.get("answer", ""),
+                    "options": opts,
+                    "correct_answer": ans,
                     "explanation": q.get("explanation", "")
                 })
 
@@ -2702,12 +2705,15 @@ def run_mini_app_ingestion():
         if "set_e" in advanced_data:
             passage = advanced_data["set_e"].get("passage", "")
             for q in advanced_data["set_e"].get("questions", []):
+                ans = q.get("answer") or q.get("correct_answer") or ""
+                opts = q.get("options") or []
+                if isinstance(opts, dict): opts = list(opts.values())
                 set_cloze.append({
                     "instruction": "In the following passage there are blanks. Find out the appropriate word that fits the blank.",
                     "passage": passage,
                     "question": q.get('question', f"Which word fits in blank [{q.get('number', '')}]?"),
-                    "options": q.get("options", []),
-                    "correct_answer": q.get("answer", ""),
+                    "options": opts,
+                    "correct_answer": ans,
                     "explanation": q.get("explanation", "")
                 })
 
@@ -2717,9 +2723,10 @@ def run_mini_app_ingestion():
                 sents = q.get("sentences", {})
                 sent_text = "\n".join([f"{k}) {v}" for k, v in sents.items()])
                 opts_dict = q.get("options", {})
-                opts_list = list(opts_dict.values())
-                ans_key = q.get("correct_answer", "")
-                corr_ans = opts_dict.get(ans_key, "")
+                opts_list = list(opts_dict.values()) if isinstance(opts_dict, dict) else opts_dict
+                ans_key = q.get("correct_answer") or q.get("answer") or ""
+                corr_ans = opts_dict.get(ans_key) if isinstance(opts_dict, dict) else ans_key
+                if not corr_ans and opts_list: corr_ans = opts_list[0] # Ultimate fallback
                 set_pj.append({
                     "instruction": "Rearrange the following sentences to form a coherent paragraph.",
                     "passage": sent_text,
@@ -2733,12 +2740,13 @@ def run_mini_app_ingestion():
         if "set_g" in advanced_data:
             for q in advanced_data["set_g"].get("questions", []):
                 opts_dict = q.get("options", {})
-                opts_list = list(opts_dict.values())
-                ans_key = q.get("answer", "")
-                corr_ans = opts_dict.get(ans_key, "")
+                opts_list = list(opts_dict.values()) if isinstance(opts_dict, dict) else opts_dict
+                ans_key = q.get("answer") or q.get("correct_answer") or ""
+                corr_ans = opts_dict.get(ans_key) if isinstance(opts_dict, dict) else ans_key
+                if not corr_ans and opts_list: corr_ans = opts_list[0] # Ultimate fallback
                 set_wu.append({
                     "instruction": f"Word Usage: {q.get('word', '')}",
-                    "passage": "", # No passage needed here
+                    "passage": "", 
                     "question": q.get('question', ''),
                     "options": opts_list,
                     "correct_answer": corr_ans,
@@ -2798,10 +2806,12 @@ def run_mini_app_ingestion():
                 options = mcq.get('options', [])
                 correct_ans = mcq.get('correct_answer', '')
                 
-                # Failsafe: Skip broken question formats
-                if not options or not correct_ans:
-                    continue 
-
+                # 🟢 NEW: Inject dummy data instead of silently skipping, so you can catch JSON typos visually!
+                if not options or len(options) == 0:
+                    options = ["JSON Data Error A", "JSON Data Error B"]
+                if not correct_ans:
+                    correct_ans = options[0]
+                
                 if correct_ans not in options: 
                     options.append(correct_ans)
                 
