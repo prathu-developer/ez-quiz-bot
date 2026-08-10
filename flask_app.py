@@ -577,8 +577,16 @@ def process_read_receipt(cb_id, user_id, first_name, message_id):
             except: pass
             release_db(conn)
 
-def acknowledge_bug_report(chat_id, user_id, first_name, message_id, thread_id):
-    text = f"Hi [{first_name}](tg://user?id={user_id}), thank you for reporting! 🛠️\n\nOur developer will look into it."
+def send_thread_auto_reply(chat_id, user_id, first_name, message_id, thread_id):
+    # 🟢 Determine the message based on the Thread ID
+    if thread_id == 12082:
+        text = f"Hi [{first_name}](tg://user?id={user_id}), thank you for reporting! 🛠️\n\nOur developer will look into it."
+    elif thread_id == 12103:
+        text = f"Hi [{first_name}](tg://user?id={user_id}), we've received your support request! 🛟\n\nAn admin will assist you shortly."
+    elif thread_id == 12105:
+        text = f"Hi [{first_name}](tg://user?id={user_id}), thanks for the brilliant idea! 💡\n\nWe've noted your feature request for future updates."
+    else:
+        return
     
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
@@ -723,11 +731,11 @@ def webhook():
             relay_message(message_id=msg['message_id'], target_thread_id=target_thread_id)
             return 'OK', 200
 
-        # 🟢 NEW: Bug Report Acknowledgment Intercept
-        if str(chat_id) == CHAT_ID and thread_id == 12082:
+        # 🟢 NEW: Multi-Thread Auto-Reply Intercept
+        if str(chat_id) == CHAT_ID and thread_id in [12082, 12103, 12105]:
             # Prevent the bot from replying to itself to avoid infinite loops
             if not msg.get('from', {}).get('is_bot', False):
-                threading.Thread(target=acknowledge_bug_report, args=(
+                threading.Thread(target=send_thread_auto_reply, args=(
                     chat_id, 
                     msg['from']['id'], 
                     msg['from'].get('first_name', 'Student'), 
@@ -1298,7 +1306,7 @@ def run_weekly_reset_background():
 
         for attempt in range(5):
             try:
-                res = http_session.post(url, json={"chat_id": CHAT_ID, "message_thread_id": ANNOUNCEMENT_THREAD_ID, "text": announcement_text, "parse_mode": "Markdown"}, timeout=10)
+                res = http_session.post(url, json={"chat_id": CHAT_ID, "message_thread_id": ANNOUNCEMENT_THREAD_ID, "text": announcement_text, "parse_mode": "Markdown"}, timeout=10) # type: ignore
                 if res.json().get("ok"):
                     reset_status["Public_WrapUp"] = "🟢 Success"
                     for _ in range(3):
@@ -2590,10 +2598,20 @@ def background_approve_user(user_id):
             time.sleep(2)
             
     # 2. Send the Welcome DM
+    welcome_text = (
+        "🎉 **Entrance Trial Complete!**\n\n"
+        "Congratulations, and welcome to the **Great Hall of Ez Editorials!** 🪄\n\n"
+        "You have successfully proved your dedication. To survive the weekly purges and climb the ranks to Champion, here is your daily schedule:\n\n"
+        "📰 **Morning:** Read the Daily Editorial PDFs dropped in the group.\n"
+        "⚡ **4:30 PM:** Attempt the Daily Vocab & Topic Trials.\n"
+        "🏆 **Sunday:** The Weekly Cup Leaderboard locks at midnight!\n\n"
+        "Head over to the main group, say hello, and get ready for your first trial. Good luck, Scholar! 🏛️"
+    )
+    
     try:
         http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
             "chat_id": user_id,
-            "text": "🎉 **Trial Complete!**\n\nYou have been approved. Welcome to the Great Hall of Ez Editorials! 🪄",
+            "text": welcome_text,
             "parse_mode": "Markdown"
         }, timeout=5)
     except:
