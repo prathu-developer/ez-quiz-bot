@@ -381,8 +381,8 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
     current_ist_time = datetime.utcnow() + timedelta(hours=5, minutes=30)
     current_day = current_ist_time.strftime('%A')
     phase_of_week = "Active Competition"
-    if current_day == "Monday" and current_ist_time.hour < 19:
-        phase_of_week = "Monday Pre-Game (Scores are reset to 0. The first quiz drops at 7:00 PM tonight.)"
+    if current_day == "Monday" and (current_ist_time.hour < 16 or (current_ist_time.hour == 16 and current_ist_time.minute < 30)):
+        phase_of_week = "Monday Pre-Game (Scores are reset to 0. The first quiz drops at 4:30 PM today.)"
     elif current_day == "Sunday" and current_ist_time.hour >= 13:
         phase_of_week = "Sunday Post-Deadline (Quizzes are over, waiting for the official Monday morning reset.)"
 
@@ -439,8 +439,8 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
     =========================================
     Direct members to these specific topics based on their needs:
     1. ‼️ Admin Notice / Info: Official announcements and updates from the admins.
-    2. 🔥 Vocab Drill (25Q): Drops daily at 7:00 PM. Tests vocabulary derived from editorials.
-    3. 🎃 Topic Drill (15Q): Focused practice sets (e.g., Grammar, Fillers, Error Detection).
+    2. 🔥 Vocab Drill: Drops daily at 4:30 PM. Tests vocabulary derived from editorials.
+    3. 🎃 Topic Drill: Drops daily at 4:30 PM. Focused practice sets (e.g., Grammar, RCs, Cloze).
     4. 🎭 Live Weekly-Cup Leaderboard: Real-time standings, cut-off points, and Mini App access.
     5. 📝 Today's Editorials Magazine: Daily PDFs dropped (Mon-Sat) between 10:00 AM - 11:59 AM.
     6. 💬 Members Discussion/Feedback: The chat thread you are currently monitoring.
@@ -653,13 +653,20 @@ def webhook():
                 "parse_mode": "Markdown"
             })
             
-        # ✨ THE TIME BOMB: Starts a 1-hour countdown to auto-decline lazy users
-        def ignite_time_bomb():
-            try:
-                http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/declineChatJoinRequest", json={"chat_id": CHAT_ID, "user_id": user_id}, timeout=5)
-            except: pass
-            
-        threading.Timer(300.0, ignite_time_bomb).start()
+        # ✨ THE TIME BOMB: Store in DB for the 1-minute cron job to sweep!
+        expire_time = int(time.time()) + 300
+        try:
+            conn = get_db()
+            c = conn.cursor()
+            c.execute("""
+                INSERT INTO bot_settings (key, value) VALUES (%s, %s)
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+            """, (f"join_req_{user_id}", str(expire_time)))
+            conn.commit()
+            c.close()
+            release_db(conn)
+        except Exception as e:
+            print(f"Failed to set join timer: {e}")
             
         return 'OK', 200
 
@@ -802,6 +809,10 @@ def run_midnight_purge_background():
                 # ⚖️ THE EXECUTION CRITERIA: 
                 # If they failed to read 4 editorials AND failed to solve 50 quizzes
                 if total_reads < 4 and total_quizzes < 50:
+                    
+                    # 🟢 NEW: Hard cap the daily purge at 100 students
+                    if purged_count >= 100:
+                        break
                     
                     # 1. Soft-Ban to remove from group
                     res_ban = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/banChatMember", json={
@@ -1368,8 +1379,26 @@ def run_queue_processor_background():
                 # ✨ FIX: We now pass the unique queue ID (row[0]) to the processor
                 process_answer(c, queue_id=row[0], user_id=row[1], first_name=row[2], poll_id=row[3], chosen_option=row[4])
 
-            # ✨ FIX: Removed the batch DELETE command from here entirely.
-            # If an answer fails, it stays in the queue indefinitely until it succeeds!
+        # 2. ✨ NEW: Sweep pending join requests (The 5-Minute Time Bomb)
+        c.execute("SELECT key, value FROM bot_settings WHERE key LIKE 'join_req_%'")
+        pending_joins = c.fetchall()
+        current_time = int(time.time())
+        
+        for key, val in pending_joins:
+            try:
+                expire_time = int(val)
+                if current_time >= expire_time:
+                    u_id = key.replace("join_req_", "")
+                    
+                    # Execute the decline
+                    res = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/declineChatJoinRequest", json={"chat_id": CHAT_ID, "user_id": u_id}, timeout=5)
+                    
+                    # If it succeeds, or if the request is already resolved/manually approved (400 Bad Request), remove it from DB
+                    if res.status_code == 200 or res.status_code == 400:
+                        c.execute("DELETE FROM bot_settings WHERE key = %s", (key,))
+                        conn.commit()
+            except Exception as inner_e:
+                print(f"Error processing join req {key}: {inner_e}")
             
         c.close()
     except Exception as e:
@@ -2150,6 +2179,97 @@ def bake_miniapp_cache():
             except: pass
             release_db(conn)
 
+# ==========================================
+# BACKGROUND WORKER: QUIZ UNLOCK ANNOUNCEMENT (4:30 PM)
+# ==========================================
+def run_quiz_unlock_announcement():
+    current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    date_str = current_ist.strftime('%A, %d %b %Y')
+    
+    text = (
+        f"🚨 **TODAY's QUIZZES ARE LIVE!** 🚨\n\n"
+        f"📅 **{date_str}**\n\n"
+        f"Today's Topic Trials have been officially unlocked. "
+        f"Test your skills and secure your spot on the leaderboard before the weekly deadline!\n\n"
+        f"👇 Tap below to begin your trials."
+    )
+    
+    payload = {
+        "chat_id": CHAT_ID,
+        "message_thread_id": 2972,
+        "text": text,
+        "parse_mode": "Markdown",
+        "reply_markup": {
+            "inline_keyboard": [[
+                {
+                    "text": "⚡️ Access Quiz Here",
+                    "url": "https://t.me/Ez_vocab_bot/leaderboard"
+                }
+            ]]
+        }
+    }
+
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        
+        # 1. Automatically Delete Yesterday's Announcement
+        c.execute("SELECT value FROM bot_settings WHERE key='last_quiz_announcement_msg_id'")
+        row = c.fetchone()
+        if row and row[0]:
+            old_msg_id = row[0]
+            try:
+                http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage", json={
+                    "chat_id": CHAT_ID,
+                    "message_id": int(old_msg_id)
+                }, timeout=5)
+            except Exception as e:
+                pass # Message might already be deleted manually
+
+        # 2. Send the New Message
+        for attempt in range(5):
+            try:
+                res = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json=payload, timeout=10)
+                if res.status_code == 200:
+                    new_msg_id = res.json()["result"]["message_id"]
+                    
+                    # 3. Pin the New Message (With Notification to All Members)
+                    http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={
+                        "chat_id": CHAT_ID, 
+                        "message_id": new_msg_id, 
+                        "disable_notification": False
+                    }, timeout=10)
+                    
+                    # 4. Save the New Message ID to the Database for tomorrow
+                    c.execute("""
+                        INSERT INTO bot_settings (key, value) VALUES ('last_quiz_announcement_msg_id', %s)
+                        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                    """, (str(new_msg_id),))
+                    conn.commit()
+                    
+                    notify_prathu("📢 **4:30 PM Quiz Announcement** posted and pinned successfully!")
+                    break
+                elif res.status_code == 429:
+                    time.sleep(res.json().get("parameters", {}).get("retry_after", 3) + 1)
+                else:
+                    time.sleep(2)
+            except Exception as e:
+                time.sleep(3)
+                
+    except Exception as e:
+        notify_prathu(f"🚨 **ERROR (Quiz Announcement):** Failed to send 4:30 PM alert.\n`{e}`")
+    finally:
+        if conn:
+            try: c.close()
+            except: pass
+            release_db(conn)
+
+@app.route('/cron/quiz_announcement_0508', methods=['GET', 'POST'])
+def trigger_quiz_announcement():
+    threading.Thread(target=run_quiz_unlock_announcement).start()
+    return "Quiz announcement triggered! Check Telegram.", 200
+
 from flask import Response # type: ignore
 
 @app.route('/api/leaderboard', methods=['GET'])
@@ -2432,10 +2552,13 @@ def trigger_word_of_the_day():
     return "Word of the Day triggered!", 200
 
 def background_approve_user(user_id):
-    # ✨ NEW: Automatically store the approved user in Supabase with today's timestamp!
+    # ✨ NEW: Clean up the time bomb from the DB so they aren't declined!
     try:
         conn = get_db()
         c = conn.cursor()
+        c.execute("DELETE FROM bot_settings WHERE key = %s", (f"join_req_{user_id}",))
+        
+        # Automatically store the approved user in the database with today's timestamp!
         c.execute("""
             INSERT INTO users (user_id, first_name, joined_at)
             VALUES (%s, 'New Student', NOW())
@@ -2499,8 +2622,8 @@ def run_mini_app_ingestion():
     current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
     today_date = current_ist.date()
     
-    # 1. Set the exact Drop Time (Today 7:00 PM) and Close Time (Sunday 11:59 PM)
-    drop_time = current_ist.replace(hour=19, minute=0, second=0, microsecond=0)
+    # 1. Set the exact Drop Time (Today 4:30 PM) and Close Time (Sunday 11:59 PM)
+    drop_time = current_ist.replace(hour=16, minute=30, second=0, microsecond=0)
     days_until_sunday = 6 - current_ist.weekday()
     close_time = (current_ist + timedelta(days=days_until_sunday)).replace(hour=23, minute=59, second=59, microsecond=0)
     
@@ -2702,12 +2825,6 @@ def run_mini_app_ingestion():
 # Manual Trigger for Phase 2 Testing
 @app.route('/cron/ingest_miniapp_0508', methods=['GET', 'POST'])
 def trigger_miniapp_ingestion():
-    # ✨ FIX: Allow checking both the hidden header AND the URL parameters for easy browser testing
-    secret_provided = request.headers.get("X-Cron-Secret") or request.args.get("secret")
-    
-    if secret_provided != CRON_SECRET:
-        return "Unauthorized! Did you forget the secret?", 401
-    
     threading.Thread(target=run_mini_app_ingestion).start()
     return "Mini App Ingestion triggered! Check your Telegram DMs.", 200
 
@@ -2744,17 +2861,16 @@ def get_todays_quizzes():
             
             attempted = False
             score = None
-            attempt_id = None  # Add this variable
+            attempt_id = None  
             
             if user_id:
-                # Update the SQL to select both 'id' and 'score'
                 c.execute("SELECT id, score FROM quiz_attempts WHERE user_id = %s AND quiz_set_id = %s AND submitted_at IS NOT NULL", (user_id, set_id))
                 attempt_row = c.fetchone()
                 
                 if attempt_row:
                     attempted = True
-                    attempt_id = attempt_row[0] # Grab the attempt_id
-                    score = attempt_row[1]      # Grab the score
+                    attempt_id = attempt_row[0] 
+                    score = attempt_row[1]      
             
             if current_ist < drop_time: status = "locked"
             elif current_ist > close_time: status = "closed"
@@ -2766,15 +2882,32 @@ def get_todays_quizzes():
                 "duration_seconds": duration, "drop_time": drop_time.isoformat(),
                 "status": status, "score": score,
                 "attempt_id": attempt_id,
-                "day_num": q_day.weekday() + 1  # 🟢 FIX: Secure day matching for the timeline filter!
+                "day_num": q_day.weekday() + 1  
             }
             
             if q_day == current_ist.date():
                 grouped_quizzes["Today"].append(quiz_data)
             elif q_day < current_ist.date():
                 grouped_quizzes["Pending"].append(quiz_data)
+        
+        # 🟢 NEW: Check Editorial Read Status for Today
+        has_read_editorial = False
+        if user_id:
+            # Get the exact UTC timestamp for 12:00 AM IST today
+            midnight_epoch = (current_ist.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=5, minutes=30)).timestamp()
+            
+            # Check if there is a read receipt from this user since midnight
+            c.execute("SELECT 1 FROM read_receipts WHERE user_id = %s AND created_at >= to_timestamp(%s)", (user_id, midnight_epoch))
+            if c.fetchone():
+                has_read_editorial = True
                 
-        return jsonify({"quizzes": grouped_quizzes}), 200
+        return jsonify({
+            "quizzes": grouped_quizzes,
+            "has_read_editorial": has_read_editorial,
+            "server_hour": current_ist.hour,
+            "server_day": current_ist.weekday() # 0 = Monday, 6 = Sunday
+        }), 200
+        
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     finally:
