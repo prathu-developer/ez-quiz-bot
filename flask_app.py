@@ -532,6 +532,121 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
         except requests.exceptions.RequestException:
             time.sleep(3 + attempt)
 
+def process_support_threads(chat_id, user_id, first_name, text, message_id, thread_id):
+    # 1. Update Thread Memory (Bounded Context Window)
+    global THREAD_HISTORY
+    if thread_id not in THREAD_HISTORY:
+        THREAD_HISTORY[thread_id] = deque(maxlen=12)
+        
+    THREAD_HISTORY[thread_id].append(f"User ({first_name}): {text}")
+    recent_conversation = "\n".join(THREAD_HISTORY[thread_id])
+
+    # 2. Thread-Isolated Cooldown (Prevents spam)
+    global LAST_AI_REPLY_TIME
+    if thread_id not in LAST_AI_REPLY_TIME: LAST_AI_REPLY_TIME[thread_id] = 0
+    current_time = time.time()
+    if current_time - LAST_AI_REPLY_TIME[thread_id] < 10:
+        return
+    LAST_AI_REPLY_TIME[thread_id] = current_time
+
+    # 3. Define the Core Brain (Shared DNA)
+    LIXIE_CORE_BRAIN = """
+    You are Lixie, the official AI assistant of the Ez Editorials ecosystem.
+    - Platform: Indian government-job aspirants using a Telegram Mini App for English quizzes.
+    - Rule: Use British English.
+    - Anti-Hallucination: Never invent platform features, schedules, bug status, or developer actions.
+    """
+
+    # 4. Define the Thread-Specific Mode
+    if thread_id == 12082:
+        THREAD_MODE = """
+        [THREAD PURPOSE: 🐞 BUG REPORTS - "BUG TRIAGE LIXIE"]
+        Personality: Quiet, precise, diagnostic and restrained.
+        Goal: Understand technical problems, UI issues, or incorrect scores. Do not talk just to talk.
+        - Ask for missing info if genuinely necessary (e.g., "Which test and question?").
+        - If the user adds details to an existing clear report, IGNORE.
+        """
+    elif thread_id == 12103:
+        THREAD_MODE = """
+        [THREAD PURPOSE: 🛟 HELP & SUPPORT - "SUPPORT LIXIE"]
+        Personality: Patient, practical, and conversational.
+        Goal: Help users navigate the platform and Mini App.
+        - Answer directly if you know the answer.
+        - If a user solves the problem themselves (e.g., "Oh found it"), IGNORE.
+        """
+    elif thread_id == 12105:
+        THREAD_MODE = """
+        [THREAD PURPOSE: ⚡ FEATURE REQUESTS - "PRODUCT LIXIE"]
+        Personality: Thoughtful, receptive, product-aware and non-committal.
+        Goal: Understand what the user is proposing without making promises.
+        - Acknowledge NEW feature ideas (e.g., "Good suggestion. We'll keep the idea in mind.").
+        - Do NOT promise implementation or say "It's on the roadmap."
+        """
+
+    # 5. Define Conversational Awareness (The IGNORE Engine)
+    CONVERSATION_AWARENESS = f"""
+    [CONVERSATIONAL AWARENESS]
+    A thread is a CONVERSATION. You must NOT assume every new message requires a reply.
+    Determine if this is a NEW request, a follow-up, or just users chatting.
+    If your response does not add value, YOUR ONLY OUTPUT MUST BE THE EXACT WORD:
+    IGNORE
+
+    [RECENT CONVERSATION HISTORY]
+    {recent_conversation}
+    """
+
+    system_prompt = LIXIE_CORE_BRAIN + THREAD_MODE + CONVERSATION_AWARENESS
+
+    # 6. Execute Gemini Request (Using the same shared API key rotation)
+    global current_key_index
+    ai_reply = None
+    for attempt in range(len(API_KEYS)):
+        try:
+            active_key = API_KEYS[current_key_index]
+            temp_client = genai.Client(api_key=active_key)
+            response = temp_client.models.generate_content(
+                model='gemini-3.5-flash-lite',
+                contents=text,
+                config=types.GenerateContentConfig(system_instruction=system_prompt, temperature=0.3)
+            )
+            ai_reply = response.text.strip()
+            break
+        except Exception as e:
+            error_str = str(e).lower()
+            if "503" in error_str or "unavailable" in error_str or "timeout" in error_str: return
+            elif "429" in error_str or "quota" in error_str or "exhausted" in error_str:
+                current_key_index = (current_key_index + 1) % len(API_KEYS)
+                continue
+            else:
+                current_key_index = (current_key_index + 1) % len(API_KEYS)
+                continue
+
+    # 7. Execute the IGNORE directive
+    if not ai_reply or ai_reply == "IGNORE" or ai_reply == '"IGNORE"':
+        return
+
+    # 8. Save Lixie's reply to the memory buffer
+    THREAD_HISTORY[thread_id].append(f"Lixie: {ai_reply}")
+
+    # 9. Dispatch the response to Telegram
+    send_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": ai_reply,
+        "parse_mode": "Markdown",
+        "reply_to_message_id": message_id,
+        "message_thread_id": thread_id
+    }
+
+    for attempt in range(5):
+        try:
+            res = http_session.post(send_url, json=payload, timeout=10)
+            if res.status_code == 200: break
+            elif res.status_code == 429: time.sleep(res.json().get("parameters", {}).get("retry_after", 3) + 1)
+            else: time.sleep(2)
+        except requests.exceptions.RequestException:
+            time.sleep(3 + attempt)
+
 def process_read_receipt(cb_id, user_id, first_name, message_id):
     conn = None
     try:
@@ -578,31 +693,6 @@ def process_read_receipt(cb_id, user_id, first_name, message_id):
             try: c.close()
             except: pass
             release_db(conn)
-
-def send_thread_auto_reply(chat_id, user_id, first_name, message_id, thread_id):
-    # 🟢 Determine the message based on the Thread ID
-    if thread_id == 12082:
-        text = f"Hi [{first_name}](tg://user?id={user_id}), thank you for reporting! 🛠️\n\nOur developer will look into it."
-    elif thread_id == 12103:
-        text = f"Hi [{first_name}](tg://user?id={user_id}), we've received your support request! 🛟\n\nAn admin will assist you shortly."
-    elif thread_id == 12105:
-        text = f"Hi [{first_name}](tg://user?id={user_id}), thanks for the brilliant idea! 💡\n\nWe've noted your feature request for future updates."
-    else:
-        return
-    
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "Markdown",
-        "reply_to_message_id": message_id,
-        "message_thread_id": thread_id
-    }
-    
-    try:
-        http_session.post(url, json=payload, timeout=10)
-    except Exception as e:
-
 
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
 def webhook():
@@ -763,12 +853,22 @@ def webhook():
 
             # --- EXISTING LIXIE AI LOGIC ---
             if chat_type in ['group', 'supergroup'] and not text.startswith('/'):
-                if str(chat_id) == CHAT_ID and thread_id == 11:
-                    replied_text = msg['reply_to_message']['text'] if 'reply_to_message' in msg and 'text' in msg['reply_to_message'] else None
-                    threading.Thread(target=process_ai_query, kwargs={
-                        "chat_id": chat_id, "user_id": msg['from']['id'], "first_name": msg['from']['first_name'],
-                        "text": text, "message_id": msg['message_id'], "thread_id": thread_id, "replied_text": replied_text
-                    }).start()
+                if str(chat_id) == CHAT_ID:
+                    
+                    # 🟢 ROUTE 1: Main Community Chat (Thread 11)
+                    if thread_id == 11:
+                        replied_text = msg['reply_to_message']['text'] if 'reply_to_message' in msg and 'text' in msg['reply_to_message'] else None
+                        threading.Thread(target=process_ai_query, kwargs={
+                            "chat_id": chat_id, "user_id": msg['from']['id'], "first_name": msg['from']['first_name'],
+                            "text": text, "message_id": msg['message_id'], "thread_id": thread_id, "replied_text": replied_text
+                        }).start()
+                        
+                    # 🟢 ROUTE 2: The New Multi-Thread Support Engine
+                    elif thread_id in [12082, 12103, 12105]:
+                        threading.Thread(target=process_support_threads, kwargs={
+                            "chat_id": chat_id, "user_id": msg['from']['id'], "first_name": msg['from']['first_name'],
+                            "text": text, "message_id": msg['message_id'], "thread_id": thread_id
+                        }).start()
 
     return 'OK', 200
 
@@ -2474,7 +2574,8 @@ Connotation Guide:
     conn = get_db()
     c = conn.cursor()
     try:
-        c.execute("SELECT id, word FROM foreign_expressions WHERE is_used = FALSE ORDER BY id ASC LIMIT 3")
+        # 🟢 FIX: Use ORDER BY RANDOM() to grab 3 random unused expressions!
+        c.execute("SELECT id, word FROM foreign_expressions WHERE is_used = FALSE ORDER BY RANDOM() LIMIT 3")
         foreign_batch = c.fetchall()
     except Exception as e:
         foreign_batch = []
@@ -2688,16 +2789,26 @@ def run_mini_app_ingestion():
         if "set_d" in advanced_data:
             passage = advanced_data["set_d"].get("passage", "")
             for q in advanced_data["set_d"].get("questions", []):
-                opts_dict = q.get("options", {})
-                opts_list = list(opts_dict.values()) if isinstance(opts_dict, dict) else opts_dict
-                
-                # 🟢 FIX: Added "correct_option" to the list of keys to check!
-                ans_key = q.get("correct_option") or q.get("answer") or q.get("correct_answer") or ""
-                
-                # 🟢 FIX: If the options are a dict, use the letter (e.g., "B") to grab the actual text!
-                corr_ans = opts_dict.get(ans_key) if isinstance(opts_dict, dict) else ans_key
+                opts_list = []
+                corr_ans = ""
+                ans_key = q.get("correct_option_id") or q.get("correct_option") or q.get("answer") or q.get("correct_answer") or ""
+
+                # 🟢 NEW: Detect if the file uses the opt_1, opt_2 format
+                if "opt_1" in q:
+                    for i in range(1, 6):
+                        opt_val = q.get(f"opt_{i}")
+                        if opt_val:
+                            opts_list.append(opt_val)
+                            if ans_key == f"opt_{i}":
+                                corr_ans = opt_val
+                else:
+                    # 🟢 FALLBACK: Handles the old dictionary/list format flawlessly
+                    opts_dict = q.get("options", {})
+                    opts_list = list(opts_dict.values()) if isinstance(opts_dict, dict) else opts_dict
+                    corr_ans = opts_dict.get(ans_key) if isinstance(opts_dict, dict) else ans_key
+
                 if not corr_ans and opts_list: corr_ans = opts_list[0] # Ultimate fallback
-                
+
                 set_rc.append({
                     "instruction": "Read the following passage and answer the given questions.",
                     "passage": passage,
@@ -2711,11 +2822,24 @@ def run_mini_app_ingestion():
         if "set_e" in advanced_data:
             passage = advanced_data["set_e"].get("passage", "")
             for q in advanced_data["set_e"].get("questions", []):
-                opts_dict = q.get("options", {})
-                opts_list = list(opts_dict.values()) if isinstance(opts_dict, dict) else opts_dict
-                
-                ans_key = q.get("correct_option") or q.get("answer") or q.get("correct_answer") or ""
-                corr_ans = opts_dict.get(ans_key) if isinstance(opts_dict, dict) else ans_key
+                opts_list = []
+                corr_ans = ""
+                ans_key = q.get("correct_option_id") or q.get("correct_option") or q.get("answer") or q.get("correct_answer") or ""
+
+                # 🟢 NEW: Detect if the file uses the opt_1, opt_2 format
+                if "opt_1" in q:
+                    for i in range(1, 6):
+                        opt_val = q.get(f"opt_{i}")
+                        if opt_val:
+                            opts_list.append(opt_val)
+                            if ans_key == f"opt_{i}":
+                                corr_ans = opt_val
+                else:
+                    # 🟢 FALLBACK: Handles the old dictionary/list format flawlessly
+                    opts_dict = q.get("options", {})
+                    opts_list = list(opts_dict.values()) if isinstance(opts_dict, dict) else opts_dict
+                    corr_ans = opts_dict.get(ans_key) if isinstance(opts_dict, dict) else ans_key
+
                 if not corr_ans and opts_list: corr_ans = opts_list[0]
 
                 set_cloze.append({
@@ -2732,11 +2856,16 @@ def run_mini_app_ingestion():
             for q in advanced_data["set_f"].get("questions", []):
                 sents = q.get("sentences", {})
                 sent_text = "\n".join([f"{k}) {v}" for k, v in sents.items()])
-                opts_dict = q.get("options", {})
-                opts_list = list(opts_dict.values()) if isinstance(opts_dict, dict) else opts_dict
                 
-                ans_key = q.get("correct_option") or q.get("answer") or q.get("correct_answer") or ""
-                corr_ans = opts_dict.get(ans_key) if isinstance(opts_dict, dict) else ans_key
+                # 🟢 FIX: Directly grab the new list format for Para Jumbles
+                opts_list = q.get("options", [])
+                corr_ans = q.get("correct_answer") or q.get("correct_option") or ""
+                
+                # Fallback just in case it is ever formatted as a dictionary again
+                if isinstance(opts_list, dict):
+                    corr_ans = opts_list.get(corr_ans, corr_ans)
+                    opts_list = list(opts_list.values())
+                
                 if not corr_ans and opts_list: corr_ans = opts_list[0] 
                 
                 set_pj.append({
@@ -2751,15 +2880,25 @@ def run_mini_app_ingestion():
         set_wu = []
         if "set_g" in advanced_data:
             for q in advanced_data["set_g"].get("questions", []):
-                opts_dict = q.get("options", {})
-                opts_list = list(opts_dict.values()) if isinstance(opts_dict, dict) else opts_dict
+                opts_list = []
+                corr_ans = ""
                 
-                ans_key = q.get("correct_option") or q.get("answer") or q.get("correct_answer") or ""
-                corr_ans = opts_dict.get(ans_key) if isinstance(opts_dict, dict) else ans_key
+                # 🟢 FIX: Look for the new "correct_option_id" key
+                ans_key = q.get("correct_option_id") or q.get("correct_option") or q.get("answer") or ""
+                
+                # 🟢 FIX: Dynamically compile the options from opt_1, opt_2, opt_3, opt_4
+                for i in range(1, 6):
+                    opt_val = q.get(f"opt_{i}")
+                    if opt_val:
+                        opts_list.append(opt_val)
+                        if ans_key == f"opt_{i}":
+                            corr_ans = opt_val
+                
+                # Ultimate fallback
                 if not corr_ans and opts_list: corr_ans = opts_list[0] 
                 
                 set_wu.append({
-                    "instruction": f"Word Usage: {q.get('word', '')}",
+                    "instruction": "Identify the grammatically and contextually correct usage of the word.",
                     "passage": "", 
                     "question": q.get('question', ''),
                     "options": opts_list,
