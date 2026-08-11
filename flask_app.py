@@ -2688,16 +2688,22 @@ def run_mini_app_ingestion():
         if "set_d" in advanced_data:
             passage = advanced_data["set_d"].get("passage", "")
             for q in advanced_data["set_d"].get("questions", []):
-                # Safely catch both "answer" and "correct_answer" variations
-                ans = q.get("answer") or q.get("correct_answer") or ""
-                opts = q.get("options") or []
-                if isinstance(opts, dict): opts = list(opts.values())
+                opts_dict = q.get("options", {})
+                opts_list = list(opts_dict.values()) if isinstance(opts_dict, dict) else opts_dict
+                
+                # 🟢 FIX: Added "correct_option" to the list of keys to check!
+                ans_key = q.get("correct_option") or q.get("answer") or q.get("correct_answer") or ""
+                
+                # 🟢 FIX: If the options are a dict, use the letter (e.g., "B") to grab the actual text!
+                corr_ans = opts_dict.get(ans_key) if isinstance(opts_dict, dict) else ans_key
+                if not corr_ans and opts_list: corr_ans = opts_list[0] # Ultimate fallback
+                
                 set_rc.append({
                     "instruction": "Read the following passage and answer the given questions.",
                     "passage": passage,
                     "question": q.get('question', ''),
-                    "options": opts,
-                    "correct_answer": ans,
+                    "options": opts_list,
+                    "correct_answer": corr_ans,
                     "explanation": q.get("explanation", "")
                 })
 
@@ -2705,15 +2711,19 @@ def run_mini_app_ingestion():
         if "set_e" in advanced_data:
             passage = advanced_data["set_e"].get("passage", "")
             for q in advanced_data["set_e"].get("questions", []):
-                ans = q.get("answer") or q.get("correct_answer") or ""
-                opts = q.get("options") or []
-                if isinstance(opts, dict): opts = list(opts.values())
+                opts_dict = q.get("options", {})
+                opts_list = list(opts_dict.values()) if isinstance(opts_dict, dict) else opts_dict
+                
+                ans_key = q.get("correct_option") or q.get("answer") or q.get("correct_answer") or ""
+                corr_ans = opts_dict.get(ans_key) if isinstance(opts_dict, dict) else ans_key
+                if not corr_ans and opts_list: corr_ans = opts_list[0]
+
                 set_cloze.append({
                     "instruction": "In the following passage there are blanks. Find out the appropriate word that fits the blank.",
                     "passage": passage,
                     "question": q.get('question', f"Which word fits in blank [{q.get('number', '')}]?"),
-                    "options": opts,
-                    "correct_answer": ans,
+                    "options": opts_list,
+                    "correct_answer": corr_ans,
                     "explanation": q.get("explanation", "")
                 })
 
@@ -2724,9 +2734,11 @@ def run_mini_app_ingestion():
                 sent_text = "\n".join([f"{k}) {v}" for k, v in sents.items()])
                 opts_dict = q.get("options", {})
                 opts_list = list(opts_dict.values()) if isinstance(opts_dict, dict) else opts_dict
-                ans_key = q.get("correct_answer") or q.get("answer") or ""
+                
+                ans_key = q.get("correct_option") or q.get("answer") or q.get("correct_answer") or ""
                 corr_ans = opts_dict.get(ans_key) if isinstance(opts_dict, dict) else ans_key
-                if not corr_ans and opts_list: corr_ans = opts_list[0] # Ultimate fallback
+                if not corr_ans and opts_list: corr_ans = opts_list[0] 
+                
                 set_pj.append({
                     "instruction": "Rearrange the following sentences to form a coherent paragraph.",
                     "passage": sent_text,
@@ -2741,9 +2753,11 @@ def run_mini_app_ingestion():
             for q in advanced_data["set_g"].get("questions", []):
                 opts_dict = q.get("options", {})
                 opts_list = list(opts_dict.values()) if isinstance(opts_dict, dict) else opts_dict
-                ans_key = q.get("answer") or q.get("correct_answer") or ""
+                
+                ans_key = q.get("correct_option") or q.get("answer") or q.get("correct_answer") or ""
                 corr_ans = opts_dict.get(ans_key) if isinstance(opts_dict, dict) else ans_key
-                if not corr_ans and opts_list: corr_ans = opts_list[0] # Ultimate fallback
+                if not corr_ans and opts_list: corr_ans = opts_list[0] 
+                
                 set_wu.append({
                     "instruction": f"Word Usage: {q.get('word', '')}",
                     "passage": "", 
