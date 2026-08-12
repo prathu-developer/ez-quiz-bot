@@ -3451,6 +3451,25 @@ def get_quiz_result(attempt_id):
         total_attempted = correct_count + wrong_count
         accuracy = (correct_count / total_attempted * 100) if total_attempted > 0 else 0
         
+        # 3. Fetch Top 10 Leaderboard for this specific quiz
+        c.execute("""
+            SELECT u.first_name, a.score, EXTRACT(EPOCH FROM (a.submitted_at - a.started_at)) as time_taken, a.user_id
+            FROM quiz_attempts a
+            JOIN users u ON a.user_id = u.user_id
+            WHERE a.quiz_set_id = %s AND a.submitted_at IS NOT NULL
+            ORDER BY a.score DESC, (a.submitted_at - a.started_at) ASC
+            LIMIT 10
+        """, (quiz_set_id,))
+        
+        top_10_list = []
+        for r_row in c.fetchall():
+            top_10_list.append({
+                "name": r_row[0],
+                "score": float(r_row[1]),
+                "time_taken": int(r_row[2]),
+                "user_id": r_row[3]
+            })
+        
         return jsonify({
             "quiz_set_id": quiz_set_id,  # 🟢 ADD THIS EXACT LINE HERE
             "summary": {
@@ -3464,7 +3483,8 @@ def get_quiz_result(attempt_id):
                 "wrong": wrong_count,
                 "unattempted": unattempted_count
             },
-            "solutions": question_details
+            "solutions": question_details,
+            "top_10": top_10_list
         }), 200
         
     except Exception as e:
