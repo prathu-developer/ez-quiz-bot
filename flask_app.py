@@ -1756,12 +1756,19 @@ def recalculate_dynamic_scores():
 # BACKGROUND WORKER: SUNDAY ANNOUNCEMENT RESTORED
 # ==========================================
 def run_sunday_announcement():
-    text = "_There won't be any Today's Editorials today; Editorials will be available Monday through Saturday exclusively._"
+    text = (
+        "📢 **Activity Requirement**\n\n"
+        "📝 Attempt at least 50 Quizzes or\n"
+        "📖 Read 4 Magazines (using the new 'Mark as Read' button)\n\n"
+        "⏳ **Every 15 Days**\n\n"
+        "❗️ Members who remain inactive for 15 days will be removed to make room for new students and keep the community active."
+    )
     for attempt in range(10):
         try:
-            res = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": 3, "text": text, "parse_mode": "Markdown"}, timeout=20)
+            # 🟢 FIX: Changed message_thread_id to 5
+            res = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": 5, "text": text, "parse_mode": "Markdown"}, timeout=20)
             if res.status_code == 200: 
-                notify_prathu("📢 **Sunday Announcement** posted successfully!")
+                notify_prathu("📢 **Sunday Purge Announcement** posted successfully!")
                 break
             elif res.status_code == 429: time.sleep(res.json().get("parameters", {}).get("retry_after", 5) + 1)
             else: time.sleep(2)
@@ -1769,8 +1776,10 @@ def run_sunday_announcement():
 
 @app.route('/sunday_announcement/0508', methods=['GET', 'POST'])
 def trigger_sunday_announcement():
+    # 🟢 FIX: One single trigger now fires BOTH threads simultaneously!
     threading.Thread(target=run_sunday_announcement).start()
-    return "Sunday announcement triggered in background!", 200
+    threading.Thread(target=run_sunday_final_reminder).start()
+    return "Sunday Purge Announcement & Final Reminder triggered together!", 200
 
 # ==========================================
 # SECURED: DAILY VOCAB & QUIZZES
@@ -1870,11 +1879,6 @@ def run_sunday_final_reminder():
                 notify_prathu("⏱️ **Sunday Final Midnight Reminder** posted successfully!")
                 break
         except: time.sleep(3 + attempt * 2)
-            
-@app.route('/sunday_final_reminder/0508', methods=['GET', 'POST'])
-def trigger_sunday_final_reminder():
-    threading.Thread(target=run_sunday_final_reminder).start()
-    return "Sunday final reminder triggered!", 200
 
 # ==========================================
 # BACKGROUND WORKER: EXAM COUNTDOWN RESTORED
@@ -2342,21 +2346,16 @@ def run_quiz_unlock_announcement():
                 if res.status_code == 200:
                     new_msg_id = res.json()["result"]["message_id"]
                     
-                    # 3. Pin the New Message (With Notification to All Members)
-                    http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage", json={
-                        "chat_id": CHAT_ID, 
-                        "message_id": new_msg_id, 
-                        "disable_notification": False
-                    }, timeout=10)
+                    # (Pinning feature has been disabled)
                     
-                    # 4. Save the New Message ID to the Database for tomorrow
+                    # 3. Save the New Message ID to the Database for tomorrow (so it can still auto-delete it!)
                     c.execute("""
                         INSERT INTO bot_settings (key, value) VALUES ('last_quiz_announcement_msg_id', %s)
                         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
                     """, (str(new_msg_id),))
                     conn.commit()
                     
-                    notify_prathu("📢 **4:30 PM Quiz Announcement** posted and pinned successfully!")
+                    notify_prathu("📢 **4:30 PM Quiz Announcement** posted successfully!")
                     break
                 elif res.status_code == 429:
                     time.sleep(res.json().get("parameters", {}).get("retry_after", 3) + 1)
