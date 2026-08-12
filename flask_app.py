@@ -3166,6 +3166,33 @@ def get_upcoming_exams():
     finally:
         if conn: release_db(conn)
 
+@app.route('/api/profile/update-target', methods=['POST'])
+def update_target():
+    data = request.get_json()
+    user_id = data.get('user_id')
+    state = data.get('state')
+    exam = data.get('exam')
+    
+    if not user_id:
+        return jsonify({"error": "Missing user_id"}), 400
+        
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("""
+            UPDATE users 
+            SET target_state = %s, target_exam = %s 
+            WHERE user_id = %s
+        """, (state, exam, user_id))
+        conn.commit()
+        return jsonify({"success": True}), 200
+    except Exception as e:
+        if conn: conn.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn: release_db(conn)
+
 @app.route('/api/profile/me', methods=['GET'])
 def get_profile():
     user_id = request.args.get('user_id', type=int)
