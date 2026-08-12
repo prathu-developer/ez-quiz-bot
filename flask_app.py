@@ -464,11 +464,9 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
     1. ‼️ Admin Notice / Info: Official announcements.
     2. 📝 Today's Editorials Magazine: Daily PDFs dropped (Mon-Sat) between 10:00 AM - 11:59 AM.
     3. 💬 Members Discussion/Feedback: The chat thread you are currently monitoring.
-    4. 💎 Words 101: "THE DAILY DISPATCH" PDFs, Word of the Day (WOTD), and Foreign Expressions.
-    5. 🎭 Live Weekly-Cup Leaderboard: Real-time standings, cut-off points, and Mini App dashboard link.
-    6. 📰 Editor's Pick: Selected original-form articles for extended reading.
-    7. 🏅 Weekly-Cup Results: Final standings, winners, and Sunday wrap-ups.
-    8. 📅 Mission Exam 2026-27: Upcoming exam countdowns and reminders.
+    4. 🏆 Ranking & Quizzes: Real-time standings, cut-off points, and Mini App dashboard link.
+    5. 📰 Editor's Pick: Selected original-form articles for extended reading.
+    
 
     [Upcoming Exams]
     {exam_context}
