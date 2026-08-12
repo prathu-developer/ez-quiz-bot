@@ -53,8 +53,13 @@ API_KEYS = [
     os.environ.get("GEMINI_KEY_3")
 ]
 
+from collections import deque
+
 current_key_index = 0
-LAST_AI_REPLY_TIME = 0  # ✨ NEW: Tracks Lixie's cooldown directly in local RAM!
+LAST_AI_REPLY_TIME_MAIN = 0        # Tracks cooldown for the main group
+LAST_AI_REPLY_TIME_THREADS = {}    # Tracks cooldown for support threads
+THREAD_HISTORY = {}                # Tracks memory for support threads
+
 app = Flask(__name__)
 Compress(app)
 
@@ -372,11 +377,11 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
         process_ranking_command(chat_id, user_id, message_id, thread_id)
         return
 
-    global LAST_AI_REPLY_TIME
+    global LAST_AI_REPLY_TIME_MAIN
     current_time = time.time()
-    if current_time - LAST_AI_REPLY_TIME < 10:
+    if current_time - LAST_AI_REPLY_TIME_MAIN < 10:
         return
-    LAST_AI_REPLY_TIME = current_time
+    LAST_AI_REPLY_TIME_MAIN = current_time
 
     current_ist_time = datetime.utcnow() + timedelta(hours=5, minutes=30)
     current_day = current_ist_time.strftime('%A')
@@ -389,9 +394,12 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
     total_quizzes_available = 0
     total_active_participants = 0
     exam_context = ""
-    db_key_index = 0  # ✨ NEW: Prevents Lixie from crashing if the DB hiccups
+    db_key_index = 0
 
     try:
+        # 🟢 FIX: Define the database connection before executing!
+        conn = get_db()
+        c = conn.cursor()
         c.execute("SELECT COUNT(*) FROM polls")
         total_quizzes_available = c.fetchone()[0]
         c.execute("SELECT COUNT(*) FROM users WHERE weekly_attempts > 0")
@@ -542,12 +550,12 @@ def process_support_threads(chat_id, user_id, first_name, text, message_id, thre
     recent_conversation = "\n".join(THREAD_HISTORY[thread_id])
 
     # 2. Thread-Isolated Cooldown (Prevents spam)
-    global LAST_AI_REPLY_TIME
-    if thread_id not in LAST_AI_REPLY_TIME: LAST_AI_REPLY_TIME[thread_id] = 0
+    global LAST_AI_REPLY_TIME_THREADS
+    if thread_id not in LAST_AI_REPLY_TIME_THREADS: LAST_AI_REPLY_TIME_THREADS[thread_id] = 0
     current_time = time.time()
-    if current_time - LAST_AI_REPLY_TIME[thread_id] < 10:
+    if current_time - LAST_AI_REPLY_TIME_THREADS[thread_id] < 10:
         return
-    LAST_AI_REPLY_TIME[thread_id] = current_time
+    LAST_AI_REPLY_TIME_THREADS[thread_id] = current_time
 
     # 3. Define the Core Brain (Shared DNA)
     LIXIE_CORE_BRAIN = """
@@ -822,19 +830,6 @@ def webhook():
         if str(chat_id) == SOURCE_CHAT_ID and thread_id in THREAD_MAPPING:
             target_thread_id = THREAD_MAPPING[thread_id]
             relay_message(message_id=msg['message_id'], target_thread_id=target_thread_id)
-            return 'OK', 200
-
-        # 🟢 NEW: Multi-Thread Auto-Reply Intercept
-        if str(chat_id) == CHAT_ID and thread_id in [12082, 12103, 12105]:
-            # Prevent the bot from replying to itself to avoid infinite loops
-            if not msg.get('from', {}).get('is_bot', False):
-                threading.Thread(target=send_thread_auto_reply, args=(
-                    chat_id, 
-                    msg['from']['id'], 
-                    msg['from'].get('first_name', 'Student'), 
-                    msg['message_id'], 
-                    thread_id
-                )).start()
             return 'OK', 200
 
         if 'text' in msg:
