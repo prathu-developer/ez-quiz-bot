@@ -3412,7 +3412,31 @@ def get_quiz_result(attempt_id):
             
         rank_val, pct_val, total_participants, score, time_taken, quiz_set_id = rank_row
         
-        # 2. Get Sectional Summary & Explanations
+        # 2. Get Community Stats for the Review Pills
+        c.execute("""
+            SELECT question_id, 
+                   COUNT(selected_index) as total_attempts, 
+                   SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) as total_correct
+            FROM quiz_responses
+            WHERE question_id IN (SELECT id FROM quiz_questions WHERE quiz_set_id = %s)
+            GROUP BY question_id
+        """, (quiz_set_id,))
+        q_stats = {row[0]: {"attempts": row[1], "correct": row[2]} for row in c.fetchall()}
+
+        c.execute("""
+            SELECT AVG(EXTRACT(EPOCH FROM (submitted_at - started_at))) 
+            FROM quiz_attempts 
+            WHERE quiz_set_id = %s AND submitted_at IS NOT NULL
+        """, (quiz_set_id,))
+        avg_quiz_time = c.fetchone()[0]
+        avg_quiz_time = float(avg_quiz_time) if avg_quiz_time else 0
+        
+        c.execute("SELECT question_count FROM quiz_sets WHERE id = %s", (quiz_set_id,))
+        q_count_row = c.fetchone()
+        q_count = q_count_row[0] if q_count_row and q_count_row[0] > 0 else 1
+        est_time_per_q = int(avg_quiz_time / q_count)
+
+        # 3. Get Sectional Summary & Explanations
         c.execute("""
             SELECT q.id, q.question_text, q.options, q.correct_index, q.explanation, 
                    r.selected_index, r.is_correct
@@ -3437,14 +3461,20 @@ def get_quiz_result(attempt_id):
             else:
                 wrong_count += 1
                 
+            g_att = q_stats.get(q_id, {}).get("attempts", 0)
+            g_cor = q_stats.get(q_id, {}).get("correct", 0)
+            g_acc = round((g_cor / g_att) * 100) if g_att > 0 else 0
+                
             question_details.append({
                 "question_id": q_id,
                 "text": text,
-                "options": options,             # ✅ Just use options directly
+                "options": options,
                 "correct_index": c_idx,
                 "explanation": exp,
                 "user_selected_index": s_idx,
-                "is_correct": is_corr
+                "is_correct": is_corr,
+                "global_accuracy": g_acc,        # 🟢 NEW DATA
+                "global_avg_time": est_time_per_q  # 🟢 NEW DATA
             })
         
        # Calculate Accuracy %
