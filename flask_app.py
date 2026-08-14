@@ -152,11 +152,14 @@ THREAD_HISTORY = {}                # Tracks memory for support threads
 app = Flask(__name__)
 Compress(app)
 
-# ✨ NEW: Enable CORS so GitHub Pages can fetch data from Render
+# ✨ NEW: Enable CORS so Cloudflare Pages can fetch data from Render
 @app.after_request
 def add_cors_headers(response):
     response.headers['Access-Control-Allow-Origin'] = '*'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization'
+    
+    # 🟢 FIX: We MUST explicitly allow our new custom security headers!
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Telegram-Init-Data, X-Cron-Secret'
+    
     response.headers['Access-Control-Allow-Methods'] = 'GET,PUT,POST,DELETE,OPTIONS'
     return response
 
