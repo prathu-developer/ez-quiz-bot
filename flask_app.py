@@ -2751,21 +2751,31 @@ def run_mini_app_ingestion():
         grammar_url = f"https://api.github.com/repos/prathu-developer/exam-scraper-api/contents/grammar.json?ref=main&t={cache_buster}"
         advanced_url = f"https://api.github.com/repos/prathu-developer/exam-scraper-api/contents/comprehension_tests.json?ref=main&t={cache_buster}"
         
-        # Raise an error if GitHub denies the core requests
-        vocab_resp = http_session.get(vocab_url, headers=headers, timeout=15)
-        vocab_resp.raise_for_status()
-        vocab_data = vocab_resp.json()
-        
-        grammar_resp = http_session.get(grammar_url, headers=headers, timeout=15)
-        grammar_resp.raise_for_status()
-        grammar_data = grammar_resp.json()
+        # 🟢 1. Safely fetch Vocab JSON
+        try:
+            vocab_resp = http_session.get(vocab_url, headers=headers, timeout=15)
+            vocab_resp.raise_for_status()
+            vocab_data = vocab_resp.json()
+        except Exception as e:
+            print(f"Vocab JSON Error: {e}")
+            vocab_data = []
+            
+        # 🟢 2. Safely fetch Grammar JSON
+        try:
+            grammar_resp = http_session.get(grammar_url, headers=headers, timeout=15)
+            grammar_resp.raise_for_status()
+            grammar_data = grammar_resp.json()
+        except Exception as e:
+            print(f"Grammar JSON Error: {e}")
+            grammar_data = {}
 
-        # Fetch the advanced JSON (with a failsafe in case the file isn't uploaded yet)
+        # 🟢 3. Safely fetch Advanced JSON
         try:
             advanced_resp = http_session.get(advanced_url, headers=headers, timeout=15)
             advanced_resp.raise_for_status()
             advanced_data = advanced_resp.json()
-        except:
+        except Exception as e:
+            print(f"Advanced JSON Error: {e}")
             advanced_data = {}
         
         # Failsafe: Ensure data structures match expectations
