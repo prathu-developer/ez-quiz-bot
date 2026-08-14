@@ -10,6 +10,9 @@ import psycopg2
 from psycopg2 import pool
 from google import genai
 from google.genai import types # type: ignore
+import hmac
+import hashlib
+from urllib.parse import parse_qsl
 
 # --- DATABASE CONFIGURATION ---
 # We use environment variables so your password isn't exposed on GitHub
@@ -17,6 +20,92 @@ DB_URL = os.environ.get("DATABASE_URL")
 
 # High-speed connection pool to handle massive group traffic instantly
 db_pool = psycopg2.pool.ThreadedConnectionPool(1, 8, DB_URL)
+
+# ✨ NEW: REDIS CONFIGURATION (Fail-Safe)
+import redis # type: ignore
+REDIS_URL = os.environ.get("REDIS_URL")
+# If the URL exists, connect. Otherwise, set to None so the app doesn't crash.
+redis_client = redis.from_url(REDIS_URL) if REDIS_URL else None
+
+def acquire_submission_lock(attempt_id):
+    """
+    Attempts to place a 5-minute lock on an attempt_id.
+    Returns True if safe to process, False if it's a duplicate.
+    """
+    if not redis_client:
+        return True  # Fail-open: If Redis is missing, allow it through to Supabase
+        
+    try:
+        lock_key = f"lock:submit:{attempt_id}"
+        # nx=True (Only set if it doesn't exist) | ex=300 (Auto-delete after 5 mins)
+        is_acquired = redis_client.set(lock_key, "processing", nx=True, ex=300)
+        return bool(is_acquired)
+    except Exception as e:
+        print(f"⚠️ Redis Connection Error: {e}")
+        return True  # Fail-open: Do not penalise the student for a server glitch
+
+# --- REDIS RATE LIMITER (Fail-Safe) ---
+def check_and_set_cooldown(key, seconds=10):
+    """
+    Places a temporary cooldown lock in Redis.
+    Returns True if currently ON cooldown (should block).
+    Returns False if clear to proceed (and sets the cooldown).
+    """
+    if not redis_client:
+        return False # Fail-open to local RAM if Redis is down
+        
+    try:
+        # nx=True sets it only if it doesn't exist. ex=seconds sets the auto-expiry.
+        is_acquired = redis_client.set(key, "cooldown", nx=True, ex=seconds)
+        return not bool(is_acquired)
+    except Exception as e:
+        print(f"⚠️ Redis Cooldown Error: {e}")
+        return False
+
+# --- TELEGRAM SECURE AUTHENTICATION ---
+def get_verified_user():
+    """
+    Validates the Telegram initData securely using HMAC-SHA-256.
+    Returns the user dictionary if valid, otherwise returns None.
+    """
+    init_data = request.headers.get("X-Telegram-Init-Data", "")
+    if not init_data:
+        return None
+
+    try:
+        parsed = dict(parse_qsl(init_data, keep_blank_values=True))
+        received_hash = parsed.pop("hash", None)
+        
+        if not received_hash:
+            return None
+
+        # Sort parameters alphabetically and construct the data-check-string
+        data_check_string = "\n".join(f"{key}={parsed[key]}" for key in sorted(parsed))
+        
+        # Hash the bot token with "WebAppData"
+        secret_key = hmac.new(b"WebAppData", TELEGRAM_TOKEN.encode(), hashlib.sha256).digest()
+        
+        # Calculate the final hash
+        calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+
+        # Compare hashes securely
+        if not hmac.compare_digest(calculated_hash, received_hash):
+            return None
+
+        # Ensure the data isn't stale (e.g., older than 24 hours)
+        auth_date = int(parsed.get("auth_date", 0))
+        if time.time() - auth_date > 86400:
+            return None
+
+        user_raw = parsed.get("user")
+        if not user_raw:
+            return None
+            
+        return json.loads(user_raw)
+        
+    except Exception as e:
+        print(f"⚠️ Auth Verification Error: {e}")
+        return None
 
 CRON_SECRET = os.environ.get("CRON_SECRET")
 
@@ -138,7 +227,7 @@ def add_poll():
     release_db(conn)
     return "Poll successfully saved to remote DB!", 200
 
-# ✨ FIX: Add queue_id as the second parameter
+# ✨ FIX: Make queue_id optional for Redis compatibility
 def process_answer(c, queue_id, user_id, first_name, poll_id, chosen_option): 
     max_retries = 3
     
@@ -147,7 +236,8 @@ def process_answer(c, queue_id, user_id, first_name, poll_id, chosen_option):
             c.execute("SELECT 1 FROM user_answers WHERE user_id=%s AND poll_id=%s", (user_id, poll_id))
             if c.fetchone():
                 # If they already answered, delete the duplicate ticket from the queue
-                c.execute("DELETE FROM answer_queue WHERE id = %s", (queue_id,))
+                if queue_id:
+                    c.execute("DELETE FROM answer_queue WHERE id = %s", (queue_id,))
                 c.connection.commit()
                 return
 
@@ -377,11 +467,17 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
         process_ranking_command(chat_id, user_id, message_id, thread_id)
         return
 
-    global LAST_AI_REPLY_TIME_MAIN
-    current_time = time.time()
-    if current_time - LAST_AI_REPLY_TIME_MAIN < 10:
-        return
-    LAST_AI_REPLY_TIME_MAIN = current_time
+    # ✨ SECURE REDIS RATE LIMITING (10s Cooldown)
+    if redis_client:
+        if check_and_set_cooldown("rate:lixie:main", 10):
+            return
+    else:
+        # Fallback to local RAM if Redis is offline
+        global LAST_AI_REPLY_TIME_MAIN
+        current_time = time.time()
+        if current_time - LAST_AI_REPLY_TIME_MAIN < 10:
+            return
+        LAST_AI_REPLY_TIME_MAIN = current_time
 
     current_ist_time = datetime.utcnow() + timedelta(hours=5, minutes=30)
     current_day = current_ist_time.strftime('%A')
@@ -548,12 +644,17 @@ def process_support_threads(chat_id, user_id, first_name, text, message_id, thre
     recent_conversation = "\n".join(THREAD_HISTORY[thread_id])
 
     # 2. Thread-Isolated Cooldown (Prevents spam)
-    global LAST_AI_REPLY_TIME_THREADS
-    if thread_id not in LAST_AI_REPLY_TIME_THREADS: LAST_AI_REPLY_TIME_THREADS[thread_id] = 0
-    current_time = time.time()
-    if current_time - LAST_AI_REPLY_TIME_THREADS[thread_id] < 10:
-        return
-    LAST_AI_REPLY_TIME_THREADS[thread_id] = current_time
+    if redis_client:
+        if check_and_set_cooldown(f"rate:lixie:thread:{thread_id}", 10):
+            return
+    else:
+        # Fallback to local RAM if Redis is offline
+        global LAST_AI_REPLY_TIME_THREADS
+        if thread_id not in LAST_AI_REPLY_TIME_THREADS: LAST_AI_REPLY_TIME_THREADS[thread_id] = 0
+        current_time = time.time()
+        if current_time - LAST_AI_REPLY_TIME_THREADS[thread_id] < 10:
+            return
+        LAST_AI_REPLY_TIME_THREADS[thread_id] = current_time
 
     # 3. Define the Core Brain (Shared DNA)
     LIXIE_CORE_BRAIN = """
@@ -733,7 +834,8 @@ def webhook():
         # ✨ Use Telegram's secret join request bypass ID
         user_chat_id = join_req.get('user_chat_id', user_id)
         
-        MINI_APP_URL = "https://prathu-developer.github.io/ez-editorials-assets/captcha.html?mode=compact"
+        # 🟢 UPDATED: Pointing to the new Cloudflare Pages deployment!
+        MINI_APP_URL = "https://ez-editorials-app.pages.dev/captcha.html?mode=compact"
         markup = {"inline_keyboard": [[{"text": "⚡️ Complete Entrance Trial (10Q)", "web_app": {"url": MINI_APP_URL}}]]}
         
         if query_id:
@@ -784,6 +886,21 @@ def webhook():
         l_name = user_info.get('last_name', '').strip()
         formatted_name = f"{f_name} {l_name[0]}".strip() if l_name else f_name
 
+        # ✨ REDIS BURST QUEUE: Push instantly to RAM, 0ms delay!
+        if redis_client:
+            try:
+                payload = json.dumps({
+                    "user_id": user_info['id'],
+                    "first_name": formatted_name,
+                    "poll_id": ans['poll_id'],
+                    "chosen_option": ans['option_ids'][0]
+                })
+                redis_client.rpush("queue:poll_answers", payload)
+                return 'OK', 200
+            except Exception as e:
+                print(f"Redis Queue Error: {e}") # Safe fail-over to DB below
+
+        # 🛡️ FAIL-OPEN FALLBACK: Save to Supabase if Redis is dead
         conn = None
         try:
             conn = get_db()
@@ -1467,7 +1584,22 @@ def run_queue_processor_background():
         conn = get_db()
         c = conn.cursor()
         
-        # Pick up pending and stuck answers
+        # ✨ 1. Drain the Ultra-Fast Redis Queue FIRST
+        if redis_client:
+            # Pop up to 100 items per cycle to prevent Render timeouts
+            for _ in range(100):
+                item = redis_client.lpop("queue:poll_answers")
+                if not item:
+                    break
+                
+                data = json.loads(item)
+                process_answer(
+                    c, queue_id=None, user_id=data['user_id'], 
+                    first_name=data['first_name'], poll_id=data['poll_id'], 
+                    chosen_option=data['chosen_option']
+                )
+
+        # 🛡️ 2. Sweep the Legacy Supabase Queue (Fail-Open Fallback)
         c.execute("SELECT id, user_id, first_name, poll_id, chosen_option FROM answer_queue WHERE status IN ('pending', 'processing')")
         pending_answers = c.fetchall()
 
@@ -1529,11 +1661,17 @@ def cron_process_leaderboard():
     return "Queue Processor triggered in background!", 200
 
 def run_heavy_math_background():
+    # ✨ REDIS DISTRIBUTED LOCK (Prevents concurrent heavy database math)
+    if redis_client:
+        # Lock for 120 seconds. If another worker is already doing math, stop.
+        acquired = redis_client.set("lock:leaderboard-recalculate", "1", nx=True, ex=120)
+        if not acquired:
+            print("⏳ Heavy math already running on another worker. Skipping.")
+            return
+
     conn = None
     try:
         recalculate_dynamic_scores()
-        # ❌ REMOVED: bake_miniapp_cache() to prevent duplicate egress pulls. 
-        # The separate cron job handles this now.
         
         conn = get_db()
         c = conn.cursor()
@@ -1557,6 +1695,9 @@ def run_heavy_math_background():
             }, timeout=5)
         except: pass
     finally:
+        # ✨ Safely release the lock and the database connection
+        if redis_client:
+            redis_client.delete("lock:leaderboard-recalculate")
         if conn:
             release_db(conn)
 
@@ -2375,7 +2516,13 @@ from flask import Response # type: ignore
 @app.route('/api/leaderboard', methods=['GET'])
 def get_mini_app_leaderboard():
     global RAM_CACHE
-    user_id = request.args.get('user_id', default=0, type=int)
+
+    # ✨ SECURE AUTH: Try header first, fallback to URL param for live safety
+    verified_user = get_verified_user()
+    if verified_user:
+        user_id = int(verified_user.get('id'))
+    else:
+        user_id = request.args.get('user_id', default=0, type=int)
     
     if not RAM_CACHE["master_data"]:
         with CACHE_LOCK:
@@ -2402,11 +2549,6 @@ def get_mini_app_leaderboard():
             # ✨ RESTORED: Send the full chart and history data so profiles work perfectly!
             custom_leaderboard.append(u)
 
-    custom_elo = []
-    for index, eu in enumerate(master_data["elo_ranking"]):
-        if index < 50 or eu["id"] == user_id:
-            custom_elo.append(eu)
-
     # --- FIX: EXTRACT OR CONSTRUCT CURRENT_USER DATA ---
     current_user_data = next((u for u in master_data["leaderboard"] if u["id"] == user_id), None)
     if not current_user_data:
@@ -2425,6 +2567,7 @@ def get_mini_app_leaderboard():
             "history": {"labels": [], "scores": [], "accuracy": 0, "correct": 0, "wrong": 0}
         }
 
+    # ✨ RESTORED: The dictionary definition without the heavy Elo payload
     response_data = {
         "current_week": master_data["current_week"],
         "total_quizzes": master_data["total_quizzes"],
@@ -2432,12 +2575,46 @@ def get_mini_app_leaderboard():
         "total_active": master_data.get("total_active", len(master_data["leaderboard"])),
         "topper_history": master_data["topper_history"],
         "class_avg_history": master_data["class_avg_history"],
-        "current_user": current_user_data,  # <--- INJECTED FIELD FIX
-        "leaderboard": custom_leaderboard,
-        "elo_ranking": custom_elo
+        "current_user": current_user_data, 
+        "leaderboard": custom_leaderboard
     }
 
     res = Response(json.dumps(response_data), mimetype='application/json')
+    res.headers["Cache-Control"] = "public, max-age=30"
+    return res
+
+@app.route('/api/elo', methods=['GET'])
+def get_elo_ranking():
+    global RAM_CACHE
+    
+    # ✨ SECURE AUTH: Header first, fallback to args
+    verified_user = get_verified_user()
+    if verified_user:
+        user_id = int(verified_user.get('id'))
+    else:
+        user_id = request.args.get('user_id', default=0, type=int)
+    
+    if not RAM_CACHE.get("master_data"):
+        return jsonify({"error": "Syncing data, please refresh..."}), 503
+
+    master_data = RAM_CACHE.get("master_data")
+    
+    custom_elo = []
+    # Send only top 50, plus the current user's rank
+    for index, eu in enumerate(master_data.get("elo_ranking", [])):
+        if index < 50 or eu["id"] == user_id:
+            custom_elo.append(eu)
+            
+    # Extract current user's specific Elo data
+    current_user_elo = next((eu for eu in custom_elo if eu["id"] == user_id), None)
+    if not current_user_elo:
+        # Fallback if unranked
+        current_user_elo = {"id": user_id, "name": "You", "elo": 1000, "rank": "N/A", "is_active": True}
+
+    res = Response(json.dumps({
+        "current_user": current_user_elo,
+        "elo_ranking": custom_elo
+    }), mimetype='application/json')
     res.headers["Cache-Control"] = "public, max-age=30"
     return res
     
@@ -2713,7 +2890,8 @@ def background_approve_user(user_id):
 @app.route('/api/approve_captcha', methods=['POST'])
 def approve_captcha():
     data = request.get_json()
-    user_id = data.get('user_id')
+    verified_user = get_verified_user()
+    user_id = int(verified_user.get('id')) if verified_user else data.get('user_id')
     
     if not user_id:
         return jsonify({"error": "No user ID provided"}), 400
@@ -3021,6 +3199,35 @@ def trigger_miniapp_ingestion():
     return "Mini App Ingestion triggered! Check your Telegram DMs.", 200
 
 # ==========================================
+# SYSTEM SAFE MODE / MAINTENANCE HELPERS
+# ==========================================
+def is_maintenance():
+    # Set this to "maintenance" in your Render Environment Variables to activate
+    return os.environ.get("SYSTEM_MODE", "operational") == "maintenance"
+
+def maintenance_block():
+    if is_maintenance():
+        return jsonify({
+            "error": "SYSTEM_MAINTENANCE",
+            "message": "The system is temporarily unavailable. No new quizzes can be started."
+        }), 503
+    return None
+
+@app.route("/api/system-status", methods=["GET"])
+def system_status():
+    mode = os.environ.get("SYSTEM_MODE", "operational")
+    return jsonify({
+        "mode": mode,
+        "maintenance": mode == "maintenance",
+        "quiz_enabled": mode == "operational",
+        "submissions_enabled": True, # ALWAYS True so active students can submit!
+        "message": (
+            "The platform is temporarily undergoing maintenance.\nActive quizzes can still be submitted, but new quizzes cannot be started."
+            if mode == "maintenance" else None
+        )
+    }), 200
+
+# ==========================================
 # PHASE 3: MINI APP API ENDPOINTS (Part 1)
 # ==========================================
 from flask import jsonify # type: ignore
@@ -3181,7 +3388,8 @@ def get_upcoming_exams():
 @app.route('/api/profile/update-target', methods=['POST'])
 def update_target():
     data = request.get_json()
-    user_id = data.get('user_id')
+    verified_user = get_verified_user()
+    user_id = int(verified_user.get('id')) if verified_user else data.get('user_id')
     state = data.get('state')
     exam = data.get('exam')
     
@@ -3207,7 +3415,8 @@ def update_target():
 
 @app.route('/api/profile/me', methods=['GET'])
 def get_profile():
-    user_id = request.args.get('user_id', type=int)
+    verified_user = get_verified_user()
+    user_id = int(verified_user.get('id')) if verified_user else request.args.get('user_id', type=int)
     conn = None
     try:
         conn = get_db()
@@ -3233,8 +3442,20 @@ def get_profile():
 
 @app.route('/api/quiz/start', methods=['POST'])
 def start_quiz():
+    # 🟢 NEW: Prevents starting new tests during maintenance
+    blocked = maintenance_block()
+    if blocked: 
+        return blocked
+
     data = request.get_json()
-    user_id = data.get('user_id')
+
+    # ✨ SECURE AUTH: Try header first, fallback to payload for live safety
+    verified_user = get_verified_user()
+    if verified_user:
+        user_id = int(verified_user.get('id'))
+    else:
+        user_id = data.get('user_id') # Legacy fallback (To be removed next week)
+
     quiz_set_id = data.get('quiz_set_id')
     is_practice = data.get('is_practice', False) # 🟢 NEW: Check for Practice Mode
     
@@ -3322,7 +3543,11 @@ def submit_quiz():
     data = request.get_json()
     attempt_id = data.get('attempt_id')
     user_responses = data.get('responses', []) # Expected: [{"question_id": 1, "selected_index": 2}, ...]
-    
+
+    # ✨ NEW: IDEMPOTENCY LOCK (Blocks double-taps instantly without hitting Supabase)
+    if not acquire_submission_lock(attempt_id):
+        return jsonify({"error": "Submission is already being processed."}), 409
+
     current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
     
     conn = None
@@ -3581,7 +3806,8 @@ def get_foreign_expressions():
 
 @app.route('/api/progress/me', methods=['GET'])
 def get_my_progress():
-    user_id = request.args.get('user_id', type=int)
+    verified_user = get_verified_user()
+    user_id = int(verified_user.get('id')) if verified_user else request.args.get('user_id', type=int)
     conn = None
     try:
         conn = get_db()
@@ -3610,7 +3836,8 @@ def get_my_progress():
 
 @app.route('/api/digest/today', methods=['GET'])
 def get_daily_digest():
-    user_id = request.args.get('user_id', type=int)
+    verified_user = get_verified_user()
+    user_id = int(verified_user.get('id')) if verified_user else request.args.get('user_id', type=int)
     conn = None
     try:
         conn = get_db()
@@ -3657,7 +3884,8 @@ def get_daily_digest():
 @app.route('/api/digest/mark-read', methods=['POST'])
 def mark_digest_read():
     data = request.get_json()
-    user_id = data.get('user_id')
+    verified_user = get_verified_user()
+    user_id = int(verified_user.get('id')) if verified_user else data.get('user_id')
     content_type = data.get('content_type')
     
     if not user_id or not content_type:
