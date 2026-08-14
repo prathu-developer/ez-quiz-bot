@@ -2784,17 +2784,26 @@ def run_mini_app_ingestion():
                 opts_list = []
                 corr_ans = ""
                 ans_key = q.get("correct_option_id") or q.get("correct_option") or q.get("answer") or q.get("correct_answer") or ""
+                opts_raw = q.get("options", [])
 
-                # 🟢 NEW: Detect if the file uses the opt_1, opt_2 format
-                if "opt_1" in q:
+                # 🟢 1. Detect Array of Objects format: [{"id": "opt_1", "text": "..."}]
+                if isinstance(opts_raw, list) and len(opts_raw) > 0 and isinstance(opts_raw[0], dict) and "text" in opts_raw[0]:
+                    for opt in opts_raw:
+                        opts_list.append(opt.get("text", ""))
+                        if opt.get("id") == ans_key:
+                            corr_ans = opt.get("text", "")
+                            
+                # 🟢 2. Detect Flat keys format: "opt_1", "opt_2" directly inside 'q'
+                elif "opt_1" in q:
                     for i in range(1, 6):
                         opt_val = q.get(f"opt_{i}")
                         if opt_val:
                             opts_list.append(opt_val)
                             if ans_key == f"opt_{i}":
                                 corr_ans = opt_val
+                                
+                # 🟢 3. Fallback: Old dictionary/list format
                 else:
-                    # 🟢 FALLBACK: Handles the old dictionary/list format flawlessly
                     opts_dict = q.get("options", {})
                     opts_list = list(opts_dict.values()) if isinstance(opts_dict, dict) else opts_dict
                     corr_ans = opts_dict.get(ans_key) if isinstance(opts_dict, dict) else ans_key
