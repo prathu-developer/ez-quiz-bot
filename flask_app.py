@@ -2548,7 +2548,7 @@ def get_mini_app_leaderboard():
             demotion_count += 1
             
         if is_promo or demotion_count <= 10 or is_me:
-            # ✨ FIXED: Strip the heavy history/chart data to save massive bandwidth
+            # ✨ FIXED: Strip the heavy chart arrays, but preserve core accuracy metrics for the Profile Modal
             custom_leaderboard.append({
                 "rank": u["rank"],
                 "id": u["id"],
@@ -2560,7 +2560,12 @@ def get_mini_app_leaderboard():
                 "attempts": u["attempts"],
                 "league": u["league"],
                 "lifetime_growth": u["lifetime_growth"],
-                "last_updated": u["last_updated"]
+                "last_updated": u["last_updated"],
+                "history": {
+                    "accuracy": u.get("history", {}).get("accuracy", 0),
+                    "correct": u.get("history", {}).get("correct", 0),
+                    "wrong": u.get("history", {}).get("wrong", 0)
+                }
             })
 
     # --- FIX: EXTRACT OR CONSTRUCT CURRENT_USER DATA ---
