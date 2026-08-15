@@ -2981,42 +2981,20 @@ def run_mini_app_ingestion():
         set_b = grammar_data.get("set_b", []) if isinstance(grammar_data, dict) else []
         set_c = grammar_data.get("set_c", []) if isinstance(grammar_data, dict) else []
 
-        # --- ADVANCED JSON ADAPTER (Hyper-Resilient) ---
+       # --- ADVANCED JSON ADAPTER (Hyper-Resilient) ---
         set_rc = []
         if "set_d" in advanced_data:
             passage = advanced_data["set_d"].get("passage", "")
+            # 🟢 FIX: Allow AI to pass dynamic instructions
+            instruction = advanced_data["set_d"].get("instruction", "Directions: Read the following passage carefully and answer the questions given below.")
             for q in advanced_data["set_d"].get("questions", []):
-                opts_list = []
-                corr_ans = ""
-                ans_key = q.get("correct_option_id") or q.get("correct_option") or q.get("answer") or q.get("correct_answer") or ""
-                opts_raw = q.get("options", [])
-
-                # 🟢 1. Detect Array of Objects format: [{"id": "opt_1", "text": "..."}]
-                if isinstance(opts_raw, list) and len(opts_raw) > 0 and isinstance(opts_raw[0], dict) and "text" in opts_raw[0]:
-                    for opt in opts_raw:
-                        opts_list.append(opt.get("text", ""))
-                        if opt.get("id") == ans_key:
-                            corr_ans = opt.get("text", "")
-                            
-                # 🟢 2. Detect Flat keys format: "opt_1", "opt_2" directly inside 'q'
-                elif "opt_1" in q:
-                    for i in range(1, 6):
-                        opt_val = q.get(f"opt_{i}")
-                        if opt_val:
-                            opts_list.append(opt_val)
-                            if ans_key == f"opt_{i}":
-                                corr_ans = opt_val
-                                
-                # 🟢 3. Fallback: Old dictionary/list format
-                else:
-                    opts_dict = q.get("options", {})
-                    opts_list = list(opts_dict.values()) if isinstance(opts_dict, dict) else opts_dict
-                    corr_ans = opts_dict.get(ans_key) if isinstance(opts_dict, dict) else ans_key
-
-                if not corr_ans and opts_list: corr_ans = opts_list[0] # Ultimate fallback
+                opts_list = q.get("options", [])
+                corr_ans = q.get("correct_answer", "")
+                
+                if not corr_ans and opts_list: corr_ans = opts_list[0]
 
                 set_rc.append({
-                    "instruction": "Read the following passage and answer the given questions.",
+                    "instruction": instruction,
                     "passage": passage,
                     "question": q.get('question', ''),
                     "options": opts_list,
@@ -3027,29 +3005,15 @@ def run_mini_app_ingestion():
         set_cloze = []
         if "set_e" in advanced_data:
             passage = advanced_data["set_e"].get("passage", "")
+            instruction = advanced_data["set_e"].get("instruction", "Directions: In the following passage, there are eight blanks. Choose the most appropriate option for each blank.")
             for q in advanced_data["set_e"].get("questions", []):
-                opts_list = []
-                corr_ans = ""
-                ans_key = q.get("correct_option_id") or q.get("correct_option") or q.get("answer") or q.get("correct_answer") or ""
-
-                # 🟢 NEW: Detect if the file uses the opt_1, opt_2 format
-                if "opt_1" in q:
-                    for i in range(1, 6):
-                        opt_val = q.get(f"opt_{i}")
-                        if opt_val:
-                            opts_list.append(opt_val)
-                            if ans_key == f"opt_{i}":
-                                corr_ans = opt_val
-                else:
-                    # 🟢 FALLBACK: Handles the old dictionary/list format flawlessly
-                    opts_dict = q.get("options", {})
-                    opts_list = list(opts_dict.values()) if isinstance(opts_dict, dict) else opts_dict
-                    corr_ans = opts_dict.get(ans_key) if isinstance(opts_dict, dict) else ans_key
-
+                opts_list = q.get("options", [])
+                corr_ans = q.get("correct_answer", "")
+                
                 if not corr_ans and opts_list: corr_ans = opts_list[0]
 
                 set_cloze.append({
-                    "instruction": "In the following passage there are blanks. Find out the appropriate word that fits the blank.",
+                    "instruction": instruction,
                     "passage": passage,
                     "question": q.get('question', f"Which word fits in blank [{q.get('number', '')}]?"),
                     "options": opts_list,
@@ -3059,25 +3023,22 @@ def run_mini_app_ingestion():
 
         set_pj = []
         if "set_f" in advanced_data:
+            instruction = advanced_data["set_f"].get("instruction", "Directions: In the following question, six sentences are given. Sentence A is fixed in its correct position. The remaining five sentences need to be rearranged to form a coherent paragraph. Answer the questions that follow.")
             for q in advanced_data["set_f"].get("questions", []):
                 sents = q.get("sentences", {})
-                sent_text = "\n".join([f"{k}) {v}" for k, v in sents.items()])
+                # 🟢 FIX: Safely construct passage from sentences dictionary
+                sent_text = "\n".join([f"{k}) {v}" for k, v in sents.items()]) if sents else q.get("passage", "")
                 
-                # 🟢 FIX: Directly grab the new list format for Para Jumbles
                 opts_list = q.get("options", [])
-                corr_ans = q.get("correct_answer") or q.get("correct_option") or ""
+                corr_ans = q.get("correct_answer", "")
                 
-                # Fallback just in case it is ever formatted as a dictionary again
-                if isinstance(opts_list, dict):
-                    corr_ans = opts_list.get(corr_ans, corr_ans)
-                    opts_list = list(opts_list.values())
-                
-                if not corr_ans and opts_list: corr_ans = opts_list[0] 
+                if not corr_ans and opts_list: corr_ans = opts_list[0]
                 
                 set_pj.append({
-                    "instruction": "Rearrange the following sentences to form a coherent paragraph.",
+                    "instruction": instruction,
                     "passage": sent_text,
-                    "question": "Which of the following is the correct logical sequence?",
+                    # 🟢 FIX: Remove the hardcoded question so AI can ask "Which comes after A?"
+                    "question": q.get("question", "Which of the following is the correct logical sequence?"),
                     "options": opts_list,
                     "correct_answer": corr_ans,
                     "explanation": q.get("explanation", "")
@@ -3085,26 +3046,15 @@ def run_mini_app_ingestion():
 
         set_wu = []
         if "set_g" in advanced_data:
+            instruction = advanced_data["set_g"].get("instruction", "Directions: Choose the sentence in which the given word is used correctly and appropriately.")
             for q in advanced_data["set_g"].get("questions", []):
-                opts_list = []
-                corr_ans = ""
+                opts_list = q.get("options", [])
+                corr_ans = q.get("correct_answer", "")
                 
-                # 🟢 FIX: Look for the new "correct_option_id" key
-                ans_key = q.get("correct_option_id") or q.get("correct_option") or q.get("answer") or ""
-                
-                # 🟢 FIX: Dynamically compile the options from opt_1, opt_2, opt_3, opt_4
-                for i in range(1, 6):
-                    opt_val = q.get(f"opt_{i}")
-                    if opt_val:
-                        opts_list.append(opt_val)
-                        if ans_key == f"opt_{i}":
-                            corr_ans = opt_val
-                
-                # Ultimate fallback
-                if not corr_ans and opts_list: corr_ans = opts_list[0] 
+                if not corr_ans and opts_list: corr_ans = opts_list[0]
                 
                 set_wu.append({
-                    "instruction": "Identify the grammatically and contextually correct usage of the word.",
+                    "instruction": instruction,
                     "passage": "", 
                     "question": q.get('question', ''),
                     "options": opts_list,
