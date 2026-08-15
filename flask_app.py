@@ -2517,12 +2517,11 @@ from flask import Response # type: ignore
 def get_mini_app_leaderboard():
     global RAM_CACHE
 
-    # ✨ SECURE AUTH: Try header first, fallback to URL param for live safety
+    # ✨ STRICT AUTH: No fallback.
     verified_user = get_verified_user()
-    if verified_user:
-        user_id = int(verified_user.get('id'))
-    else:
-        user_id = request.args.get('user_id', default=0, type=int)
+    if not verified_user:
+        return jsonify({"error": "Unauthorized"}), 401
+    user_id = int(verified_user.get('id'))
     
     if not RAM_CACHE["master_data"]:
         with CACHE_LOCK:
@@ -2546,8 +2545,20 @@ def get_mini_app_leaderboard():
             demotion_count += 1
             
         if is_promo or demotion_count <= 10 or is_me:
-            # ✨ RESTORED: Send the full chart and history data so profiles work perfectly!
-            custom_leaderboard.append(u)
+            # ✨ FIXED: Strip the heavy history/chart data to save massive bandwidth
+            custom_leaderboard.append({
+                "rank": u["rank"],
+                "id": u["id"],
+                "name": u["name"],
+                "score": u["score"],
+                "elo": u["elo"],
+                "house": u["house"],
+                "is_captain": u["is_captain"],
+                "attempts": u["attempts"],
+                "league": u["league"],
+                "lifetime_growth": u["lifetime_growth"],
+                "last_updated": u["last_updated"]
+            })
 
     # --- FIX: EXTRACT OR CONSTRUCT CURRENT_USER DATA ---
     current_user_data = next((u for u in master_data["leaderboard"] if u["id"] == user_id), None)
@@ -2580,19 +2591,18 @@ def get_mini_app_leaderboard():
     }
 
     res = Response(json.dumps(response_data), mimetype='application/json')
-    res.headers["Cache-Control"] = "public, max-age=30"
+    res.headers["Cache-Control"] = "private, max-age=30"
     return res
 
 @app.route('/api/elo', methods=['GET'])
 def get_elo_ranking():
     global RAM_CACHE
     
-    # ✨ SECURE AUTH: Header first, fallback to args
+    # ✨ STRICT AUTH: No fallback.
     verified_user = get_verified_user()
-    if verified_user:
-        user_id = int(verified_user.get('id'))
-    else:
-        user_id = request.args.get('user_id', default=0, type=int)
+    if not verified_user:
+        return jsonify({"error": "Unauthorized"}), 401
+    user_id = int(verified_user.get('id'))
     
     if not RAM_CACHE.get("master_data"):
         return jsonify({"error": "Syncing data, please refresh..."}), 503
@@ -2615,7 +2625,7 @@ def get_elo_ranking():
         "current_user": current_user_elo,
         "elo_ranking": custom_elo
     }), mimetype='application/json')
-    res.headers["Cache-Control"] = "public, max-age=30"
+    res.headers["Cache-Control"] = "private, max-age=30"
     return res
     
 @app.route('/cron/refresh_snapshot_0508', methods=['GET', 'POST'])
@@ -2891,10 +2901,9 @@ def background_approve_user(user_id):
 def approve_captcha():
     data = request.get_json()
     verified_user = get_verified_user()
-    user_id = int(verified_user.get('id')) if verified_user else data.get('user_id')
-    
-    if not user_id:
-        return jsonify({"error": "No user ID provided"}), 400
+    if not verified_user:
+        return jsonify({"error": "Unauthorized"}), 401
+    user_id = int(verified_user.get('id'))
 
     # Instantly pass the heavy lifting to a background thread
     threading.Thread(target=background_approve_user, args=(user_id,)).start()
@@ -3235,7 +3244,12 @@ from flask import jsonify # type: ignore
 # --- MASTER SPEC: UPDATED /api/quiz/today ---
 @app.route('/api/quiz/today', methods=['GET'])
 def get_todays_quizzes():
-    user_id = request.args.get('user_id', type=int)
+    # ✨ FIX: Strict auth implementation
+    verified_user = get_verified_user()
+    if not verified_user:
+        return jsonify({"error": "Unauthorized"}), 401
+    user_id = int(verified_user["id"])
+    
     current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
     
     conn = None
@@ -3389,7 +3403,9 @@ def get_upcoming_exams():
 def update_target():
     data = request.get_json()
     verified_user = get_verified_user()
-    user_id = int(verified_user.get('id')) if verified_user else data.get('user_id')
+    if not verified_user:
+        return jsonify({"error": "Unauthorized"}), 401
+    user_id = int(verified_user.get('id'))
     state = data.get('state')
     exam = data.get('exam')
     
@@ -3416,7 +3432,9 @@ def update_target():
 @app.route('/api/profile/me', methods=['GET'])
 def get_profile():
     verified_user = get_verified_user()
-    user_id = int(verified_user.get('id')) if verified_user else request.args.get('user_id', type=int)
+    if not verified_user:
+        return jsonify({"error": "Unauthorized"}), 401
+    user_id = int(verified_user.get('id'))
     conn = None
     try:
         conn = get_db()
@@ -3449,12 +3467,11 @@ def start_quiz():
 
     data = request.get_json()
 
-    # ✨ SECURE AUTH: Try header first, fallback to payload for live safety
+    # ✨ STRICT AUTH: No fallback.
     verified_user = get_verified_user()
-    if verified_user:
-        user_id = int(verified_user.get('id'))
-    else:
-        user_id = data.get('user_id') # Legacy fallback (To be removed next week)
+    if not verified_user:
+        return jsonify({"error": "Unauthorized"}), 401
+    user_id = int(verified_user.get('id'))
 
     quiz_set_id = data.get('quiz_set_id')
     is_practice = data.get('is_practice', False) # 🟢 NEW: Check for Practice Mode
@@ -3540,11 +3557,17 @@ def start_quiz():
 
 @app.route('/api/quiz/submit', methods=['POST'])
 def submit_quiz():
+    # ✨ FIX: Authenticate before processing
+    verified_user = get_verified_user()
+    if not verified_user:
+        return jsonify({"error": "Unauthorized"}), 401
+    verified_user_id = int(verified_user["id"])
+
     data = request.get_json()
     attempt_id = data.get('attempt_id')
-    user_responses = data.get('responses', []) # Expected: [{"question_id": 1, "selected_index": 2}, ...]
+    user_responses = data.get('responses', []) 
 
-    # ✨ NEW: IDEMPOTENCY LOCK (Blocks double-taps instantly without hitting Supabase)
+    # IDEMPOTENCY LOCK
     if not acquire_submission_lock(attempt_id):
         return jsonify({"error": "Submission is already being processed."}), 409
 
@@ -3569,6 +3592,11 @@ def submit_quiz():
             
         user_id, quiz_set_id, started_at, submitted_at, duration_seconds = attempt_meta
         
+        # ✨ FIX: Ownership Check
+        if user_id != verified_user_id:
+            if redis_client: redis_client.delete(f"lock:submit:{attempt_id}")
+            return jsonify({"error": "Unauthorized"}), 403
+            
         if submitted_at is not None:
             return jsonify({"error": "Quiz already submitted"}), 403
             
@@ -3641,6 +3669,9 @@ def submit_quiz():
         
     except Exception as e:
         if conn: conn.rollback()
+        # ✨ FIX: Release Redis submission lock on processing failure
+        if redis_client:
+            redis_client.delete(f"lock:submit:{attempt_id}")
         return jsonify({"error": str(e)}), 500
     finally:
         if conn: release_db(conn)
@@ -3648,10 +3679,22 @@ def submit_quiz():
 
 @app.route('/api/quiz/result/<int:attempt_id>', methods=['GET'])
 def get_quiz_result(attempt_id):
+    # ✨ FIX: Strict Auth Implementation
+    verified_user = get_verified_user()
+    if not verified_user:
+        return jsonify({"error": "Unauthorized"}), 401
+    verified_user_id = int(verified_user["id"])
+
     conn = None
     try:
         conn = get_db()
         c = conn.cursor()
+
+        # ✨ FIX: Verify attempt ownership first
+        c.execute("SELECT user_id FROM quiz_attempts WHERE id = %s", (attempt_id,))
+        attempt_owner = c.fetchone()
+        if not attempt_owner or attempt_owner[0] != verified_user_id:
+            return jsonify({"error": "Unauthorized"}), 403
         
         # 1. SQL-Side Aggregation: Rank & Percentile (Faster time breaks ties!)
         c.execute("""
@@ -3770,7 +3813,8 @@ def get_quiz_result(attempt_id):
                 "score": score,
                 "rank": rank_val,
                 "total_participants": total_participants,
-                "percentile": round(pct_val * 100, 1),
+                # ✨ FIX: Invert the SQL rank so the topper gets 100% and lowest gets 0%
+                "percentile": round((1.0 - pct_val) * 100, 1),
                 "accuracy": round(accuracy, 1),
                 "time_spent_seconds": int(time_taken),
                 "correct": correct_count,
@@ -3807,7 +3851,9 @@ def get_foreign_expressions():
 @app.route('/api/progress/me', methods=['GET'])
 def get_my_progress():
     verified_user = get_verified_user()
-    user_id = int(verified_user.get('id')) if verified_user else request.args.get('user_id', type=int)
+    if not verified_user:
+        return jsonify({"error": "Unauthorized"}), 401
+    user_id = int(verified_user.get('id'))
     conn = None
     try:
         conn = get_db()
@@ -3837,7 +3883,9 @@ def get_my_progress():
 @app.route('/api/digest/today', methods=['GET'])
 def get_daily_digest():
     verified_user = get_verified_user()
-    user_id = int(verified_user.get('id')) if verified_user else request.args.get('user_id', type=int)
+    if not verified_user:
+        return jsonify({"error": "Unauthorized"}), 401
+    user_id = int(verified_user.get('id'))
     conn = None
     try:
         conn = get_db()
@@ -3885,7 +3933,9 @@ def get_daily_digest():
 def mark_digest_read():
     data = request.get_json()
     verified_user = get_verified_user()
-    user_id = int(verified_user.get('id')) if verified_user else data.get('user_id')
+    if not verified_user:
+        return jsonify({"error": "Unauthorized"}), 401
+    user_id = int(verified_user.get('id'))
     content_type = data.get('content_type')
     
     if not user_id or not content_type:
