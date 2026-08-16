@@ -189,6 +189,63 @@ THREAD_MAPPING = {
 COUNTDOWN_THREAD_ID = 6539
 COUNTDOWN_MESSAGE_ID = 6542 
 
+# --- IN-MEMORY TELEGRAM AVATAR CACHE ---
+AVATAR_CACHE = {}  # Format: { user_id: {"url": "https://...", "ts": 1234567890} }
+
+def get_telegram_avatar_url(user_id):
+    """Fetches user profile photo URL from Telegram with 24-hour in-memory caching."""
+    if not user_id:
+        return None
+        
+    now = time.time()
+    if user_id in AVATAR_CACHE:
+        cached = AVATAR_CACHE[user_id]
+        if now - cached["ts"] < 86400:  # Valid for 24 hours
+            return cached["url"]
+
+    try:
+        # 1. Ask Telegram Bot API for the user's profile photo
+        res = http_session.get(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUserProfilePhotos",
+            params={"user_id": user_id, "limit": 1},
+            timeout=3
+        )
+        if res.status_code != 200:
+            AVATAR_CACHE[user_id] = {"url": None, "ts": now}
+            return None
+            
+        data = res.json()
+        photos = data.get("result", {}).get("photos", [])
+        if not photos or not photos[0]:
+            AVATAR_CACHE[user_id] = {"url": None, "ts": now}
+            return None
+
+        # 2. Get the lowest-resolution thumbnail for instant load
+        file_id = photos[0][0]["file_id"]
+
+        # 3. Request the direct download path
+        file_res = http_session.get(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getFile",
+            params={"file_id": file_id},
+            timeout=3
+        )
+        if file_res.status_code != 200:
+            AVATAR_CACHE[user_id] = {"url": None, "ts": now}
+            return None
+            
+        file_data = file_res.json()
+        file_path = file_data.get("result", {}).get("file_path")
+        if not file_path:
+            AVATAR_CACHE[user_id] = {"url": None, "ts": now}
+            return None
+
+        full_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_path}"
+        AVATAR_CACHE[user_id] = {"url": full_url, "ts": now}
+        return full_url
+
+    except Exception:
+        return None
+
 def notify_prathu(message):
     admin_chat_id = "716496729"
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -2391,8 +2448,12 @@ def bake_miniapp_cache():
                 if raw_growth > 0:
                     lifetime_growth_text = f"+{int(raw_growth)}%"
 
+            # Fetch avatar URL only for top 50 competitors to keep cache baking instant
+            user_avatar = get_telegram_avatar_url(uid) if index < 50 else None
+
             leaderboard_list.append({
                 "rank": index + 1, "id": uid, "name": user[1], "score": u_score,
+                "photo_url": user_avatar,
                 "elo": round(user[8] if user[8] is not None else 1000, 1), 
                 "last_updated": user[9] if user[9] else 0,
                 "house": str(user[3]), "is_captain": user[4], "attempts": u_attempts, "league": user[6] if user[6] else 0,
@@ -2548,12 +2609,12 @@ def get_mini_app_leaderboard():
             demotion_count += 1
             
         if is_promo or demotion_count <= 10 or is_me:
-            # ✨ FIXED: Strip the heavy chart arrays, but preserve core accuracy metrics for the Profile Modal
             custom_leaderboard.append({
                 "rank": u["rank"],
                 "id": u["id"],
                 "name": u["name"],
                 "score": u["score"],
+                "photo_url": u.get("photo_url"),
                 "elo": u["elo"],
                 "house": u["house"],
                 "is_captain": u["is_captain"],
@@ -2567,6 +2628,28 @@ def get_mini_app_leaderboard():
                     "wrong": u.get("history", {}).get("wrong", 0)
                 }
             })
+
+    # --- EXTRACT OR CONSTRUCT CURRENT_USER DATA ---
+    current_user_data = next((u for u in master_data["leaderboard"] if u["id"] == user_id), None)
+    if current_user_data:
+        # Attach caller's avatar directly
+        current_user_data["photo_url"] = get_telegram_avatar_url(user_id)
+    else:
+        current_user_data = {
+            "id": user_id,
+            "name": "You",
+            "score": 0,
+            "photo_url": get_telegram_avatar_url(user_id),
+            "rank": "N/A",
+            "league": 0,
+            "house": "🏳️ Unsorted",
+            "is_captain": 0,
+            "elo": 1000,
+            "attempts": 0,
+            "lifetime_growth": "Calibrating...",
+            "rank_history": [],
+            "history": {"labels": [], "scores": [], "accuracy": 0, "correct": 0, "wrong": 0}
+        }
 
     # --- FIX: EXTRACT OR CONSTRUCT CURRENT_USER DATA ---
     current_user_data = next((u for u in master_data["leaderboard"] if u["id"] == user_id), None)
