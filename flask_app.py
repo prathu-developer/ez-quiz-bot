@@ -1099,21 +1099,23 @@ def run_midnight_purge_background():
         conn = get_db()
         c = conn.cursor()
         
-        # Define the exact 30-day rolling window
+        # 1. Define time windows
         current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+        now_ts = time.time()
+        seven_days_ago_ts = now_ts - (7 * 24 * 60 * 60)
+        thirty_days_ago_ts = now_ts - (30 * 24 * 60 * 60)
         thirty_days_ago_date = (current_ist - timedelta(days=30)).strftime('%Y-%m-%d')
-        thirty_days_ago_ts = time.time() - (30 * 24 * 60 * 60)
         
         admin_ids = [716496729, 6251430317, 5103843488]
         
-        # 🧠 THE MASTER QUERY: 
-        # Calculates 30-day Quizzes and 30-day Editorials, strictly ignoring new students!
+        # 2. Fetch all users older than 7 days with their 30-day activity counts
         c.execute("""
             SELECT 
                 u.user_id, 
                 u.first_name,
-                COALESCE(SUM(dh.attempts), 0) + u.daily_attempts AS total_quizzes,
-                COALESCE(rr.read_count, 0) AS total_reads
+                COALESCE(SUM(dh.attempts), 0) + COALESCE(u.daily_attempts, 0) AS total_quizzes,
+                COALESCE(rr.read_count, 0) AS total_reads,
+                EXTRACT(EPOCH FROM u.joined_at) AS joined_ts
             FROM users u
             LEFT JOIN daily_history dh ON u.user_id = dh.user_id AND dh.date_str >= %s
             LEFT JOIN (
@@ -1122,37 +1124,51 @@ def run_midnight_purge_background():
                 WHERE created_at >= to_timestamp(%s) 
                 GROUP BY user_id
             ) rr ON u.user_id = rr.user_id
-            WHERE u.joined_at < to_timestamp(%s)
-            GROUP BY u.user_id, u.first_name, u.daily_attempts, rr.read_count
-        """, (thirty_days_ago_date, thirty_days_ago_ts, thirty_days_ago_ts))
+            WHERE u.joined_at IS NULL OR u.joined_at <= to_timestamp(%s)
+            GROUP BY u.user_id, u.first_name, u.daily_attempts, u.joined_at, rr.read_count
+        """, (thirty_days_ago_date, thirty_days_ago_ts, seven_days_ago_ts))
         
         all_users = c.fetchall()
-        purged_count = 0
+        
+        probation_purged = 0
+        regular_purged = 0
         
         if all_users:
             for u in all_users:
                 uid = u[0]
+                first_name = u[1]
                 total_quizzes = u[2]
                 total_reads = u[3]
+                joined_ts = u[4] if u[4] is not None else 0
                 
                 if uid in admin_ids:
-                    continue # Never purge an admin
-                    
-                # ⚖️ THE EXECUTION CRITERIA: 
-                # If they failed to read 4 editorials AND failed to solve 50 quizzes
-                if total_reads < 4 and total_quizzes < 50:
-                    
-                    # 🟢 NEW: Hard cap the daily purge at 100 students
-                    if purged_count >= 100:
+                    continue  # Never purge admins
+                
+                # Check whether user is in 7-30 day probation or standard 30+ day cohort
+                is_probation = (joined_ts > thirty_days_ago_ts)
+                should_purge = False
+                
+                if is_probation:
+                    # 7-Day Surveillance: Must have at least 1 Magazine Read OR 1 Quiz
+                    if total_reads < 1 and total_quizzes < 1:
+                        should_purge = True
+                else:
+                    # Standard 30-Day Rule: Must have at least 4 Magazine Reads OR 50 Quizzes
+                    if total_reads < 4 and total_quizzes < 50:
+                        should_purge = True
+                
+                if should_purge:
+                    # Daily safety cap
+                    if (probation_purged + regular_purged) >= 100:
                         break
                     
-                    # 1. Soft-Ban to remove from group
+                    # 1. Soft-ban to remove from group
                     res_ban = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/banChatMember", json={
                         "chat_id": CHAT_ID, "user_id": uid
                     }, timeout=5)
                     
                     if res_ban.status_code == 200 and res_ban.json().get('ok'):
-                        # 2. BULLETPROOF UNBAN
+                        # 2. Unban so they can rejoin later via trial if they wish
                         for _ in range(5):
                             res_unban = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/unbanChatMember", json={
                                 "chat_id": CHAT_ID, "user_id": uid, "only_if_banned": True
@@ -1161,28 +1177,32 @@ def run_midnight_purge_background():
                                 break
                             time.sleep(1)
                         
-                        # 3. Erase from DB
+                        # 3. Remove user record from DB
                         c.execute("DELETE FROM users WHERE user_id = %s", (uid,))
                         conn.commit()
-                        purged_count += 1
                         
-                    # 🛡️ Throttle to avoid Telegram Rate Limits
+                        if is_probation:
+                            probation_purged += 1
+                        else:
+                            regular_purged += 1
+                            
                     time.sleep(2)
         
         c.close()
         
-        # 📩 DM TO ADMIN PRATHU
-        # Your existing notify_prathu function is already hardcoded to send to ID: 716496729!
+        # Admin debrief report
         notify_prathu(
             f"🧹 **Midnight Purge Complete!**\n\n"
-            f"🎯 **Criteria:** < 4 Editorials & < 50 Quizzes\n"
-            f"🚪 **Members Removed:** {purged_count}"
+            f"🔍 **7-Day Probation Purged:** {probation_purged} (0 reads & 0 quizzes)\n"
+            f"🚪 **30-Day Inactive Purged:** {regular_purged} (< 4 reads & < 50 quizzes)\n"
+            f"👥 **Total Removed:** {probation_purged + regular_purged}"
         )
         
     except Exception as e:
         notify_prathu(f"🚨 **Purge Error:**\n`{e}`")
     finally:
-        if conn: release_db(conn)
+        if conn:
+            release_db(conn)
             
 # 🟢 DAILY PURGE TRIGGER (Midnight IST)
 @app.route('/cron/daily_purge_0508', methods=['GET', 'POST'])
@@ -3088,11 +3108,13 @@ def background_approve_user(user_id):
     welcome_text = (
         "🎉 **Entrance Trial Complete!**\n\n"
         "Congratulations, and welcome to the **Great Hall of Ez Editorials!** 🪄\n\n"
-        "You have successfully proved your dedication. To survive the weekly purges and climb the ranks to Champion, here is your daily schedule:\n\n"
-        "📰 **Morning:** Read the Daily Editorial PDFs dropped in the group.\n"
+        "🛡️ **7-Day Probation Rule:**\n"
+        "To stay in the group, complete at least **1 Quiz** OR read **1 Editorial Magazine** (tap 'Mark as Read') within your first 7 days.\n\n"
+        "📅 **Daily Routine:**\n"
+        "📰 **Morning:** Read the Daily Editorial PDFs in Thread 3.\n"
         "⚡ **4:30 PM:** Attempt the Daily Vocab & Topic Trials.\n"
-        "🏆 **Sunday:** The Weekly Cup Leaderboard locks at midnight!\n\n"
-        "Head over to the main group, say hello, and get ready for your first trial. Good luck, Scholar! 🏛️"
+        "🏆 **Sunday:** The Weekly Cup locks at midnight IST.\n\n"
+        "Head over to the main group, say hello, and begin your journey! 🏛️"
     )
     
     try:
