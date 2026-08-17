@@ -136,10 +136,20 @@ def release_db(conn):
         print(f"⚠️ Error releasing connection to pool: {e}")
 
 # --- AI Configuration ---
-API_KEYS = [
+# --- AI Configuration ---
+RAW_API_KEYS = [
     os.environ.get("GEMINI_KEY_1"),
     os.environ.get("GEMINI_KEY_2"),
-    os.environ.get("GEMINI_KEY_3")
+    os.environ.get("GEMINI_KEY_3"),
+    os.environ.get("GEMINI_KEY_4"),
+    os.environ.get("GEMINI_KEY_5"),
+    os.environ.get("GEMINI_KEY_6")
+]
+API_KEYS = [k for k in RAW_API_KEYS if k]
+
+AI_MODELS = [
+    'gemini-3.5-flash-lite',
+    'gemini-3.1-flash-lite'
 ]
 
 from collections import deque
@@ -512,7 +522,12 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
     is_admin = user_id in ADMIN_IDS
     is_explicitly_summoned = "lixie" in text_lower
     is_asking_rank = "rank" in text_lower or "score" in text_lower
-    doubt_keywords = ["what", "how", "when", "why", "where", "can you", "explain", "meaning", "synonym", "antonym", "rank", "score", "cutoff", "exam", "quiz"]
+    doubt_keywords = [
+        "what", "how", "when", "why", "where", "can you", "explain", 
+        "meaning", "synonym", "antonym", "rank", "score", "cutoff", 
+        "exam", "quiz", "quizzes", "poll", "polls", "test", "tests", 
+        "today quiz", "link", "schedule", "pdf", "magazine"
+    ]
     is_asking_doubt = "?" in text_lower or any(word in text_lower for word in doubt_keywords)
 
     if is_admin and not is_explicitly_summoned:
@@ -581,96 +596,123 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
 
     reply_context = f"\n=== CONVERSATION HISTORY ===\nThe user is directly replying to this previous message:\n\"{replied_text}\"\nUse this to answer contextual questions.\n" if replied_text else ""
 
+    # Dynamic 4:30 PM Topic Test Timetable Map
+    DAILY_SCHEDULE_MAP = {
+        "Monday": "• Set 1: Vocab Quiz (15Q • 10m)\n• Set 2: Error Detection (5Q • 5m)\n• Set 3: Fill in the Blanks (5Q • 5m)\n• Set 4: Sentence Improvement (5Q • 5m)\n• Set 5: Reading Comprehension (8Q • 10-12m)",
+        "Tuesday": "• Set 1: Vocab Quiz (15Q • 10m)\n• Set 2: Word Usage (5Q • 5m)\n• Set 3: Error Detection (5Q • 5m)\n• Set 4: Fill in the Blanks (5Q • 5m)\n• Set 5: Para Jumbles (5 Sets • 10-12m)",
+        "Wednesday": "• Set 1: Vocab Quiz (15Q • 10m)\n• Set 2: Sentence Improvement (5Q • 5m)\n• Set 3: Fill in the Blanks (5Q • 5m)\n• Set 4: Word Usage (5Q • 5m)\n• Set 5: Cloze Test (8Q • 10m)",
+        "Thursday": "• Set 1: Vocab Quiz (15Q • 10m)\n• Set 2: Error Detection (5Q • 5m)\n• Set 3: Sentence Improvement (5Q • 5m)\n• Set 4: Fill in the Blanks (5Q • 5m)\n• Set 5: Reading Comprehension (8Q • 10-12m)",
+        "Friday": "• Set 1: Vocab Quiz (15Q • 10m)\n• Set 2: Word Usage (5Q • 5m)\n• Set 3: Error Detection (5Q • 5m)\n• Set 4: Sentence Improvement (5Q • 5m)\n• Set 5: Para Jumbles (5 Sets • 10-12m)",
+        "Saturday": "• Set 1: Vocab Quiz (15Q • 10m)\n• Set 2: Fill in the Blanks (5Q • 5m)\n• Set 3: Error Detection (5Q • 5m)\n• Set 4: Word Usage (5Q • 5m)\n• Set 5: Cloze Test (8Q • 10m)",
+        "Sunday": "No quiz drops today. Weekly Cup locks at midnight!"
+    }
+    today_schedule = DAILY_SCHEDULE_MAP.get(current_day, "Standard Daily Sets")
+
     system_prompt = f"""
-    You are Lixie, the official AI learning assistant of Ez Editorials, an exam-oriented English learning ecosystem for Indian government-job aspirants.
-    Your persona: Knowledgeable, concise, friendly, natural, occasionally witty, and academically reliable. You are a strong English mentor who understands the Ez Editorials ecosystem. Drop all robotic formality (e.g., never say "Certainly! I'd be happy to help"). Simple question → simple answer. Difficult question → detailed reasoning.
+    You are Lixie, the official AI learning mentor and moderator of Ez Editorials — an exam-oriented English learning platform for Indian competitive exam aspirants (Banking, SSC, Regulatory, UPSC, State PSCs).
 
     =========================================
-    CORE BRAIN: EDUCATIONAL IDENTITY & PHILOSOPHY
+    PERSONA & MODERATOR RULES (STRICT BREVITY)
     =========================================
-    1. PLATFORM PURPOSE: Ez Editorials is not merely a quiz bot or leaderboard; it is a connected system: Editorial Reading → Vocabulary → Grammar → Exam-Style Practice → Explanation → Revision → Performance Analytics → Competitive Progress. The ultimate goal is better English, better exam performance, and better independent judgement. Optimise for learning quality.
-    2. SKILLS FOCUS: Develop reading comprehension, advanced (C1/C2) vocabulary, contextual word usage, grammar, error detection, sentence improvement, fillers, speed, accuracy, and exam-style reasoning.
-    3. QUESTION QUALITY: A good MCQ has one defensible best answer and plausible distractors. Distinguish between "intelligent elimination" and "cheap elimination." Options should not be absurd or trivially easy to eliminate without understanding the core concept.
-    4. OPTION-RANDOMISATION SAFETY (CRITICAL): Our system randomises MCQ option order. NEVER make explanations dependent on A/B/C/D positions. Do NOT say "Option A is correct." Instead, refer to the actual content: "The word *mitigate* is correct because...".
-    5. EXPLANATION PHILOSOPHY: Explanations must teach. 
-       - Vocab: Meaning → contextual meaning → why it fits → important distinction → example.
-       - Grammar: Rule → application → why the correct construction works → why the tempting alternative fails. (Prioritise grammatical reasoning over rote coaching-book rules).
-       - Comprehension: Evidence/inference → reasoning → why the answer is best.
-       Never produce empty explanations (e.g., "X is correct because it's the answer").
-    6. EDITORIALS & VOCAB: Editorials are for developing reading speed, formal written English, argument interpretation, and comfort with sophisticated English, not just extracting words. Prioritise idioms, phrasal verbs, and context-dependent meanings.
-    7. GRAMMAR 101: This course is officially completed. Do not casually promise new Grammar 101 notes unless live context explicitly dictates it.
-    8. EXAM ORIENTATION: Focus on the practical requirements of Indian competitive exams. Do not force exam references into every answer, but ensure the English taught translates to exam success.
+    - Role: Sharp community moderator + expert English tutor.
+    - Tone: Friendly, grounded, intelligent, zero conversational fluff.
+    - Format: Never start with robotic preamble (e.g., "Certainly!", "I'd be happy to help", "Here is a breakdown"). Jump directly into the answer.
+    - Length Limits:
+      * Quick query / single word meaning -> 1 to 3 concise lines max.
+      * Grammar or concept doubts -> Short, clear breakdown (Rule -> Context -> Why the common trap fails). Max 100-140 words.
+      * Platform or schedule questions -> 1 to 2 punchy lines.
 
     =========================================
-    LIVE CONTEXT: DYNAMIC SYSTEM STATE
+    ENGLISH TEACHING PHILOSOPHY
     =========================================
-    - Current Day: {current_day}
-    - Current IST Time: {current_ist_time.strftime('%I:%M %p')}
-    - Phase of the Week: {phase_of_week}
-    - Active Participants This Week: {total_active_participants}
-    
-    [User Interacting with You]
-    - Name: {first_name}
-    - Is Admin: {"True" if is_admin else "False"}
+    1. STRICT BRITISH ENGLISH: Always use British spelling and grammar conventions (e.g., analyse, colour, rigour, practise as verb).
+    2. EXAM RELEVANCE: Focus strictly on real exam patterns (subject-verb agreement, prepositions, parallelism, contextual vocabulary, idioms).
+    3. NO OPTION LABELS (A/B/C/D): Question options are randomized in the Mini App. Never say "Option A is correct." Always refer to the actual word or phrase.
+    4. TEACH BY CONTRAST: Show why the right answer works and why the tempting distractor is grammatically flawed.
 
-    [Platform Architecture]
-    The Mini App is the primary interface for the current main quiz and performance experience. Some specialised or legacy practice content may still be delivered through Telegram threads.
+    =========================================
+    ECOSYSTEM MAP & LIVE CONTEXT
+    =========================================
+    - Current Day: {current_day} | IST Time: {current_ist_time.strftime('%I:%M %p')}
+    - Weekly Phase: {phase_of_week}
+    - Active Challengers: {total_active_participants}
 
-    [Community Thread Map]
-    1. ‼️ Admin Notice / Info: Official announcements.
-    2. 📝 Today's Editorials Magazine: Daily PDFs dropped (Mon-Sat) between 10:00 AM - 11:59 AM.
-    3. 💬 Members Discussion/Feedback: The chat thread you are currently monitoring.
-    4. 🏆 Ranking & Quizzes: Real-time standings, cut-off points, and Mini App dashboard link.
-    5. 📰 Editor's Pick: Selected original-form articles for extended reading.
-    
+    [Today's 4:30 PM Test Schedule]
+    {today_schedule}
+
+    [Weekly Timetable Overview]
+    • Mon & Thu: RC (1 Passage • 8Q)
+    • Tue & Fri: Para Jumbles (5 Sets)
+    • Wed & Sat: Cloze Test (1 Passage • 8Q)
+    • Daily (Mon-Sat): Vocab Quiz (15Q) drops every day alongside changing grammar sets (Error Detection, Fillers, Sentence Improvement, Word Usage).
+    • Sunday: No quiz drops. Leaderboard locks at midnight IST.
+
+    [Community Rules & Threads]
+    • 📰 Today's Editorials (Thread 3): Mon-Sat morning PDFs with attendance buttons. No Sunday issues.
+    • 🏆 Rankings & Quizzes (Thread 2972): 4:30 PM drop notifications and Mini App links.
+    • 📊 Cut-offs & Promotion: Scoring above the Class Average promotes a student; below causes demotion.
+    • 🧠 Elo Rating: Lifetime rating (1000 base) tracking accuracy across difficulty tiers.
+    • 🧹 Purge Rule: Students must read at least 4 Magazines OR complete 50 Quizzes every 30 days.
+    • 📚 Grammar 101 / Word 101: Archived courses. Never promise new drops.
+    • QUIZ & EDITORIAL ECOSYSTEM ROUTING:
+        - Morning (10:00–11:59 AM): Daily Editorial PDFs drop in Thread 3 ("Today's Editorials Magazine"). Students must tap "Mark as Read".
+        - Evening (4:30 PM IST): 5 Daily Topic Trial sets drop inside the Mini App (accessible via Thread 2972 or Bot Menu).
+        - If a user asks where polls or quizzes are, reply concisely:
+            "Daily quizzes have moved from Telegram polls to our interactive Mini App for timed test practice and solutions! Read your morning PDF in Thread 3, then tap below to attempt today's 4:30 PM trials."
 
     [Upcoming Exams]
     {exam_context}
 
-    [Conversation History]
+    [User Interacting]
+    - Name: {first_name} (Admin: {is_admin})
     {reply_context}
 
     =========================================
-    OPERATIONAL RULES: BEHAVIOURAL GUARDRAILS
+    BEHAVIOURAL GUARDRAILS
     =========================================
-    1. DEFAULT ACTION IS SILENCE: If members are casually chatting, greeting, or debating amongst themselves without an English or platform doubt, your ONLY output must be the exact word: IGNORE.
-    2. THE ADMIN RULE: Completely ignore Admins unless they explicitly call your name ("Lixie").
-    3. BRITISH ENGLISH ENFORCEMENT: Strictly use British English spelling and terminology for all explanations, definitions, and synonyms (e.g., analyse, rigour, colour).
-    4. ANTI-HALLUCINATION RULE (CRITICAL): Never invent Ez Editorials-specific information. Do not fabricate schedules, exam dates, quiz availability, scores, rankings, Elo, features, thread locations, community rules, statistics, editorial content, or previous conversations. If live info is unavailable, state that briefly.
-    5. RANK & ROUTING INQUIRIES: If a user asks about their performance, tier, or standing, do NOT guess numbers. Wittily tell them to launch the Mini App from the "🎭 Live Weekly-Cup Leaderboard" thread to view their detailed performance analytics, charts, and Elo rating.
+    1. DEFAULT ACTION IS SILENCE: If members are casually chatting, greeting, or debating amongst themselves without an English or platform doubt, output ONLY the single word: IGNORE
+    2. THE ADMIN RULE: Ignore Admins completely unless they explicitly call your name ("Lixie").
+    3. ANTI-HALLUCINATION: Never invent platform features, exam dates, or user stats. If a student asks for their personal rank or score, direct them to open the Mini App dashboard.
     """
 
     ai_reply = None
-    for attempt in range(len(API_KEYS)):
-        try:
-            active_key = API_KEYS[db_key_index]
-            temp_client = genai.Client(api_key=active_key)
-            response = temp_client.models.generate_content(
-                model='gemini-3.5-flash-lite',
-                contents=text,
-                config=types.GenerateContentConfig(system_instruction=system_prompt, temperature=0.4)
-            )
-            ai_reply = response.text.strip()
+    # 2-Tier Fallback: gemini-3.5-flash-lite across 6 keys -> gemini-3.1-flash-lite across 6 keys
+    for model_name in AI_MODELS:
+        if ai_reply:
             break
-        except Exception as e:
-            error_str = str(e).lower()
-            if "503" in error_str or "unavailable" in error_str or "timeout" in error_str:
-                return
-            elif "429" in error_str or "quota" in error_str or "exhausted" in error_str:
+
+        for attempt in range(len(API_KEYS)):
+            try:
+                active_key = API_KEYS[db_key_index]
+                temp_client = genai.Client(api_key=active_key)
+                response = temp_client.models.generate_content(
+                    model=model_name,
+                    contents=text,
+                    config=types.GenerateContentConfig(system_instruction=system_prompt, temperature=0.4)
+                )
+                if response.text and response.text.strip():
+                    ai_reply = response.text.strip()
+                    break
+            except Exception as e:
+                error_str = str(e).lower()
                 db_key_index = (db_key_index + 1) % len(API_KEYS)
-                conn = get_db()
-                c = conn.cursor()
-                c.execute("""
-                    INSERT INTO bot_settings (key, value) VALUES ('current_key_index', %s)
-                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-                """, (str(db_key_index),))
-                conn.commit()
-                c.close()
-                release_db(conn)
-                continue
-            else:
-                db_key_index = (db_key_index + 1) % len(API_KEYS)
-                continue
+                try:
+                    conn = get_db()
+                    c = conn.cursor()
+                    c.execute("""
+                        INSERT INTO bot_settings (key, value) VALUES ('current_key_index', %s)
+                        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                    """, (str(db_key_index),))
+                    conn.commit()
+                    c.close()
+                    release_db(conn)
+                except Exception:
+                    pass
+
+                if "429" in error_str or "quota" in error_str or "exhausted" in error_str or "503" in error_str:
+                    continue
+                else:
+                    continue
 
     if not ai_reply or ai_reply == "IGNORE" or ai_reply == '"IGNORE"':
         return
@@ -764,27 +806,27 @@ def process_support_threads(chat_id, user_id, first_name, text, message_id, thre
 
     system_prompt = LIXIE_CORE_BRAIN + THREAD_MODE + CONVERSATION_AWARENESS
 
-    # 6. Execute Gemini Request (Using the same shared API key rotation)
+    # 6. Execute Gemini Request with Model & Key Fallback
     global current_key_index
     ai_reply = None
-    for attempt in range(len(API_KEYS)):
-        try:
-            active_key = API_KEYS[current_key_index]
-            temp_client = genai.Client(api_key=active_key)
-            response = temp_client.models.generate_content(
-                model='gemini-3.5-flash-lite',
-                contents=text,
-                config=types.GenerateContentConfig(system_instruction=system_prompt, temperature=0.3)
-            )
-            ai_reply = response.text.strip()
+
+    for model_name in AI_MODELS:
+        if ai_reply:
             break
-        except Exception as e:
-            error_str = str(e).lower()
-            if "503" in error_str or "unavailable" in error_str or "timeout" in error_str: return
-            elif "429" in error_str or "quota" in error_str or "exhausted" in error_str:
-                current_key_index = (current_key_index + 1) % len(API_KEYS)
-                continue
-            else:
+
+        for attempt in range(len(API_KEYS)):
+            try:
+                active_key = API_KEYS[current_key_index]
+                temp_client = genai.Client(api_key=active_key)
+                response = temp_client.models.generate_content(
+                    model=model_name,
+                    contents=text,
+                    config=types.GenerateContentConfig(system_instruction=system_prompt, temperature=0.3)
+                )
+                if response.text and response.text.strip():
+                    ai_reply = response.text.strip()
+                    break
+            except Exception as e:
                 current_key_index = (current_key_index + 1) % len(API_KEYS)
                 continue
 
@@ -1947,9 +1989,29 @@ def recalculate_dynamic_scores():
             release_db(conn)
 
 # ==========================================
-# BACKGROUND WORKER: SUNDAY ANNOUNCEMENT RESTORED
+# BACKGROUND WORKERS: SUNDAY ANNOUNCEMENTS SUITE
 # ==========================================
-def run_sunday_announcement():
+
+def run_no_editorials_announcement():
+    text = "_There won't be any Today's Editorials today; Editorials will be available Monday through Saturday exclusively._"
+    for attempt in range(10):
+        try:
+            res = http_session.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                json={"chat_id": CHAT_ID, "message_thread_id": 3, "text": text, "parse_mode": "Markdown"},
+                timeout=20
+            )
+            if res.status_code == 200:
+                notify_prathu("📢 **No Editorials Notice** posted successfully!")
+                break
+            elif res.status_code == 429:
+                time.sleep(res.json().get("parameters", {}).get("retry_after", 5) + 1)
+            else:
+                time.sleep(2)
+        except Exception:
+            time.sleep(3 + attempt * 2)
+
+def run_activity_requirement_announcement():
     text = (
         "📢 **Activity Requirement**\n\n"
         "📝 Attempt at least 50 Quizzes or\n"
@@ -1959,21 +2021,65 @@ def run_sunday_announcement():
     )
     for attempt in range(10):
         try:
-            # 🟢 FIX: Changed message_thread_id to 5
-            res = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "message_thread_id": 5, "text": text, "parse_mode": "Markdown"}, timeout=20)
-            if res.status_code == 200: 
-                notify_prathu("📢 **Sunday Purge Announcement** posted successfully!")
+            res = http_session.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                json={"chat_id": CHAT_ID, "message_thread_id": 5, "text": text, "parse_mode": "Markdown"},
+                timeout=20
+            )
+            if res.status_code == 200:
+                notify_prathu("📢 **Sunday Activity Requirement Announcement** posted successfully!")
                 break
-            elif res.status_code == 429: time.sleep(res.json().get("parameters", {}).get("retry_after", 5) + 1)
-            else: time.sleep(2)
-        except: time.sleep(3 + attempt * 2)
+            elif res.status_code == 429:
+                time.sleep(res.json().get("parameters", {}).get("retry_after", 5) + 1)
+            else:
+                time.sleep(2)
+        except Exception:
+            time.sleep(3 + attempt * 2)
+
+def run_sunday_final_reminder():
+    current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    total_seconds = int((current_ist.replace(hour=23, minute=59, second=59) - current_ist).total_seconds())
+    time_str = f"{total_seconds // 3600} Hours and {(total_seconds % 3600) // 60} Minutes" if total_seconds > 0 else "0 Minutes"
+
+    text = (
+        f"<blockquote>⏱ <b>{time_str} Remaining:</b> The weekly leaderboard officially locks tonight at midnight!\n\n"
+        f"⚡️ This is your final reminder to complete your pending <b>Vocab and Grammar</b> quizzes before time runs out. "
+        f"Every point counts towards the House Cup!</blockquote>"
+    )
+
+    for attempt in range(10):
+        try:
+            res = http_session.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                json={"chat_id": CHAT_ID, "message_thread_id": 11, "text": text, "parse_mode": "HTML"},
+                timeout=20
+            )
+            if res.status_code == 200:
+                http_session.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage",
+                    json={"chat_id": CHAT_ID, "message_id": res.json()["result"]["message_id"], "disable_notification": False},
+                    timeout=10
+                )
+                notify_prathu("⏱️ **Sunday Final Midnight Reminder** posted successfully!")
+                break
+            elif res.status_code == 429:
+                time.sleep(res.json().get("parameters", {}).get("retry_after", 5) + 1)
+            else:
+                time.sleep(2)
+        except Exception:
+            time.sleep(3 + attempt * 2)
+
+def run_all_sunday_announcements():
+    run_no_editorials_announcement()
+    time.sleep(3)
+    run_activity_requirement_announcement()
+    time.sleep(3)
+    run_sunday_final_reminder()
 
 @app.route('/sunday_announcement/0508', methods=['GET', 'POST'])
 def trigger_sunday_announcement():
-    # 🟢 FIX: One single trigger now fires BOTH threads simultaneously!
-    threading.Thread(target=run_sunday_announcement).start()
-    threading.Thread(target=run_sunday_final_reminder).start()
-    return "Sunday Purge Announcement & Final Reminder triggered together!", 200
+    threading.Thread(target=run_all_sunday_announcements).start()
+    return "All Sunday announcements triggered in background!", 200
 
 # ==========================================
 # SECURED: DAILY VOCAB & QUIZZES
@@ -2142,12 +2248,13 @@ def relay_message(message_id, target_thread_id):
                     release_db(conn)
                 except: pass
 
-                # ✨ NEW: Inject the "Mark as Read" button if it's the Editorials thread
+                # ✨ Bridge Editorials (Thread 3) to the Daily Quizzes Mini App
                 if target_thread_id == 3:
                     markup = {
-                        "inline_keyboard": [[
-                            {"text": "📖 Mark as Read • 0", "callback_data": f"read_{new_msg_id}"}
-                        ]]
+                        "inline_keyboard": [
+                            [{"text": "📖 Mark as Read • 0", "callback_data": f"read_{new_msg_id}"}],
+                            [{"text": "⚡️ Attempt Daily Topic Trials (4:30 PM)", "url": "https://t.me/Ez_vocab_bot/leaderboard"}]
+                        ]
                     }
                     http_session.post(
                         f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageReplyMarkup",
@@ -2811,7 +2918,7 @@ Connotation Guide:
     for idx, key in enumerate(API_KEYS):
         try:
             temp_client = genai.Client(api_key=key)
-            response = temp_client.models.generate_content(model='gemini-3.6-flash', contents=wotd_prompt, config=types.GenerateContentConfig(temperature=0.5))
+            response = temp_client.models.generate_content(model='gemini-3.7-flash', contents=wotd_prompt, config=types.GenerateContentConfig(temperature=0.5))
             if response.text:
                 wotd_text = response.text.strip()
                 successful_key_idx = idx
@@ -2902,7 +3009,7 @@ Output EXACTLY in this format:
         for key in shifted_keys:
             try:
                 temp_client = genai.Client(api_key=key)
-                response = temp_client.models.generate_content(model='gemini-3.6-flash', contents=foreign_prompt, config=types.GenerateContentConfig(temperature=0.3))
+                response = temp_client.models.generate_content(model='gemini-3.7-flash', contents=foreign_prompt, config=types.GenerateContentConfig(temperature=0.3))
                 if response.text:
                     foreign_text = response.text.strip()
                     break
