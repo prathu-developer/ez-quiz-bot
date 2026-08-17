@@ -946,7 +946,7 @@ def webhook():
         user_chat_id = join_req.get('user_chat_id', user_id)
         
         # 🟢 UPDATED: Pointing to the new Cloudflare Pages deployment!
-        MINI_APP_URL = "https://ez-editorials-app.pages.dev/captcha.html?mode=compact"
+        MINI_APP_URL = "https://ez-editorials-app.pages.dev/captcha.html"
         markup = {"inline_keyboard": [[{"text": "⚡️ Complete Entrance Trial (10Q)", "web_app": {"url": MINI_APP_URL}}]]}
         
         if query_id:
