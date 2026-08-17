@@ -737,20 +737,19 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
             time.sleep(3 + attempt)
 
 def process_support_threads(chat_id, user_id, first_name, text, message_id, thread_id):
-    # 1. Update Thread Memory (Bounded Context Window)
+    # 1. Bounded Thread Memory Buffer
     global THREAD_HISTORY
     if thread_id not in THREAD_HISTORY:
-        THREAD_HISTORY[thread_id] = deque(maxlen=12)
+        THREAD_HISTORY[thread_id] = deque(maxlen=8)
         
     THREAD_HISTORY[thread_id].append(f"User ({first_name}): {text}")
     recent_conversation = "\n".join(THREAD_HISTORY[thread_id])
 
-    # 2. Thread-Isolated Cooldown (Prevents spam)
+    # 2. Redis Cooldown (10s lock)
     if redis_client:
         if check_and_set_cooldown(f"rate:lixie:thread:{thread_id}", 10):
             return
     else:
-        # Fallback to local RAM if Redis is offline
         global LAST_AI_REPLY_TIME_THREADS
         if thread_id not in LAST_AI_REPLY_TIME_THREADS: LAST_AI_REPLY_TIME_THREADS[thread_id] = 0
         current_time = time.time()
@@ -758,46 +757,48 @@ def process_support_threads(chat_id, user_id, first_name, text, message_id, thre
             return
         LAST_AI_REPLY_TIME_THREADS[thread_id] = current_time
 
-    # 3. Define the Core Brain (Shared DNA)
+    # 3. Core Identity & Ultra-Brevity Rules
     LIXIE_CORE_BRAIN = """
-    You are Lixie, the official AI assistant of the Ez Editorials ecosystem.
-    - Platform: Indian government-job aspirants using a Telegram Mini App for English quizzes.
-    - Rule: Use British English.
-    - Anti-Hallucination: Never invent platform features, schedules, bug status, or developer actions.
+    You are Lixie, the AI moderator of Ez Editorials.
+    
+    STRICT BREVITY RULES (CRITICAL):
+    - Tone: Fast, grounded, diagnostic, smart community moderator.
+    - Max Length: Strictly 1 to 2 sentences (Under 35 words).
+    - No Corporate Preamble: Never say "Thank you for reaching out", "I understand your frustration", or "Certainly!".
+    - British English only.
+    - Anti-Hallucination: Never invent features, bug resolution times, or developer promises.
     """
 
-    # 4. Define the Thread-Specific Mode
+    # 4. Thread-Specific Moderator Rules
     if thread_id == 12082:
         THREAD_MODE = """
-        [THREAD PURPOSE: 🐞 BUG REPORTS - "BUG TRIAGE LIXIE"]
-        Personality: Quiet, precise, diagnostic and restrained.
-        Goal: Understand technical problems, UI issues, or incorrect scores. Do not talk just to talk.
-        - Ask for missing info if genuinely necessary (e.g., "Which test and question?").
-        - If the user adds details to an existing clear report, IGNORE.
+        [THREAD: 🐞 BUG REPORTS]
+        Goal: Diagnose and log issues in 1 sentence.
+        - If crucial info is missing, ask directly (e.g. "Which day/set and question number did this happen on?").
+        - If clear report: "Logged! The development team will investigate this."
+        - If user is providing follow-up details to an already acknowledged bug, output: IGNORE
         """
     elif thread_id == 12103:
         THREAD_MODE = """
-        [THREAD PURPOSE: 🛟 HELP & SUPPORT - "SUPPORT LIXIE"]
-        Personality: Patient, practical, and conversational.
-        Goal: Help users navigate the platform and Mini App.
-        - Answer directly if you know the answer.
-        - If a user solves the problem themselves (e.g., "Oh found it"), IGNORE.
+        [THREAD: 🛟 HELP & SUPPORT]
+        Goal: Resolve user navigation or Mini App access issues in 1-2 direct lines.
+        - Give exact button/tab name (e.g. "Open the Mini App via 🏆 Rankings & Quizzes thread and check the Progress tab.").
+        - If user says "Thanks", "Got it", or solves it themselves: IGNORE
         """
     elif thread_id == 12105:
         THREAD_MODE = """
-        [THREAD PURPOSE: ⚡ FEATURE REQUESTS - "PRODUCT LIXIE"]
-        Personality: Thoughtful, receptive, product-aware and non-committal.
-        Goal: Understand what the user is proposing without making promises.
-        - Acknowledge NEW feature ideas (e.g., "Good suggestion. We'll keep the idea in mind.").
-        - Do NOT promise implementation or say "It's on the roadmap."
+        [THREAD: 💡 FEATURE REQUESTS]
+        Goal: Acknowledge community suggestions in exactly 1 line.
+        - Output: "Noted! We'll keep this idea in mind for future app updates."
+        - Never promise timelines, roadmaps, or guarantee implementation.
         """
+    else:
+        THREAD_MODE = ""
 
-    # 5. Define Conversational Awareness (The IGNORE Engine)
+    # 5. Silence Engine
     CONVERSATION_AWARENESS = f"""
-    [CONVERSATIONAL AWARENESS]
-    A thread is a CONVERSATION. You must NOT assume every new message requires a reply.
-    Determine if this is a NEW request, a follow-up, or just users chatting.
-    If your response does not add value, YOUR ONLY OUTPUT MUST BE THE EXACT WORD:
+    [IGNORE DIRECTIVE]
+    If this message is casual chatter, user-to-user conversation, a simple acknowledgement, or does not require moderation, your ONLY output MUST be the single word:
     IGNORE
 
     [RECENT CONVERSATION HISTORY]
@@ -821,23 +822,22 @@ def process_support_threads(chat_id, user_id, first_name, text, message_id, thre
                 response = temp_client.models.generate_content(
                     model=model_name,
                     contents=text,
-                    config=types.GenerateContentConfig(system_instruction=system_prompt, temperature=0.3)
+                    config=types.GenerateContentConfig(system_instruction=system_prompt, temperature=0.2)
                 )
                 if response.text and response.text.strip():
                     ai_reply = response.text.strip()
                     break
-            except Exception as e:
+            except Exception:
                 current_key_index = (current_key_index + 1) % len(API_KEYS)
                 continue
 
-    # 7. Execute the IGNORE directive
-    if not ai_reply or ai_reply == "IGNORE" or ai_reply == '"IGNORE"':
+    # 7. Check for IGNORE
+    if not ai_reply or ai_reply.upper() == "IGNORE" or ai_reply == '"IGNORE"':
         return
 
-    # 8. Save Lixie's reply to the memory buffer
+    # 8. Record in Memory & Dispatch
     THREAD_HISTORY[thread_id].append(f"Lixie: {ai_reply}")
 
-    # 9. Dispatch the response to Telegram
     send_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
         "chat_id": chat_id,
@@ -887,9 +887,18 @@ def process_read_receipt(cb_id, user_id, first_name, message_id):
         total_reads = c.fetchone()[0]
         conn.commit()
         
-        # 5. Live-Update the Button
-        markup = {"inline_keyboard": [[{"text": f"📖 Mark as Read • {total_reads}", "callback_data": f"read_{message_id}"}]]}
-        http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageReplyMarkup", json={"chat_id": CHAT_ID, "message_id": message_id, "reply_markup": markup})
+        # 5. Live-Update the Button (Updates to green check & preserves 2nd button)
+        read_label = f"✅ Marked as Read • {total_reads}" if total_reads > 0 else "📖 Mark as Read • 0"
+        markup = {
+            "inline_keyboard": [
+                [{"text": read_label, "callback_data": f"read_{message_id}"}],
+                [{"text": "⚡️ Daily Topic Trials", "url": "https://t.me/Ez_vocab_bot/leaderboard"}]
+            ]
+        }
+        http_session.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageReplyMarkup",
+            json={"chat_id": CHAT_ID, "message_id": message_id, "reply_markup": markup}
+        )
         
         # 6. Inform the user they are safe
         http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery", json={
@@ -2248,12 +2257,12 @@ def relay_message(message_id, target_thread_id):
                     release_db(conn)
                 except: pass
 
-                # ✨ Bridge Editorials (Thread 3) to the Daily Quizzes Mini App
+                # ✨ Inject dual buttons into Thread 3 (Editorials)
                 if target_thread_id == 3:
                     markup = {
                         "inline_keyboard": [
                             [{"text": "📖 Mark as Read • 0", "callback_data": f"read_{new_msg_id}"}],
-                            [{"text": "⚡️ Attempt Daily Topic Trials (4:30 PM)", "url": "https://t.me/Ez_vocab_bot/leaderboard"}]
+                            [{"text": "🎯 Topic Quiz (4:30 PM)", "url": "https://t.me/Ez_vocab_bot/leaderboard"}]
                         ]
                     }
                     http_session.post(
