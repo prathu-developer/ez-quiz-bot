@@ -3106,16 +3106,23 @@ def background_approve_user(user_id):
 
 @app.route('/api/approve_captcha', methods=['POST'])
 def approve_captcha():
-    data = request.get_json()
+    data = request.get_json() or {}
     verified_user = get_verified_user()
-    if not verified_user:
-        return jsonify({"error": "Unauthorized"}), 401
-    user_id = int(verified_user.get('id'))
+    
+    # Check HMAC-verified ID first, then fall back to body payload
+    user_id = verified_user.get('id') if verified_user else data.get('user_id')
 
-    # Instantly pass the heavy lifting to a background thread
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    try:
+        user_id = int(user_id)
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid user ID"}), 400
+
+    # Run user approval in the background
     threading.Thread(target=background_approve_user, args=(user_id,)).start()
 
-    # Instantly tell the Mini App to close without waiting!
     return jsonify({"status": "success"}), 200
 
 # ==========================================
