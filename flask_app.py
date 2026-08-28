@@ -3147,6 +3147,27 @@ def approve_captcha():
 
     return jsonify({"status": "success"}), 200
 
+def is_github_file_updated_today(file_name, target_date_ist):
+    """Verifies whether a file in the repo was committed today in IST."""
+    try:
+        url = f"https://api.github.com/repos/prathu-developer/exam-scraper-api/commits?path={file_name}&per_page=1"
+        headers = {
+            "Authorization": f"token {GITHUB_PAT}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        res = http_session.get(url, headers=headers, timeout=10)
+        if res.status_code == 200:
+            commits = res.json()
+            if commits and len(commits) > 0:
+                commit_date_str = commits[0]["commit"]["committer"]["date"]
+                # Parse ISO-8601 UTC and convert to IST (+5:30)
+                commit_utc = datetime.strptime(commit_date_str, "%Y-%m-%dT%H:%M:%SZ")
+                commit_ist = commit_utc + timedelta(hours=5, minutes=30)
+                return commit_ist.date() == target_date_ist
+    except Exception as e:
+        print(f"⚠️ Failed to check commit date for {file_name}: {e}")
+    return False
+
 # ==========================================
 # PHASE 2: MINI APP CONTENT INGESTION
 # ==========================================
@@ -3156,14 +3177,22 @@ def run_mini_app_ingestion():
     current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
     today_date = current_ist.date()
     
-    # 1. Set the exact Drop Time (Today 4:30 PM) and Close Time (Sunday 11:59 PM)
-    drop_time = current_ist.replace(hour=16, minute=30, second=0, microsecond=0)
+    # 1. Stale File Guard: Abort if questions.json was not committed today
+    if not is_github_file_updated_today("questions.json", today_date):
+        notify_prathu(
+            f"⚠️ **Mini App Ingestion Aborted:** `questions.json` on GitHub was not updated today (`{today_date}`). "
+            f"Prevented ingestion of yesterday's quizzes."
+        )
+        return
+
+    # 2. Timing Configuration (Instant drop upon ingestion; closes Sunday 11:59 PM)
+    drop_time = current_ist
     days_until_sunday = 6 - current_ist.weekday()
     close_time = (current_ist + timedelta(days=days_until_sunday)).replace(hour=23, minute=59, second=59, microsecond=0)
     
     conn = None
     try:
-        # 2. Fetch all JSONs from GitHub
+        # 3. Fetch all JSONs from GitHub
         cache_buster = int(time.time())
         headers = {
             "Authorization": f"token {GITHUB_PAT}",
@@ -3174,7 +3203,7 @@ def run_mini_app_ingestion():
         grammar_url = f"https://api.github.com/repos/prathu-developer/exam-scraper-api/contents/grammar.json?ref=main&t={cache_buster}"
         advanced_url = f"https://api.github.com/repos/prathu-developer/exam-scraper-api/contents/comprehension_tests.json?ref=main&t={cache_buster}"
         
-        # 🟢 1. Safely fetch Vocab JSON
+        # Safely fetch Vocab JSON
         try:
             vocab_resp = http_session.get(vocab_url, headers=headers, timeout=15)
             vocab_resp.raise_for_status()
@@ -3183,7 +3212,7 @@ def run_mini_app_ingestion():
             print(f"Vocab JSON Error: {e}")
             vocab_data = []
             
-        # 🟢 2. Safely fetch Grammar JSON
+        # Safely fetch Grammar JSON
         try:
             grammar_resp = http_session.get(grammar_url, headers=headers, timeout=15)
             grammar_resp.raise_for_status()
@@ -3192,7 +3221,7 @@ def run_mini_app_ingestion():
             print(f"Grammar JSON Error: {e}")
             grammar_data = {}
 
-        # 🟢 3. Safely fetch Advanced JSON
+        # Safely fetch Advanced JSON
         try:
             advanced_resp = http_session.get(advanced_url, headers=headers, timeout=15)
             advanced_resp.raise_for_status()
@@ -3201,7 +3230,6 @@ def run_mini_app_ingestion():
             print(f"Advanced JSON Error: {e}")
             advanced_data = {}
         
-        # Failsafe: Ensure data structures match expectations
         if not isinstance(vocab_data, list):
             vocab_data = []
 
@@ -3209,17 +3237,16 @@ def run_mini_app_ingestion():
         set_b = grammar_data.get("set_b", []) if isinstance(grammar_data, dict) else []
         set_c = grammar_data.get("set_c", []) if isinstance(grammar_data, dict) else []
 
-       # --- ADVANCED JSON ADAPTER (Hyper-Resilient) ---
+        # --- ADVANCED JSON ADAPTER ---
         set_rc = []
         if "set_d" in advanced_data:
             passage = advanced_data["set_d"].get("passage", "")
-            # 🟢 FIX: Allow AI to pass dynamic instructions
             instruction = advanced_data["set_d"].get("instruction", "Directions: Read the following passage carefully and answer the questions given below.")
             for q in advanced_data["set_d"].get("questions", []):
                 opts_list = q.get("options", [])
                 corr_ans = q.get("correct_answer", "")
-                
-                if not corr_ans and opts_list: corr_ans = opts_list[0]
+                if not corr_ans and opts_list: 
+                    corr_ans = opts_list[0]
 
                 set_rc.append({
                     "instruction": instruction,
@@ -3237,8 +3264,8 @@ def run_mini_app_ingestion():
             for q in advanced_data["set_e"].get("questions", []):
                 opts_list = q.get("options", [])
                 corr_ans = q.get("correct_answer", "")
-                
-                if not corr_ans and opts_list: corr_ans = opts_list[0]
+                if not corr_ans and opts_list: 
+                    corr_ans = opts_list[0]
 
                 set_cloze.append({
                     "instruction": instruction,
@@ -3254,18 +3281,15 @@ def run_mini_app_ingestion():
             instruction = advanced_data["set_f"].get("instruction", "Directions: In the following question, six sentences are given. Sentence A is fixed in its correct position. The remaining five sentences need to be rearranged to form a coherent paragraph. Answer the questions that follow.")
             for q in advanced_data["set_f"].get("questions", []):
                 sents = q.get("sentences", {})
-                # 🟢 FIX: Safely construct passage from sentences dictionary
                 sent_text = "\n".join([f"{k}) {v}" for k, v in sents.items()]) if sents else q.get("passage", "")
-                
                 opts_list = q.get("options", [])
                 corr_ans = q.get("correct_answer", "")
-                
-                if not corr_ans and opts_list: corr_ans = opts_list[0]
+                if not corr_ans and opts_list: 
+                    corr_ans = opts_list[0]
                 
                 set_pj.append({
                     "instruction": instruction,
                     "passage": sent_text,
-                    # 🟢 FIX: Remove the hardcoded question so AI can ask "Which comes after A?"
                     "question": q.get("question", "Which of the following is the correct logical sequence?"),
                     "options": opts_list,
                     "correct_answer": corr_ans,
@@ -3278,8 +3302,8 @@ def run_mini_app_ingestion():
             for q in advanced_data["set_g"].get("questions", []):
                 opts_list = q.get("options", [])
                 corr_ans = q.get("correct_answer", "")
-                
-                if not corr_ans and opts_list: corr_ans = opts_list[0]
+                if not corr_ans and opts_list: 
+                    corr_ans = opts_list[0]
                 
                 set_wu.append({
                     "instruction": instruction,
@@ -3290,45 +3314,40 @@ def run_mini_app_ingestion():
                     "explanation": q.get("explanation", "")
                 })
 
-        # Shuffle the questions for the Mini App just like we do for Telegram
-        import random
+        # Shuffle questions where applicable
         random.shuffle(vocab_data)
         random.shuffle(set_a)
         random.shuffle(set_b)
         random.shuffle(set_c)
-        
-        # 🟢 REMOVED: set_rc and set_cloze so their questions stay in chronological order!
-        
         random.shuffle(set_pj)
         random.shuffle(set_wu)
 
-        # 3. Define the 8 Quiz Sets
+        # 4. Define the Quiz Sets
         quiz_configurations = [
-            {"topic": "Vocab Quiz", "data": vocab_data, "duration": 600},          # 10 mins
-            {"topic": "Error Detection", "data": set_a, "duration": 300},          # 5 mins
-            {"topic": "Sentence Improvement", "data": set_b, "duration": 300},     # 5 mins
-            {"topic": "Fill in the Blank", "data": set_c, "duration": 240},        # 4 mins
-            {"topic": "Reading Comprehension", "data": set_rc, "duration": 600},   # 10 mins
-            {"topic": "Cloze Test", "data": set_cloze, "duration": 600},           # 10 mins
-            {"topic": "Para Jumbles", "data": set_pj, "duration": 600},            # 10 mins
-            {"topic": "Word Usage", "data": set_wu, "duration": 600}               # 10 mins
+            {"topic": "Vocab Quiz", "data": vocab_data, "duration": 600},
+            {"topic": "Error Detection", "data": set_a, "duration": 300},
+            {"topic": "Sentence Improvement", "data": set_b, "duration": 300},
+            {"topic": "Fill in the Blank", "data": set_c, "duration": 240},
+            {"topic": "Reading Comprehension", "data": set_rc, "duration": 600},
+            {"topic": "Cloze Test", "data": set_cloze, "duration": 600},
+            {"topic": "Para Jumbles", "data": set_pj, "duration": 600},
+            {"topic": "Word Usage", "data": set_wu, "duration": 600}
         ]
 
         conn = get_db()
         c = conn.cursor()
 
-        # Clean slate: Erase duplicate test sets for today if triggered multiple times
+        # Erase existing entries for today before re-ingesting
         c.execute("DELETE FROM quiz_sets WHERE quiz_day = %s", (today_date,))
 
         report_lines = []
 
         for config in quiz_configurations:
             q_list = config["data"]
-            if not q_list or len(q_list) == 0:
+            if not q_list:
                 report_lines.append(f"⚠️ {config['topic']}: Skipped (0 questions found)")
                 continue
                 
-            # Create the Quiz Set and grab its new ID
             c.execute("""
                 INSERT INTO quiz_sets (topic, quiz_day, question_count, duration_seconds, drop_time, close_time)
                 VALUES (%s, %s, %s, %s, %s, %s)
@@ -3338,13 +3357,11 @@ def run_mini_app_ingestion():
             quiz_set_id = c.fetchone()[0]
             inserted_count = 0
 
-            # Insert all questions for this set
             for mcq in q_list:
                 options = mcq.get('options', [])
                 correct_ans = mcq.get('correct_answer', '')
                 
-                # 🟢 NEW: Inject dummy data instead of silently skipping, so you can catch JSON typos visually!
-                if not options or len(options) == 0:
+                if not options:
                     options = ["JSON Data Error A", "JSON Data Error B"]
                 if not correct_ans:
                     correct_ans = options[0]
@@ -3358,7 +3375,6 @@ def run_mini_app_ingestion():
                 q_text = mcq.get('custom_ui', f'Choose the best replacement for the words "{mcq.get("target_phrase", "")}".' if 'target_phrase' in mcq else mcq.get('question', ''))
                 full_question = f"{q_text}\n\n{mcq.get('sentence', '')}".strip()
 
-                # Pack the extra fields into the options JSON temporarily so we don't have to alter the DB schema
                 meta_payload = {
                     "options": options,
                     "passage": mcq.get('passage', ''),
@@ -3378,8 +3394,12 @@ def run_mini_app_ingestion():
         report_text = "\n".join(report_lines)
         notify_prathu(f"🤖 **Mini App Ingestion Complete!**\n\n{report_text}")
 
+        # 5. Trigger the announcement immediately after committing to the database
+        run_quiz_unlock_announcement()
+
     except Exception as e:
-        if conn: conn.rollback()
+        if conn: 
+            conn.rollback()
         notify_prathu(f"🚨 **CRITICAL ERROR (Mini App Ingestion):**\n`{e}`")
     finally:
         if conn:
