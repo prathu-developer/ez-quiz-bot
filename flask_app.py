@@ -973,8 +973,8 @@ def webhook():
             })
             
         # ✨ THE TIME BOMB: Store in DB for the 1-minute cron job to sweep!
-        # 🟢 FIX: Increased from 300 seconds (5 mins) to 900 seconds (15 mins)
-        expire_time = int(time.time()) + 900 
+        # 🟢 FIX: Decreased to 300 seconds (5 mins)
+        expire_time = int(time.time()) + 300 
         try:
             conn = get_db()
             c = conn.cursor()
@@ -3091,20 +3091,23 @@ def background_approve_user(user_id):
         "user_id": user_id
     }
     
-    # 1. Approve the request safely with anti-spam retry logic
+    approved = False
+    # 1. Try to approve the pending request safely with anti-spam retry logic
     for attempt in range(5):
         try:
             res = http_session.post(url, json=payload, timeout=10)
             if res.status_code == 200:
+                approved = True
                 break
             elif res.status_code == 429: # Telegram Rate Limit
                 time.sleep(res.json().get("parameters", {}).get("retry_after", 3) + 1)
             else:
+                # If it's a 400 error, it means the request expired or was already deleted by our 5-min cron!
                 break
         except:
             time.sleep(2)
             
-    # 2. Send the Welcome DM
+    # 2. Standard Welcome DM (if approval worked)
     welcome_text = (
         "🎉 **Entrance Trial Complete!**\n\n"
         "Congratulations, and welcome to the **Great Hall of Ez Editorials!** 🪄\n\n"
@@ -3116,7 +3119,28 @@ def background_approve_user(user_id):
         "🏆 **Sunday:** The Weekly Cup locks at midnight IST.\n\n"
         "Head over to the main group, say hello, and begin your journey! 🏛️"
     )
+
+    # 3. ✨ THE NON-EXPIRING DM FIX: If the pending request was deleted by the 5-min cron, generate a one-time use invite link!
+    if not approved:
+        try:
+            invite_res = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/createChatInviteLink", json={
+                "chat_id": CHAT_ID,
+                "member_limit": 1 # Only allows 1 person to use this link (prevents sharing)
+            }, timeout=10)
+            
+            if invite_res.status_code == 200:
+                invite_link = invite_res.json().get("result", {}).get("invite_link")
+                welcome_text = (
+                    "🎉 **Entrance Trial Complete!**\n\n"
+                    "You passed the test! However, your original join request expired.\n\n"
+                    f"👉 **Click here to join the group:** {invite_link}\n\n"
+                    "🛡️ **7-Day Probation Rule:**\n"
+                    "To stay in the group, complete at least **1 Quiz** OR read **1 Editorial Magazine** (tap 'Mark as Read') within your first 7 days."
+                )
+        except Exception as e:
+            print(f"🚨 Error generating invite link: {e}")
     
+    # 4. Send the Final DM to the user
     try:
         http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
             "chat_id": user_id,
