@@ -1709,7 +1709,46 @@ def trigger_weekly_reset():
     threading.Thread(target=run_weekly_reset_background).start()
     return "Weekly reset triggered!", 200
 
+def auto_finalize_abandoned_attempts():
+    """Sweeps attempts running past duration_seconds + 30s and marks them submitted."""
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+        
+        c.execute("""
+            SELECT a.id, a.started_at, s.duration_seconds
+            FROM quiz_attempts a
+            JOIN quiz_sets s ON a.quiz_set_id = s.id
+            WHERE a.submitted_at IS NULL
+              AND a.started_at < (%s - (s.duration_seconds || ' seconds')::interval)
+        """, (current_ist,))
+        
+        expired_attempts = c.fetchall()
+        for attempt in expired_attempts:
+            att_id = attempt[0]
+            c.execute("""
+                UPDATE quiz_attempts
+                SET submitted_at = started_at + (SELECT duration_seconds * INTERVAL '1 second' FROM quiz_sets WHERE id = quiz_attempts.quiz_set_id),
+                    score = COALESCE((
+                        SELECT SUM(CASE WHEN is_correct THEN 1.0 ELSE -0.25 END)
+                        FROM quiz_responses
+                        WHERE attempt_id = %s AND selected_index IS NOT NULL
+                    ), 0.0)
+                WHERE id = %s
+            """, (att_id, att_id))
+            
+        conn.commit()
+    except Exception as e:
+        print(f"⚠️ Sweeper error: {e}")
+    finally:
+        if conn: release_db(conn)
+
 def run_queue_processor_background():
+    # Automatically sweep expired unsubmitted attempts
+    auto_finalize_abandoned_attempts()
+
     conn = None
     try:
         conn = get_db()
@@ -3690,21 +3729,18 @@ def get_profile():
 
 @app.route('/api/quiz/start', methods=['POST'])
 def start_quiz():
-    # 🟢 NEW: Prevents starting new tests during maintenance
     blocked = maintenance_block()
     if blocked: 
         return blocked
 
-    data = request.get_json()
-
-    # ✨ STRICT AUTH: No fallback.
+    data = request.get_json() or {}
     verified_user = get_verified_user()
     if not verified_user:
         return jsonify({"error": "Unauthorized"}), 401
     user_id = int(verified_user.get('id'))
 
     quiz_set_id = data.get('quiz_set_id')
-    is_practice = data.get('is_practice', False) # 🟢 NEW: Check for Practice Mode
+    is_practice = data.get('is_practice', False)
     
     if not user_id or not quiz_set_id:
         return jsonify({"error": "Missing user_id or quiz_set_id"}), 400
@@ -3728,49 +3764,70 @@ def start_quiz():
         if current_ist < drop_time or current_ist > close_time:
             return jsonify({"error": "Quiz is currently locked or closed"}), 403
 
-        # 🟢 NEW: If Practice Mode, skip the DB check and instantly return the questions with correct answers!
         if is_practice:
             c.execute("SELECT id, question_text, options, correct_index, explanation FROM quiz_questions WHERE quiz_set_id = %s ORDER BY id ASC", (quiz_set_id,))
             questions = [{"question_id": q[0], "text": q[1], "options": q[2], "correct_index": q[3], "explanation": q[4]} for q in c.fetchall()]
             return jsonify({
                 "attempt_id": "practice_mode",
                 "duration_seconds": duration_seconds,
+                "remaining_seconds": duration_seconds,
                 "started_at": current_ist.isoformat(),
                 "questions": questions
             }), 200
             
-        # FIX BUG #1: Safely handle abandoned/unsubmitted attempts
-        c.execute("SELECT id, submitted_at, started_at FROM quiz_attempts WHERE user_id = %s AND quiz_set_id = %s", (user_id, quiz_set_id))
+        # Check for existing attempts
+        c.execute("SELECT id, submitted_at, started_at, score FROM quiz_attempts WHERE user_id = %s AND quiz_set_id = %s", (user_id, quiz_set_id))
         attempt_row = c.fetchone()
         
         if attempt_row:
-            attempt_id, submitted_at, prev_started_at = attempt_row
+            attempt_id, submitted_at, prev_started_at, prev_score = attempt_row
+            
+            # Case A: Already submitted
             if submitted_at is not None:
-                return jsonify({"error": "You have already completed this quiz"}), 403
-            else:
-                # It's an abandoned attempt! Enforce original timer.
-                prev_started_at = prev_started_at.replace(tzinfo=None)
-                time_elapsed = (current_ist - prev_started_at).total_seconds()
-                if time_elapsed > duration_seconds:
-                    return jsonify({"error": "Your time for this quiz has already expired."}), 403
+                return jsonify({
+                    "completed": True,
+                    "attempt_id": attempt_id,
+                    "message": "Quiz already completed"
+                }), 200
+                
+            # Case B: Incomplete attempt
+            prev_started_at = prev_started_at.replace(tzinfo=None)
+            time_elapsed = (current_ist - prev_started_at).total_seconds()
+            
+            # If expired while window was closed -> auto-finalize now
+            if time_elapsed > duration_seconds:
+                c.execute("""
+                    UPDATE quiz_attempts 
+                    SET submitted_at = %s, score = COALESCE(score, 0)
+                    WHERE id = %s
+                """, (current_ist, attempt_id))
+                conn.commit()
+                return jsonify({
+                    "completed": True,
+                    "attempt_id": attempt_id,
+                    "message": "Time expired while away. Results generated."
+                }), 200
+                
+            # Still within time limit -> resume with remaining seconds
+            remaining_seconds = max(5, int(duration_seconds - time_elapsed))
         else:
-            # It's a brand new attempt
+            # Brand new attempt
             c.execute("""
                 INSERT INTO quiz_attempts (user_id, quiz_set_id, started_at) 
                 VALUES (%s, %s, %s) RETURNING id
             """, (user_id, quiz_set_id, current_ist))
             attempt_id = c.fetchone()[0]
+            remaining_seconds = duration_seconds
+            conn.commit()
         
         # Fetch Questions
         c.execute("SELECT id, question_text, options FROM quiz_questions WHERE quiz_set_id = %s ORDER BY id ASC", (quiz_set_id,))
         questions = [{"question_id": q[0], "text": q[1], "options": q[2]} for q in c.fetchall()]
-            
-        conn.commit()
         
-        # Pass the true duration to the frontend
         return jsonify({
             "attempt_id": attempt_id,
             "duration_seconds": duration_seconds,
+            "remaining_seconds": remaining_seconds,
             "started_at": current_ist.isoformat(),
             "questions": questions
         }), 200
@@ -3787,28 +3844,30 @@ def start_quiz():
 
 @app.route('/api/quiz/submit', methods=['POST'])
 def submit_quiz():
-    # ✨ FIX: Authenticate before processing
     verified_user = get_verified_user()
     if not verified_user:
         return jsonify({"error": "Unauthorized"}), 401
     verified_user_id = int(verified_user["id"])
 
-    data = request.get_json()
+    data = request.get_json() or {}
     attempt_id = data.get('attempt_id')
-    user_responses = data.get('responses', []) 
+    user_responses = data.get('responses', [])
 
-    # IDEMPOTENCY LOCK
+    if not attempt_id:
+        return jsonify({"error": "Missing attempt_id"}), 400
+
     if not acquire_submission_lock(attempt_id):
         return jsonify({"error": "Submission is already being processed."}), 409
 
     current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    current_day_str = current_ist.strftime('%a')
     
     conn = None
     try:
         conn = get_db()
         c = conn.cursor()
         
-        # 1. Fetch Attempt & Validate
+        # 1. Fetch Attempt & Validate Ownership
         c.execute("""
             SELECT a.user_id, a.quiz_set_id, a.started_at, a.submitted_at, s.duration_seconds
             FROM quiz_attempts a
@@ -3818,36 +3877,31 @@ def submit_quiz():
         attempt_meta = c.fetchone()
         
         if not attempt_meta:
+            if redis_client: redis_client.delete(f"lock:submit:{attempt_id}")
             return jsonify({"error": "Attempt not found"}), 404
             
         user_id, quiz_set_id, started_at, submitted_at, duration_seconds = attempt_meta
         
-        # ✨ FIX: Ownership Check
         if user_id != verified_user_id:
             if redis_client: redis_client.delete(f"lock:submit:{attempt_id}")
             return jsonify({"error": "Unauthorized"}), 403
             
+        # Return success immediately if already submitted
         if submitted_at is not None:
-            return jsonify({"error": "Quiz already submitted"}), 403
+            return jsonify({"success": True, "message": "Already submitted"}), 200
             
-        started_at = started_at.replace(tzinfo=None)
-        
-        # 2. Server-Side Timer Validation (+15 second grace period for network latency)
-        time_taken = (current_ist - started_at).total_seconds()
-        if time_taken > (duration_seconds + 15):
-            return jsonify({"error": "Time limit exceeded. Submission rejected."}), 403
-            
-        # 3. Fetch Correct Answers for Scoring
+        # 2. Fetch All Correct Answers in One Query
         c.execute("SELECT id, correct_index FROM quiz_questions WHERE quiz_set_id = %s", (quiz_set_id,))
         correct_map = {row[0]: row[1] for row in c.fetchall()}
         
         total_score = 0.0
         responses_to_insert = []
-        current_day_str = current_ist.strftime('%a') # NEW: Needed for the Telegram tracking tables
+        poll_inserts = []
+        user_answer_inserts = []
         
         for r in user_responses:
             q_id = r.get('question_id')
-            s_idx = r.get('selected_index') # Will be None if skipped/unattempted
+            s_idx = r.get('selected_index')
             
             if q_id not in correct_map:
                 continue
@@ -3858,35 +3912,39 @@ def submit_quiz():
                     is_correct = True
                     total_score += 1.0
                 else:
-                    total_score -= 0.25 # Negative Marking
+                    total_score -= 0.25
                     
             responses_to_insert.append((attempt_id, q_id, s_idx, is_correct))
             
-            # 🟢 THE GHOST POLL BRIDGE: Inject into the Telegram tracking tables!
             if s_idx is not None:
-                # Register the Mini App question as a "poll" so the math engine sees it
-                c.execute("""
-                    INSERT INTO polls (poll_id, correct_index, poll_day) 
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (poll_id) DO NOTHING
-                """, (str(q_id), correct_map[q_id], current_day_str))
-                
-                # Insert the student's Mini App answer as a "poll answer"
-                c.execute("""
-                    INSERT INTO user_answers (user_id, poll_id, is_correct, poll_day, chosen_option)
-                    VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT (user_id, poll_id) DO UPDATE SET 
-                        is_correct = EXCLUDED.is_correct, 
-                        chosen_option = EXCLUDED.chosen_option
-                """, (user_id, str(q_id), int(is_correct), current_day_str, s_idx))
+                poll_inserts.append((str(q_id), correct_map[q_id], current_day_str))
+                user_answer_inserts.append((user_id, str(q_id), int(is_correct), current_day_str, s_idx))
             
-        # 4. Save Responses & Update Attempt Score (Original Mini App Tracking)
+        # 3. Batch Inserts (Eliminates loops with multiple individual database queries)
         if responses_to_insert:
             c.executemany("""
                 INSERT INTO quiz_responses (attempt_id, question_id, selected_index, is_correct)
                 VALUES (%s, %s, %s, %s)
+                ON CONFLICT DO NOTHING
             """, responses_to_insert)
+
+        if poll_inserts:
+            c.executemany("""
+                INSERT INTO polls (poll_id, correct_index, poll_day) 
+                VALUES (%s, %s, %s)
+                ON CONFLICT (poll_id) DO NOTHING
+            """, poll_inserts)
+
+        if user_answer_inserts:
+            c.executemany("""
+                INSERT INTO user_answers (user_id, poll_id, is_correct, poll_day, chosen_option)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (user_id, poll_id) DO UPDATE SET 
+                    is_correct = EXCLUDED.is_correct, 
+                    chosen_option = EXCLUDED.chosen_option
+            """, user_answer_inserts)
         
+        # 4. Finalize Attempt
         c.execute("""
             UPDATE quiz_attempts 
             SET submitted_at = %s, score = %s
@@ -3894,14 +3952,11 @@ def submit_quiz():
         """, (current_ist, total_score, attempt_id))
         
         conn.commit()
-        
         return jsonify({"success": True, "score": total_score}), 200
         
     except Exception as e:
         if conn: conn.rollback()
-        # ✨ FIX: Release Redis submission lock on processing failure
-        if redis_client:
-            redis_client.delete(f"lock:submit:{attempt_id}")
+        if redis_client: redis_client.delete(f"lock:submit:{attempt_id}")
         return jsonify({"error": str(e)}), 500
     finally:
         if conn: release_db(conn)
