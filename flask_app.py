@@ -2346,19 +2346,18 @@ def relay_to_channel_with_buttons(source_msg_id):
             except Exception:
                 pass
 
-            # Dispatch the 2-button navigation row
+            # Dispatch buttons with an invisible character so no text line appears
             button_payload = {
                 "chat_id": TARGET_CHANNEL_ID,
-                "text": "👇 **Daily Study Resources & Practice:**",
-                "parse_mode": "Markdown",
+                "text": "\u200b",
                 "reply_markup": {
                     "inline_keyboard": [[
                         {
-                            "text": "📖 Access Daily Editorials Magazine",
+                            "text": "Magazine",
                             "url": "https://t.me/ezeditorialgroup/3"
                         },
                         {
-                            "text": "⚡ Access Daily Quiz",
+                            "text": "Quizzes",
                             "url": "https://t.me/Ez_vocab_bot"
                         }
                     ]]
