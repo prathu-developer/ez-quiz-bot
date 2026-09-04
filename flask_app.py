@@ -2319,12 +2319,26 @@ def fetch_and_update_exams_db():
     except Exception as e: print(f"⚠️ Failed to update exam dates from private repo: {e}")
 
 def relay_to_channel_with_buttons(source_msg_id):
-    """Copies message from Thread 271 to the channel and posts follow-up buttons."""
+    """Copies message from Thread 271 directly to the channel with inline buttons attached."""
     copy_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/copyMessage"
+    
+    # 🟢 Pass reply_markup directly into copyMessage
     payload = {
         "chat_id": TARGET_CHANNEL_ID,
         "from_chat_id": SOURCE_CHAT_ID,
-        "message_id": source_msg_id
+        "message_id": source_msg_id,
+        "reply_markup": {
+            "inline_keyboard": [[
+                {
+                    "text": "Magazine",
+                    "url": "https://t.me/ezeditorialgroup/3"
+                },
+                {
+                    "text": "Quizzes",
+                    "url": "https://t.me/Ez_vocab_bot"
+                }
+            ]]
+        }
     }
     
     try:
@@ -2345,25 +2359,9 @@ def relay_to_channel_with_buttons(source_msg_id):
                 release_db(conn)
             except Exception:
                 pass
-
-            # Dispatch buttons with an invisible character so no text line appears
-            button_payload = {
-                "chat_id": TARGET_CHANNEL_ID,
-                "text": "\u200b",
-                "reply_markup": {
-                    "inline_keyboard": [[
-                        {
-                            "text": "Magazine",
-                            "url": "https://t.me/ezeditorialgroup/3"
-                        },
-                        {
-                            "text": "Quizzes",
-                            "url": "https://t.me/Ez_vocab_bot"
-                        }
-                    ]]
-                }
-            }
-            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json=button_payload, timeout=10)
+        else:
+            # Prints Telegram error if permissions or IDs are invalid
+            print(f"⚠️ Telegram API error on copyMessage: {res.status_code} - {res.text}")
     except Exception as e:
         print(f"⚠️ Error relaying to target channel: {e}")
 
