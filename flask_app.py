@@ -4062,6 +4062,7 @@ def submit_quiz():
         for r in user_responses:
             q_id = r.get('question_id')
             s_idx = r.get('selected_index')
+            time_spent = int(r.get('time_spent', 0)) # 🟢 Extract question time
             
             if q_id not in correct_map:
                 continue
@@ -4074,17 +4075,18 @@ def submit_quiz():
                 else:
                     total_score -= 0.25
                     
-            responses_to_insert.append((attempt_id, q_id, s_idx, is_correct))
+            # 🟢 Add time_spent as the 5th parameter
+            responses_to_insert.append((attempt_id, q_id, s_idx, is_correct, time_spent))
             
             if s_idx is not None:
                 poll_inserts.append((str(q_id), correct_map[q_id], current_day_str))
                 user_answer_inserts.append((user_id, str(q_id), int(is_correct), current_day_str, s_idx))
             
-        # 3. Batch Inserts (Eliminates loops with multiple individual database queries)
+        # 3. Batch Inserts
         if responses_to_insert:
             c.executemany("""
-                INSERT INTO quiz_responses (attempt_id, question_id, selected_index, is_correct)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO quiz_responses (attempt_id, question_id, selected_index, is_correct, time_spent)
+                VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT DO NOTHING
             """, responses_to_insert)
 
@@ -4164,34 +4166,29 @@ def get_quiz_result(attempt_id):
             
         rank_val, pct_val, total_participants, score, time_taken, quiz_set_id = rank_row
         
-        # 2. Get Community Stats for the Review Pills
+        # 2. Get Community Stats & True Question Averages
         c.execute("""
             SELECT question_id, 
                    COUNT(selected_index) as total_attempts, 
-                   SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) as total_correct
+                   SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) as total_correct,
+                   ROUND(AVG(time_spent) FILTER (WHERE time_spent > 0)) as avg_time
             FROM quiz_responses
             WHERE question_id IN (SELECT id FROM quiz_questions WHERE quiz_set_id = %s)
             GROUP BY question_id
         """, (quiz_set_id,))
-        q_stats = {row[0]: {"attempts": row[1], "correct": row[2]} for row in c.fetchall()}
+        q_stats = {
+            row[0]: {
+                "attempts": row[1], 
+                "correct": row[2], 
+                "avg_time": int(row[3]) if row[3] is not None else 15
+            } 
+            for row in c.fetchall()
+        }
 
-        c.execute("""
-            SELECT AVG(EXTRACT(EPOCH FROM (submitted_at - started_at))) 
-            FROM quiz_attempts 
-            WHERE quiz_set_id = %s AND submitted_at IS NOT NULL
-        """, (quiz_set_id,))
-        avg_quiz_time = c.fetchone()[0]
-        avg_quiz_time = float(avg_quiz_time) if avg_quiz_time else 0
-        
-        c.execute("SELECT question_count FROM quiz_sets WHERE id = %s", (quiz_set_id,))
-        q_count_row = c.fetchone()
-        q_count = q_count_row[0] if q_count_row and q_count_row[0] > 0 else 1
-        est_time_per_q = int(avg_quiz_time / q_count)
-
-        # 3. Get Sectional Summary & Explanations
+        # 3. Fetch Sectional Summary, Explanations, and User's Recorded Time
         c.execute("""
             SELECT q.id, q.question_text, q.options, q.correct_index, q.explanation, 
-                   r.selected_index, r.is_correct
+                   r.selected_index, r.is_correct, COALESCE(r.time_spent, 0)
             FROM quiz_questions q
             LEFT JOIN quiz_responses r ON q.id = r.question_id AND r.attempt_id = %s
             WHERE q.quiz_set_id = %s
@@ -4204,7 +4201,7 @@ def get_quiz_result(attempt_id):
         question_details = []
         
         for row in c.fetchall():
-            q_id, text, options, c_idx, exp, s_idx, is_corr = row
+            q_id, text, options, c_idx, exp, s_idx, is_corr, u_time_spent = row
             
             if s_idx is None:
                 unattempted_count += 1
@@ -4216,6 +4213,7 @@ def get_quiz_result(attempt_id):
             g_att = q_stats.get(q_id, {}).get("attempts", 0)
             g_cor = q_stats.get(q_id, {}).get("correct", 0)
             g_acc = round((g_cor / g_att) * 100) if g_att > 0 else 0
+            g_avg = q_stats.get(q_id, {}).get("avg_time", 15)
                 
             question_details.append({
                 "question_id": q_id,
@@ -4225,8 +4223,9 @@ def get_quiz_result(attempt_id):
                 "explanation": exp,
                 "user_selected_index": s_idx,
                 "is_correct": is_corr,
-                "global_accuracy": g_acc,        # 🟢 NEW DATA
-                "global_avg_time": est_time_per_q  # 🟢 NEW DATA
+                "global_accuracy": g_acc,
+                "global_avg_time": g_avg,          # 🟢 Specific question average
+                "user_time_spent": u_time_spent     # 🟢 Student's actual time spent
             })
         
        # Calculate Accuracy %
