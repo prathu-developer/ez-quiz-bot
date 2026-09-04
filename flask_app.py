@@ -149,7 +149,8 @@ API_KEYS = [k for k in RAW_API_KEYS if k]
 
 AI_MODELS = [
     'gemini-3.5-flash-lite',
-    'gemini-3.1-flash-lite'
+    'gemini-3.1-flash-lite',
+    'gemini-2.5-flash-lite'
 ]
 
 from collections import deque
@@ -2319,10 +2320,9 @@ def fetch_and_update_exams_db():
     except Exception as e: print(f"⚠️ Failed to update exam dates from private repo: {e}")
 
 def relay_to_channel_with_buttons(source_msg_id):
-    """Copies message from Thread 271 directly to the channel with inline buttons attached."""
+    """Copies message from Thread 271 directly to the channel with styled inline buttons."""
     copy_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/copyMessage"
     
-    # 🟢 Pass reply_markup directly into copyMessage
     payload = {
         "chat_id": TARGET_CHANNEL_ID,
         "from_chat_id": SOURCE_CHAT_ID,
@@ -2330,11 +2330,11 @@ def relay_to_channel_with_buttons(source_msg_id):
         "reply_markup": {
             "inline_keyboard": [[
                 {
-                    "text": "Magazine",
+                    "text": "📖 Magazine",
                     "url": "https://t.me/ezeditorialgroup/3"
                 },
                 {
-                    "text": "Quizzes",
+                    "text": "⚡ Quizzes",
                     "url": "https://t.me/Ez_vocab_bot"
                 }
             ]]
@@ -2346,7 +2346,6 @@ def relay_to_channel_with_buttons(source_msg_id):
         if res.status_code == 200:
             new_msg_id = res.json()["result"]["message_id"]
 
-            # Save link to DB for sync edit compatibility
             try:
                 conn = get_db()
                 c = conn.cursor()
@@ -2360,7 +2359,6 @@ def relay_to_channel_with_buttons(source_msg_id):
             except Exception:
                 pass
         else:
-            # Prints Telegram error if permissions or IDs are invalid
             print(f"⚠️ Telegram API error on copyMessage: {res.status_code} - {res.text}")
     except Exception as e:
         print(f"⚠️ Error relaying to target channel: {e}")
@@ -3148,7 +3146,7 @@ Connotation Guide:
     for idx, key in enumerate(API_KEYS):
         try:
             temp_client = genai.Client(api_key=key)
-            response = temp_client.models.generate_content(model='gemini-3.7-flash', contents=wotd_prompt, config=types.GenerateContentConfig(temperature=0.5))
+            response = temp_client.models.generate_content(model='gemini-3.8-flash', contents=wotd_prompt, config=types.GenerateContentConfig(temperature=0.5))
             if response.text:
                 wotd_text = response.text.strip()
                 successful_key_idx = idx
@@ -3239,7 +3237,7 @@ Output EXACTLY in this format:
         for key in shifted_keys:
             try:
                 temp_client = genai.Client(api_key=key)
-                response = temp_client.models.generate_content(model='gemini-3.7-flash', contents=foreign_prompt, config=types.GenerateContentConfig(temperature=0.3))
+                response = temp_client.models.generate_content(model='gemini-3.8-flash', contents=foreign_prompt, config=types.GenerateContentConfig(temperature=0.3))
                 if response.text:
                     foreign_text = response.text.strip()
                     break
