@@ -196,6 +196,11 @@ THREAD_MAPPING = {
     6: 5, 4: 2343, 2: 3, 11: 7438, 86: 11, 88: 824, 182: 2972,
 }
 
+TARGET_CHANNEL_ID = "-1003094340896"
+CHANNEL_SOURCE_THREAD = 271
+COMMUNITY_GROUP_URL = "https://t.me/ezeditorialgroup"
+MINI_APP_URL = "https://t.me/Ez_vocab_bot/leaderboard"
+
 COUNTDOWN_THREAD_ID = 6539
 COUNTDOWN_MESSAGE_ID = 6542 
 
@@ -928,6 +933,13 @@ def webhook():
         cb_id = cbq['id']
         user_info = cbq['from']
         
+        if cb_data == 'check_status':
+            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery", json={
+                "callback_query_id": cb_id, "text": "Verifying status...", "show_alert": False
+            })
+            threading.Thread(target=handle_private_bot_start, args=(user_info['id'], user_info.get('first_name', 'Student'))).start()
+            return 'OK', 200
+
         if cb_data.startswith('read_'):
             target_msg_id = int(cb_data.split('_')[1])
             user_id = user_info['id']
@@ -1053,9 +1065,19 @@ def webhook():
         thread_id = msg.get('message_thread_id')
         chat_type = msg['chat'].get('type')
 
+        if str(chat_id) == SOURCE_CHAT_ID and thread_id == CHANNEL_SOURCE_THREAD:
+            threading.Thread(target=relay_to_channel_with_buttons, args=(msg['message_id'],)).start()
+            return 'OK', 200
+
         if str(chat_id) == SOURCE_CHAT_ID and thread_id in THREAD_MAPPING:
             target_thread_id = THREAD_MAPPING[thread_id]
             relay_message(message_id=msg['message_id'], target_thread_id=target_thread_id)
+            return 'OK', 200
+
+        if chat_type == 'private':
+            user_id = msg['from']['id']
+            first_name = msg['from'].get('first_name', 'Student')
+            threading.Thread(target=handle_private_bot_start, args=(user_id, first_name)).start()
             return 'OK', 200
 
         if 'text' in msg:
@@ -2295,6 +2317,149 @@ def fetch_and_update_exams_db():
         c.close()
         release_db(conn)
     except Exception as e: print(f"⚠️ Failed to update exam dates from private repo: {e}")
+
+def relay_to_channel_with_buttons(source_msg_id):
+    """Copies message from Thread 271 to the channel and posts follow-up buttons."""
+    copy_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/copyMessage"
+    payload = {
+        "chat_id": TARGET_CHANNEL_ID,
+        "from_chat_id": SOURCE_CHAT_ID,
+        "message_id": source_msg_id
+    }
+    
+    try:
+        res = http_session.post(copy_url, json=payload, timeout=10)
+        if res.status_code == 200:
+            new_msg_id = res.json()["result"]["message_id"]
+
+            # Save link to DB for sync edit compatibility
+            try:
+                conn = get_db()
+                c = conn.cursor()
+                c.execute("""
+                    INSERT INTO message_links (source_msg_id, target_msg_id) VALUES (%s, %s)
+                    ON CONFLICT (source_msg_id) DO UPDATE SET target_msg_id = EXCLUDED.target_msg_id
+                """, (source_msg_id, new_msg_id))
+                conn.commit()
+                c.close()
+                release_db(conn)
+            except Exception:
+                pass
+
+            # Dispatch the 2-button navigation row
+            button_payload = {
+                "chat_id": TARGET_CHANNEL_ID,
+                "text": "👇 **Daily Study Resources & Practice:**",
+                "parse_mode": "Markdown",
+                "reply_markup": {
+                    "inline_keyboard": [[
+                        {
+                            "text": "📖 Access Daily Editorials Magazine",
+                            "url": "https://t.me/ezeditorialgroup/3"
+                        },
+                        {
+                            "text": "⚡ Access Daily Quiz",
+                            "url": "https://t.me/Ez_vocab_bot"
+                        }
+                    ]]
+                }
+            }
+            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json=button_payload, timeout=10)
+    except Exception as e:
+        print(f"⚠️ Error relaying to target channel: {e}")
+
+def check_student_membership(user_id):
+    """Verifies whether the student exists in the database and is present in CHAT_ID."""
+    is_in_db = False
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT 1 FROM users WHERE user_id = %s", (user_id,))
+        is_in_db = c.fetchone() is not None
+    except Exception:
+        pass
+    finally:
+        if conn:
+            release_db(conn)
+
+    is_group_member = False
+    try:
+        res = http_session.get(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getChatMember",
+            params={"chat_id": CHAT_ID, "user_id": user_id},
+            timeout=5
+        )
+        if res.status_code == 200:
+            status = res.json().get("result", {}).get("status")
+            if status in ["member", "administrator", "creator", "restricted"]:
+                is_group_member = True
+    except Exception:
+        pass
+
+    return is_in_db, is_group_member
+
+def handle_private_bot_start(user_id, first_name):
+    """Gatekeeper flow when a user interacts with the bot directly."""
+    is_in_db, is_group_member = check_student_membership(user_id)
+
+    # Sync membership into DB if they joined without registering
+    if is_group_member and not is_in_db:
+        try:
+            conn = get_db()
+            c = conn.cursor()
+            c.execute("""
+                INSERT INTO users (user_id, first_name, joined_at)
+                VALUES (%s, %s, NOW())
+                ON CONFLICT (user_id) DO UPDATE SET first_name = EXCLUDED.first_name
+            """, (user_id, first_name))
+            conn.commit()
+            c.close()
+            release_db(conn)
+            is_in_db = True
+        except Exception:
+            pass
+
+    # Approved student in both DB and group
+    if is_in_db and is_group_member:
+        payload = {
+            "chat_id": user_id,
+            "text": (
+                f"👋 **Welcome back, {first_name}!**\n\n"
+                "Your entrance trial is verified and your student profile is active.\n\n"
+                "Tap below to launch your trials and view your rank!"
+            ),
+            "parse_mode": "Markdown",
+            "reply_markup": {
+                "inline_keyboard": [[
+                    {
+                        "text": "⚡ Launch Mini App & Leaderboard",
+                        "url": MINI_APP_URL
+                    }
+                ]]
+            }
+        }
+    else:
+        # Prompt to join the community group and complete the trial
+        payload = {
+            "chat_id": user_id,
+            "text": (
+                f"👋 **Welcome to Ez Vocab Bot, {first_name}!**\n\n"
+                "To access daily timed tests and compete on the leaderboard, you must join our group and complete the entrance trial:\n\n"
+                "1️⃣ **Join the Group:** Send a request to our study group.\n"
+                "2️⃣ **Entrance Trial:** Clear the quick 10-question English test on joining.\n\n"
+                "Once accepted, tap 'Check My Status' below!"
+            ),
+            "parse_mode": "Markdown",
+            "reply_markup": {
+                "inline_keyboard": [
+                    [{"text": "🏛 Join Ez Editorial Group", "url": COMMUNITY_GROUP_URL}],
+                    [{"text": "🔄 Check My Status", "callback_data": "check_status"}]
+                ]
+            }
+        }
+
+    http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json=payload, timeout=10)
 
 def relay_message(message_id, target_thread_id):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/copyMessage"
