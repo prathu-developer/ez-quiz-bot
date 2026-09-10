@@ -564,7 +564,7 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
     current_day = current_ist_time.strftime('%A')
     phase_of_week = "Active Competition"
     if current_day == "Monday" and (current_ist_time.hour < 16 or (current_ist_time.hour == 16 and current_ist_time.minute < 30)):
-        phase_of_week = "Monday Pre-Game (Scores are reset to 0. The first quiz drops at 4:30 PM today.)"
+        phase_of_week = "Monday Pre-Game (Scores are reset to 0. The first quiz drops at 10:30 AM today.)"
     elif current_day == "Sunday" and current_ist_time.hour >= 13:
         phase_of_week = "Sunday Post-Deadline (Quizzes are over, waiting for the official Monday morning reset.)"
 
@@ -602,7 +602,7 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
 
     reply_context = f"\n=== CONVERSATION HISTORY ===\nThe user is directly replying to this previous message:\n\"{replied_text}\"\nUse this to answer contextual questions.\n" if replied_text else ""
 
-    # Dynamic 4:30 PM Topic Test Timetable Map
+    # Dynamic 10:30 AM Topic Test Timetable Map
     DAILY_SCHEDULE_MAP = {
         "Monday": "• Set 1: Vocab Quiz (15Q • 10m)\n• Set 2: Error Detection (5Q • 5m)\n• Set 3: Fill in the Blanks (5Q • 5m)\n• Set 4: Sentence Improvement (5Q • 5m)\n• Set 5: Reading Comprehension (8Q • 10-12m)",
         "Tuesday": "• Set 1: Vocab Quiz (15Q • 10m)\n• Set 2: Word Usage (5Q • 5m)\n• Set 3: Error Detection (5Q • 5m)\n• Set 4: Fill in the Blanks (5Q • 5m)\n• Set 5: Para Jumbles (5 Sets • 10-12m)",
@@ -643,7 +643,7 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
     - Weekly Phase: {phase_of_week}
     - Active Challengers: {total_active_participants}
 
-    [Today's 4:30 PM Test Schedule]
+    [Today's 10:30 PM Test Schedule]
     {today_schedule}
 
     [Weekly Timetable Overview]
@@ -655,16 +655,16 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
 
     [Community Rules & Threads]
     • 📰 Today's Editorials (Thread 3): Mon-Sat morning PDFs with attendance buttons. No Sunday issues.
-    • 🏆 Rankings & Quizzes (Thread 2972): 4:30 PM drop notifications and Mini App links.
+    • 🏆 Rankings & Quizzes (Thread 2972): 10:30 AM drop notifications and Mini App links.
     • 📊 Cut-offs & Promotion: Scoring above the Class Average promotes a student; below causes demotion.
     • 🧠 Elo Rating: Lifetime rating (1000 base) tracking accuracy across difficulty tiers.
     • 🧹 Purge Rule: Students must read at least 4 Magazines OR complete 50 Quizzes every 30 days.
     • 📚 Grammar 101 / Word 101: Archived courses. Never promise new drops.
     • QUIZ & EDITORIAL ECOSYSTEM ROUTING:
-        - Morning (10:00–11:59 AM): Daily Editorial PDFs drop in Thread 3 ("Today's Editorials Magazine"). Students must tap "Mark as Read".
-        - Evening (4:30 PM IST): 5 Daily Topic Trial sets drop inside the Mini App (accessible via Thread 2972 or Bot Menu).
+        - Morning (06:00–11:59 AM): Daily Editorial PDFs drop in Thread 3 ("Today's Editorials Magazine"). Students must tap "Mark as Read".
+        - Evening (10:30 AM IST): 5 Daily Topic Trial sets drop inside the Mini App (accessible via Thread 2972 or Bot Menu).
         - If a user asks where polls or quizzes are, reply concisely:
-            "Daily quizzes have moved from Telegram polls to our interactive Mini App for timed test practice and solutions! Read your morning PDF in Thread 3, then tap below to attempt today's 4:30 PM trials."
+            "Daily quizzes have moved from Telegram polls to our interactive Mini App for timed test practice and solutions! Read your morning PDF in Thread 3, then tap below to attempt today's 10:30 AM trials."
 
     [Upcoming Exams]
     {exam_context}
@@ -2105,10 +2105,10 @@ def run_no_editorials_announcement():
 def run_activity_requirement_announcement():
     text = (
         "📢 **Activity Requirement**\n\n"
-        "📝 Attempt at least 50 Quizzes or\n"
+        "📝 Attempt at least 50 Questions OR\n"
         "📖 Read 4 Magazines (using the new 'Mark as Read' button)\n\n"
-        "⏳ **Every 15 Days**\n\n"
-        "❗️ Members who remain inactive for 15 days will be removed to make room for new students and keep the community active."
+        "⏳ **Every 30 Days**\n\n"
+        "❗️ Members who remain inactive for 30 days will be removed to make room for new students and keep the community active."
     )
     for attempt in range(10):
         try:
@@ -2481,7 +2481,7 @@ def relay_message(message_id, target_thread_id):
                     markup = {
                         "inline_keyboard": [
                             [{"text": "📖 Mark as Read • 0", "callback_data": f"read_{new_msg_id}"}],
-                            [{"text": "🎯 Topic Quiz (4:30 PM)", "url": "https://t.me/Ez_vocab_bot/leaderboard"}]
+                            [{"text": "🎯 Topic Quiz (10:30 AM)", "url": "https://t.me/Ez_vocab_bot/leaderboard"}]
                         ]
                     }
                     http_session.post(
@@ -2825,7 +2825,7 @@ def bake_miniapp_cache():
             release_db(conn)
 
 # ==========================================
-# BACKGROUND WORKER: QUIZ UNLOCK ANNOUNCEMENT (4:30 PM)
+# BACKGROUND WORKER: QUIZ UNLOCK ANNOUNCEMENT (10:30 AM)
 # ==========================================
 def run_quiz_unlock_announcement():
     current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
@@ -2888,7 +2888,7 @@ def run_quiz_unlock_announcement():
                     """, (str(new_msg_id),))
                     conn.commit()
                     
-                    notify_prathu("📢 **4:30 PM Quiz Announcement** posted successfully!")
+                    notify_prathu("📢 **10:30 AM Quiz Announcement** posted successfully!")
                     break
                 elif res.status_code == 429:
                     time.sleep(res.json().get("parameters", {}).get("retry_after", 3) + 1)
@@ -2898,7 +2898,7 @@ def run_quiz_unlock_announcement():
                 time.sleep(3)
                 
     except Exception as e:
-        notify_prathu(f"🚨 **ERROR (Quiz Announcement):** Failed to send 4:30 PM alert.\n`{e}`")
+        notify_prathu(f"🚨 **ERROR (Quiz Announcement):** Failed to send 10:30 PM alert.\n`{e}`")
     finally:
         if conn:
             try: c.close()
@@ -3314,7 +3314,7 @@ def background_approve_user(user_id):
         "To stay in the group, complete at least **1 Quiz** OR read **1 Editorial Magazine** (tap 'Mark as Read') within your first 7 days.\n\n"
         "📅 **Daily Routine:**\n"
         "📰 **Morning:** Read the Daily Editorial PDFs in Thread 3.\n"
-        "⚡ **4:30 PM:** Attempt the Daily Vocab & Topic Trials.\n"
+        "⚡ **10:30 AM:** Attempt the Daily Vocab & Topic Trials.\n"
         "🏆 **Sunday:** The Weekly Cup locks at midnight IST.\n\n"
         "Head over to the main group, say hello, and begin your journey! 🏛️"
     )
