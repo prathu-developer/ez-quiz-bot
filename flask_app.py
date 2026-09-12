@@ -62,12 +62,29 @@ def check_and_set_cooldown(key, seconds=10):
         print(f"⚠️ Redis Cooldown Error: {e}")
         return False
 
-# --- TELEGRAM SECURE AUTHENTICATION ---
+import secrets
+
 def get_verified_user():
     """
-    Validates the Telegram initData securely using HMAC-SHA-256.
-    Returns the user dictionary if valid, otherwise returns None.
+    Validates either:
+    1. Telegram Mini App initData (X-Telegram-Init-Data)
+    2. Web / Android App Session Token (Authorization: Bearer <token>)
     """
+    # 1. Check for Website or Android App session token first
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1].strip()
+        if redis_client:
+            try:
+                cached_user = redis_client.get(f"session:{token}")
+                if cached_user:
+                    # Refresh session expiration (30 days)
+                    redis_client.expire(f"session:{token}", 30 * 86400)
+                    return json.loads(cached_user)
+            except Exception as e:
+                print(f"⚠️ Redis session error: {e}")
+
+    # 2. Check for Telegram Mini App initData
     init_data = request.headers.get("X-Telegram-Init-Data", "")
     if not init_data:
         return None
@@ -79,20 +96,13 @@ def get_verified_user():
         if not received_hash:
             return None
 
-        # Sort parameters alphabetically and construct the data-check-string
         data_check_string = "\n".join(f"{key}={parsed[key]}" for key in sorted(parsed))
-        
-        # Hash the bot token with "WebAppData"
         secret_key = hmac.new(b"WebAppData", TELEGRAM_TOKEN.encode(), hashlib.sha256).digest()
-        
-        # Calculate the final hash
         calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
 
-        # Compare hashes securely
         if not hmac.compare_digest(calculated_hash, received_hash):
             return None
 
-        # Ensure the data isn't stale (e.g., older than 24 hours)
         auth_date = int(parsed.get("auth_date", 0))
         if time.time() - auth_date > 86400:
             return None
@@ -1078,6 +1088,29 @@ def webhook():
         if chat_type == 'private':
             user_id = msg['from']['id']
             first_name = msg['from'].get('first_name', 'Student')
+            text = msg.get('text', '')
+
+            # 🟢 Check if user tapped a Login Deep Link (e.g. /start login_a3f81e7b9c12)
+            if text.startswith('/start login_'):
+                login_code = text.split('login_')[1].strip()
+                if redis_client and redis_client.exists(f"auth_code:{login_code}"):
+                    user_data = {
+                        "id": user_id,
+                        "first_name": first_name,
+                        "username": msg['from'].get('username', '')
+                    }
+                    # Save user info into code key for 60 seconds so polling catches it
+                    redis_client.set(f"auth_code:{login_code}", json.dumps(user_data), ex=60)
+                    
+                    # Send instant confirmation in chat
+                    http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
+                        "chat_id": user_id,
+                        "text": f"✅ **Login Confirmed!**\n\nYou are now signed into **Ez Editorials**. Return to the app or browser to continue.",
+                        "parse_mode": "Markdown"
+                    })
+                    return 'OK', 200
+
+            # Default private chat welcome flow
             threading.Thread(target=handle_private_bot_start, args=(user_id, first_name)).start()
             return 'OK', 200
 
@@ -4403,6 +4436,127 @@ def mark_digest_read():
         return jsonify({"error": str(e)}), 500
     finally:
         if conn: release_db(conn)
+
+# ==========================================
+# MULTI-PLATFORM AUTHENTICATION (WEB & ANDROID)
+# ==========================================
+
+@app.route('/api/auth/telegram-widget', methods=['POST'])
+def auth_telegram_widget():
+    """
+    Validates the official Telegram Web Login Widget data from ezeditorials.pages.dev
+    """
+    data = request.get_json() or {}
+    received_hash = data.get('hash')
+    if not received_hash:
+        return jsonify({"error": "Missing signature"}), 400
+
+    # Build verification string according to Telegram specs
+    check_dict = {k: v for k, v in data.items() if k != 'hash'}
+    data_check_string = "\n".join(f"{k}={check_dict[k]}" for k in sorted(check_dict.keys()))
+
+    # Secret key for widget is SHA256 of bot token (not HMAC like TMA)
+    secret_key = hashlib.sha256(TELEGRAM_TOKEN.encode()).digest()
+    calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+
+    if not hmac.compare_digest(calculated_hash, received_hash):
+        return jsonify({"error": "Invalid Telegram signature"}), 403
+
+    # Check that the request was made within the last 24 hours
+    auth_date = int(data.get('auth_date', 0))
+    if time.time() - auth_date > 86400:
+        return jsonify({"error": "Session expired"}), 401
+
+    user_id = int(data['id'])
+    first_name = data.get('first_name', 'Student')
+
+    # Ensure student profile exists in PostgreSQL
+    conn = None
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO users (user_id, first_name, last_updated)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (user_id) DO UPDATE SET 
+                first_name = EXCLUDED.first_name,
+                last_updated = EXCLUDED.last_updated
+        """, (user_id, first_name, time.time()))
+        conn.commit()
+    except Exception as e:
+        print(f"Error updating user on login: {e}")
+    finally:
+        if conn: release_db(conn)
+
+    # Generate 30-day session token in Upstash Redis
+    session_token = secrets.token_hex(32)
+    user_payload = {
+        "id": user_id,
+        "first_name": first_name,
+        "username": data.get("username", ""),
+        "photo_url": data.get("photo_url", "")
+    }
+
+    if redis_client:
+        redis_client.set(f"session:{session_token}", json.dumps(user_payload), ex=30 * 86400)
+
+    return jsonify({
+        "token": session_token,
+        "user": user_payload
+    }), 200
+
+
+@app.route('/api/auth/request-code', methods=['POST'])
+def request_login_code():
+    """
+    Generates a 5-minute deep-link token for the Android app and mobile web.
+    """
+    auth_code = secrets.token_hex(6)  # e.g., 'a3f81e7b9c12'
+    
+    if redis_client:
+        redis_client.set(f"auth_code:{auth_code}", "pending", ex=300)
+
+    return jsonify({
+        "code": auth_code,
+        "bot_username": "Ez_vocab_bot"  # Your bot username
+    }), 200
+
+
+@app.route('/api/auth/verify-code', methods=['POST'])
+def verify_login_code():
+    """
+    Android App / Mobile Web polls this endpoint while student taps 'Start' in Telegram.
+    """
+    data = request.get_json() or {}
+    code = data.get('code', '')
+
+    if not code or not redis_client:
+        return jsonify({"status": "pending"}), 200
+
+    stored_data = redis_client.get(f"auth_code:{code}")
+    if not stored_data:
+        return jsonify({"error": "Code expired or invalid"}), 400
+
+    stored_str = stored_data.decode('utf-8') if isinstance(stored_data, bytes) else str(stored_data)
+
+    if stored_str == "pending":
+        return jsonify({"status": "pending"}), 200
+
+    # If code was verified by the bot, stored_data contains student info
+    user_payload = json.loads(stored_str)
+
+    # Mint a long-lived 30-day session token
+    session_token = secrets.token_hex(32)
+    redis_client.set(f"session:{session_token}", json.dumps(user_payload), ex=30 * 86400)
+    
+    # Delete one-time code to prevent reuse
+    redis_client.delete(f"auth_code:{code}")
+
+    return jsonify({
+        "status": "authenticated",
+        "token": session_token,
+        "user": user_payload
+    }), 200
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
