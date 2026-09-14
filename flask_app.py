@@ -285,33 +285,6 @@ def notify_prathu(message):
     except Exception as e:
         print(f"⚠️ Could not send DM to Prathu: {e}")
 
-@app.route('/add_poll', methods=['POST'])
-def add_poll():
-    data = request.get_json()
-    if data.get('secret') != ADD_DB_KEY:
-        return "Unauthorized", 401
-
-    poll_id = data.get('poll_id')
-    correct_index = data.get('correct_index')
-
-    if poll_id is None or correct_index is None:
-        return "Missing data", 400
-
-    conn = get_db()
-    c = conn.cursor()
-    current_day_str = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%a')
-    
-    c.execute("""
-        INSERT INTO polls (poll_id, correct_index, poll_day) VALUES (%s, %s, %s)
-        ON CONFLICT (poll_id) DO UPDATE SET 
-            correct_index = EXCLUDED.correct_index, 
-            poll_day = EXCLUDED.poll_day
-    """, (poll_id, correct_index, current_day_str))
-    
-    conn.commit()
-    c.close()
-    release_db(conn)
-    return "Poll successfully saved to remote DB!", 200
 
 # ✨ FIX: Make queue_id optional for Redis compatibility
 def process_answer(c, queue_id, user_id, first_name, poll_id, chosen_option): 
@@ -1261,10 +1234,6 @@ def run_midnight_purge_background():
             release_db(conn)
             
 # 🟢 DAILY PURGE TRIGGER (Midnight IST)
-@app.route('/cron/daily_purge_0508', methods=['GET', 'POST'])
-def trigger_daily_purge():
-    threading.Thread(target=run_midnight_purge_background).start()
-    return "Midnight purge sequence initiated! Admin will receive a report.", 200
 
 def run_daily_reset_background():
     conn = get_db()
@@ -1288,10 +1257,6 @@ def run_daily_reset_background():
     release_db(conn)
     notify_prathu("✅ **Daily Scores Reset** executed successfully!")
 
-@app.route('/reset_daily/0508', methods=['GET', 'POST'])
-def trigger_daily_reset():
-    threading.Thread(target=run_daily_reset_background).start()
-    return "Daily reset triggered!", 200
 
 def run_weekly_reset_background():
     # ✨ NEW: The Live Status Tracker
@@ -1760,10 +1725,6 @@ def run_weekly_reset_background():
             except: pass
             release_db(conn)
             
-@app.route('/reset_weekly/0508', methods=['GET', 'POST'])
-def trigger_weekly_reset():
-    threading.Thread(target=run_weekly_reset_background).start()
-    return "Weekly reset triggered!", 200
 
 def auto_finalize_abandoned_attempts():
     """Sweeps attempts running past duration_seconds + 30s and marks them submitted."""
@@ -1876,15 +1837,6 @@ def run_queue_processor_background():
         if conn:
             release_db(conn)
 
-@app.route('/cron/process_leaderboard_0508', methods=['GET', 'POST'])
-def cron_process_leaderboard():
-    # 🔒 SECURITY GATE
-    if request.headers.get("X-Cron-Secret") != CRON_SECRET:
-        return "Unauthorized", 401
-    
-    # ✨ FIX 3: Instantly answer the cron request to prevent 30s timeouts
-    threading.Thread(target=run_queue_processor_background).start()
-    return "Queue Processor triggered in background!", 200
 
 def run_heavy_math_background():
     # ✨ REDIS DISTRIBUTED LOCK (Prevents concurrent heavy database math)
@@ -1927,57 +1879,9 @@ def run_heavy_math_background():
         if conn:
             release_db(conn)
 
-@app.route('/cron/heavy_math_0508', methods=['GET', 'POST'])
-def cron_heavy_math():
-    # 🔒 SECURITY GATE
-    if request.headers.get("X-Cron-Secret") != CRON_SECRET:
-        return "Unauthorized", 401
-
-    # ✨ FIX: Instantly answer the cron request, then run the heavy math in the background
-    threading.Thread(target=run_heavy_math_background).start()
-    return "Math Engine triggered in background!", 200
-
-@app.route('/cron/update_telegram_text_0508', methods=['GET', 'POST'])
-def cron_update_telegram_text():
-    # 🔒 SECURITY GATE
-    if request.headers.get("X-Cron-Secret") != CRON_SECRET:
-        return "Unauthorized", 401
-
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        c.execute("SELECT value FROM bot_settings WHERE key='telegram_needs_update'")
-        row = c.fetchone()
-        
-        if row and row[0] == '1':
-            c.execute("UPDATE bot_settings SET value='0' WHERE key='telegram_needs_update'")
-            conn.commit()
-            c.close()
-            
-            update_live_leaderboard()
-            return "Telegram banner updated!", 200
-        else:
-            c.close()
-            return "No update needed.", 200
-    except Exception as e:
-        try:
-            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
-                "chat_id": "716496729",
-                "text": f"🚨 **CRITICAL CRON ERROR (Telegram Updater)** 🚨\n\n`{e}`",
-                "parse_mode": "Markdown"
-            }, timeout=5)
-        except: pass
-        return f"Error: {e}", 500
-    finally:
-        if conn:
-            release_db(conn)
 
 
-@app.route('/cron/dispatcher_0508', methods=['GET', 'POST'])
-def trigger_dispatcher():
-    threading.Thread(target=dispatch_practice_sets).start()
-    return "Dispatcher triggered!", 200
+
 
 # ==========================================
 # SECURED: PRACTICE SET DISPATCHER
@@ -2200,10 +2104,6 @@ def run_all_sunday_announcements():
     time.sleep(3)
     run_sunday_final_reminder()
 
-@app.route('/sunday_announcement/0508', methods=['GET', 'POST'])
-def trigger_sunday_announcement():
-    threading.Thread(target=run_all_sunday_announcements).start()
-    return "All Sunday announcements triggered in background!", 200
 
 # ==========================================
 # SECURED: DAILY VOCAB & QUIZZES
@@ -2282,10 +2182,6 @@ def run_daily_vocab_and_quizzes():
         
     notify_prathu("✅ **Daily Vocab Quiz** generated and dispatched!")
     
-@app.route('/daily_vocab/0508', methods=['GET', 'POST'])
-def trigger_daily_vocab():
-    threading.Thread(target=run_daily_vocab_and_quizzes).start()
-    return "Daily Vocab triggered!", 200
 
 def run_sunday_final_reminder():
     current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
@@ -2318,10 +2214,6 @@ def run_countdown_and_commentary():
     
     notify_prathu("📅 **Exam Database** synced successfully! (Telegram posts disabled per migration)")
 
-@app.route('/update_countdown/0508', methods=['GET', 'POST'])
-def trigger_countdown_update():
-    threading.Thread(target=run_countdown_and_commentary).start()
-    return "Countdown triggered!", 200
 
 # ==========================================
 # SECURED: EXAM COUNTDOWN DATABASE UPDATE
@@ -2425,7 +2317,8 @@ def check_student_membership(user_id):
     except Exception:
         pass
 
-    return is_in_db, is_group_member
+    # Approved in DB even if non-Telegram or external user
+    return is_in_db, (is_group_member or is_in_db)
 
 def handle_private_bot_start(user_id, first_name):
     """Gatekeeper flow when a user interacts with the bot directly."""
@@ -2938,189 +2831,11 @@ def run_quiz_unlock_announcement():
             except: pass
             release_db(conn)
 
-@app.route('/cron/quiz_announcement_0508', methods=['GET', 'POST'])
-def trigger_quiz_announcement():
-    threading.Thread(target=run_quiz_unlock_announcement).start()
-    return "Quiz announcement triggered! Check Telegram.", 200
 
 from flask import Response # type: ignore
 
-@app.route('/api/leaderboard', methods=['GET'])
-def get_mini_app_leaderboard():
-    global RAM_CACHE
 
-    # ✨ STRICT AUTH: No fallback.
-    verified_user = get_verified_user()
-    if not verified_user:
-        return jsonify({"error": "Unauthorized"}), 401
-    user_id = int(verified_user.get('id'))
     
-    if not RAM_CACHE["master_data"]:
-        with CACHE_LOCK:
-            if not RAM_CACHE["master_data"]:
-                try: bake_miniapp_cache()
-                except Exception as e: return jsonify({"error": "Syncing..."}), 503
-
-    master_data = RAM_CACHE.get("master_data")
-    if not master_data:
-        return jsonify({"error": "Syncing data, please refresh..."}), 503
-        
-    custom_leaderboard = []
-    target_avg = master_data.get("target_average", 0)
-    demotion_count = 0
-    
-    for index, u in enumerate(master_data["leaderboard"]):
-        is_me = (u["id"] == user_id)
-        is_promo = u["score"] >= target_avg
-        
-        if not is_promo:
-            demotion_count += 1
-            
-        if is_promo or demotion_count <= 10 or is_me:
-            custom_leaderboard.append({
-                "rank": u["rank"],
-                "id": u["id"],
-                "name": u["name"],
-                "score": u["score"],
-                "photo_url": u.get("photo_url"),
-                "elo": u["elo"],
-                "house": u["house"],
-                "is_captain": u["is_captain"],
-                "attempts": u["attempts"],
-                "league": u["league"],
-                "lifetime_growth": u["lifetime_growth"],
-                "last_updated": u["last_updated"],
-                "history": {
-                    "accuracy": u.get("history", {}).get("accuracy", 0),
-                    "correct": u.get("history", {}).get("correct", 0),
-                    "wrong": u.get("history", {}).get("wrong", 0)
-                }
-            })
-
-    # --- EXTRACT OR CONSTRUCT CURRENT_USER DATA ---
-    current_user_data = next((u for u in master_data["leaderboard"] if u["id"] == user_id), None)
-    if current_user_data:
-        # Attach caller's avatar directly
-        current_user_data["photo_url"] = get_telegram_avatar_url(user_id)
-    else:
-        current_user_data = {
-            "id": user_id,
-            "name": "You",
-            "score": 0,
-            "photo_url": get_telegram_avatar_url(user_id),
-            "rank": "N/A",
-            "league": 0,
-            "house": "🏳️ Unsorted",
-            "is_captain": 0,
-            "elo": 1000,
-            "attempts": 0,
-            "lifetime_growth": "Calibrating...",
-            "rank_history": [],
-            "history": {"labels": [], "scores": [], "accuracy": 0, "correct": 0, "wrong": 0}
-        }
-
-    # --- FIX: EXTRACT OR CONSTRUCT CURRENT_USER DATA ---
-    current_user_data = next((u for u in master_data["leaderboard"] if u["id"] == user_id), None)
-    if not current_user_data:
-        current_user_data = {
-            "id": user_id,
-            "name": "You",
-            "score": 0,
-            "rank": "N/A",
-            "league": 0,
-            "house": "🏳️ Unsorted",
-            "is_captain": 0,
-            "elo": 1000,
-            "attempts": 0,
-            "lifetime_growth": "Calibrating...",
-            "rank_history": [],
-            "history": {"labels": [], "scores": [], "accuracy": 0, "correct": 0, "wrong": 0}
-        }
-
-    # ✨ RESTORED: The dictionary definition without the heavy Elo payload
-    response_data = {
-        "current_week": master_data["current_week"],
-        "total_quizzes": master_data["total_quizzes"],
-        "target_average": target_avg, 
-        "total_active": master_data.get("total_active", len(master_data["leaderboard"])),
-        "topper_history": master_data["topper_history"],
-        "class_avg_history": master_data["class_avg_history"],
-        "current_user": current_user_data, 
-        "leaderboard": custom_leaderboard
-    }
-
-    res = Response(json.dumps(response_data), mimetype='application/json')
-    res.headers["Cache-Control"] = "private, max-age=30"
-    return res
-
-@app.route('/api/elo', methods=['GET'])
-def get_elo_ranking():
-    global RAM_CACHE
-    
-    # ✨ STRICT AUTH: No fallback.
-    verified_user = get_verified_user()
-    if not verified_user:
-        return jsonify({"error": "Unauthorized"}), 401
-    user_id = int(verified_user.get('id'))
-    
-    if not RAM_CACHE.get("master_data"):
-        return jsonify({"error": "Syncing data, please refresh..."}), 503
-
-    master_data = RAM_CACHE.get("master_data")
-    
-    custom_elo = []
-    # Send only top 50, plus the current user's rank
-    for index, eu in enumerate(master_data.get("elo_ranking", [])):
-        if index < 50 or eu["id"] == user_id:
-            custom_elo.append(eu)
-            
-    # Extract current user's specific Elo data
-    current_user_elo = next((eu for eu in custom_elo if eu["id"] == user_id), None)
-    if not current_user_elo:
-        # Fallback if unranked
-        current_user_elo = {"id": user_id, "name": "You", "elo": 1000, "rank": "N/A", "is_active": True}
-
-    res = Response(json.dumps({
-        "current_user": current_user_elo,
-        "elo_ranking": custom_elo
-    }), mimetype='application/json')
-    res.headers["Cache-Control"] = "private, max-age=30"
-    return res
-    
-@app.route('/cron/refresh_snapshot_0508', methods=['GET', 'POST'])
-def cron_refresh_snapshot():
-    # 🔒 SECURITY GATE
-    if request.headers.get("X-Cron-Secret") != CRON_SECRET:
-        return "Unauthorized", 401
-
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        # Check if Heavy Math actually ran and requested a snapshot
-        c.execute("SELECT value FROM bot_settings WHERE key='needs_snapshot'")
-        row = c.fetchone()
-        
-        if row and row[0] == '1':
-            # Reset the flag so it doesn't run again until the next math cycle
-            c.execute("UPDATE bot_settings SET value='0' WHERE key='needs_snapshot'")
-            conn.commit()
-            
-            # Trigger the cache bake in the background
-            threading.Thread(target=bake_miniapp_cache).start()
-            msg = "RAM Snapshot refresh triggered in background!"
-        else:
-            msg = "No new math calculated. Snapshot skipped to save egress."
-            
-    except Exception as e:
-        msg = f"Error: {e}"
-    finally:
-        if conn:
-            try: c.close()
-            except: pass
-            release_db(conn)
-            
-    return msg, 200
     
 def run_word_of_the_day():
     # ==========================================
@@ -3293,10 +3008,6 @@ Output EXACTLY in this format:
     elif len(foreign_batch) < 3:
         notify_prathu("🚨 **ALERT:** You are out of Foreign Expressions! The master list of 250 has been completed.")
         
-@app.route('/word_of_the_day/0508', methods=['GET', 'POST'])
-def trigger_word_of_the_day():
-    threading.Thread(target=run_word_of_the_day).start()
-    return "Word of the Day triggered!", 200
 
 def background_approve_user(user_id):
     # ✨ NEW: Clean up the time bomb from the DB so they aren't declined!
@@ -3382,26 +3093,6 @@ def background_approve_user(user_id):
     except:
         pass
 
-@app.route('/api/approve_captcha', methods=['POST'])
-def approve_captcha():
-    data = request.get_json() or {}
-    verified_user = get_verified_user()
-    
-    # Check HMAC-verified ID first, then fall back to body payload
-    user_id = verified_user.get('id') if verified_user else data.get('user_id')
-
-    if not user_id:
-        return jsonify({"error": "Unauthorized"}), 401
-
-    try:
-        user_id = int(user_id)
-    except (ValueError, TypeError):
-        return jsonify({"error": "Invalid user ID"}), 400
-
-    # Run user approval in the background
-    threading.Thread(target=background_approve_user, args=(user_id,)).start()
-
-    return jsonify({"status": "success"}), 200
 
 def is_github_file_updated_today(file_name, target_date_ist):
     """Verifies whether a file in the repo was committed today in IST."""
@@ -3664,10 +3355,6 @@ def run_mini_app_ingestion():
             release_db(conn)
 
 # Manual Trigger for Phase 2 Testing
-@app.route('/cron/ingest_miniapp_0508', methods=['GET', 'POST'])
-def trigger_miniapp_ingestion():
-    threading.Thread(target=run_mini_app_ingestion).start()
-    return "Mini App Ingestion triggered! Check your Telegram DMs.", 200
 
 # ==========================================
 # SYSTEM SAFE MODE / MAINTENANCE HELPERS
@@ -3684,19 +3371,6 @@ def maintenance_block():
         }), 503
     return None
 
-@app.route("/api/system-status", methods=["GET"])
-def system_status():
-    mode = os.environ.get("SYSTEM_MODE", "operational")
-    return jsonify({
-        "mode": mode,
-        "maintenance": mode == "maintenance",
-        "quiz_enabled": mode == "operational",
-        "submissions_enabled": True, # ALWAYS True so active students can submit!
-        "message": (
-            "The platform is temporarily undergoing maintenance.\nActive quizzes can still be submitted, but new quizzes cannot be started."
-            if mode == "maintenance" else None
-        )
-    }), 200
 
 # ==========================================
 # PHASE 3: MINI APP API ENDPOINTS (Part 1)
@@ -3704,860 +3378,81 @@ def system_status():
 from flask import jsonify # type: ignore
 
 # --- MASTER SPEC: UPDATED /api/quiz/today ---
-@app.route('/api/quiz/today', methods=['GET'])
-def get_todays_quizzes():
-    # ✨ FIX: Strict auth implementation
-    verified_user = get_verified_user()
-    if not verified_user:
-        return jsonify({"error": "Unauthorized"}), 401
-    user_id = int(verified_user["id"])
-    
-    current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
-    
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        
-        # Fetch active quizzes using close_time
-        c.execute("""
-            SELECT id, topic, quiz_day, question_count, duration_seconds, drop_time, close_time 
-            FROM quiz_sets 
-            WHERE close_time > %s
-            ORDER BY quiz_day DESC, id ASC
-        """, (current_ist,))
-        
-        grouped_quizzes = {"Today": [], "Pending": []}
-        
-        for q_set in c.fetchall():
-            set_id, topic, q_day, q_count, duration, drop_time, close_time = q_set
-            drop_time = drop_time.replace(tzinfo=None)
-            close_time = close_time.replace(tzinfo=None)
-            
-            attempted = False
-            score = None
-            attempt_id = None  
-            
-            if user_id:
-                c.execute("SELECT id, score FROM quiz_attempts WHERE user_id = %s AND quiz_set_id = %s AND submitted_at IS NOT NULL", (user_id, set_id))
-                attempt_row = c.fetchone()
-                
-                if attempt_row:
-                    attempted = True
-                    attempt_id = attempt_row[0] 
-                    score = attempt_row[1]      
-            
-            if current_ist < drop_time: status = "locked"
-            elif current_ist > close_time: status = "closed"
-            elif attempted: status = "completed"
-            else: status = "unlocked"
-                
-            quiz_data = {
-                "id": set_id, "topic": topic, "question_count": q_count,
-                "duration_seconds": duration, "drop_time": drop_time.isoformat(),
-                "status": status, "score": score,
-                "attempt_id": attempt_id,
-                "day_num": q_day.weekday() + 1  
-            }
-            
-            if q_day == current_ist.date():
-                grouped_quizzes["Today"].append(quiz_data)
-            elif q_day < current_ist.date():
-                grouped_quizzes["Pending"].append(quiz_data)
-        
-        # 🟢 NEW: Check Editorial Read Status for Today
-        has_read_editorial = False
-        if user_id:
-            # Get the exact UTC timestamp for 12:00 AM IST today
-            midnight_epoch = (current_ist.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=5, minutes=30)).timestamp()
-            
-            # Check if there is a read receipt from this user since midnight
-            c.execute("SELECT 1 FROM read_receipts WHERE user_id = %s AND created_at >= to_timestamp(%s)", (user_id, midnight_epoch))
-            if c.fetchone():
-                has_read_editorial = True
-                
-        return jsonify({
-            "quizzes": grouped_quizzes,
-            "has_read_editorial": has_read_editorial,
-            "server_hour": current_ist.hour,
-            "server_day": current_ist.weekday() # 0 = Monday, 6 = Sunday
-        }), 200
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        if conn: release_db(conn)
 
 # --- MASTER SPEC: NEW READ-ONLY ENDPOINTS ---
-@app.route('/api/weekly-results', methods=['GET'])
-def get_weekly_results():
-    week_num = request.args.get('week_num', type=int)
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        
-        if not week_num:
-            # Find the most recently completed week automatically
-            c.execute("SELECT MAX(CAST(week_num AS INTEGER)) FROM weekly_rank_history")
-            max_week_row = c.fetchone()
-            week_num = max_week_row[0] if max_week_row and max_week_row[0] else None
-            
-        if not week_num:
-            return jsonify({"results": [], "week_num": None}), 200
-            
-        c.execute("""
-            SELECT h.rank, h.user_id, u.first_name, h.score, u.faction, u.league_tier, u.live_elo
-            FROM weekly_rank_history h
-            JOIN users u ON h.user_id = u.user_id
-            WHERE h.week_num = %s
-            ORDER BY h.rank ASC
-            LIMIT 10
-        """, (str(week_num),))
-        
-        results = []
-        for row in c.fetchall():
-            results.append({
-                "rank": row[0],
-                "id": row[1],
-                "name": row[2],
-                "score": row[3],
-                "house": row[4],
-                "league": row[5],
-                "elo": row[6]
-            })
-            
-        return jsonify({"results": results, "week_num": week_num}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        if conn: release_db(conn)
 
-@app.route('/api/word-of-day', methods=['GET'])
-def get_wotd():
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        c.execute("SELECT word FROM lifetime_words ORDER BY id DESC LIMIT 1")
-        row = c.fetchone()
-        return jsonify({"word_of_the_day": row[0] if row else "N/A"}), 200
-    except Exception as e: return jsonify({"error": str(e)}), 500
-    finally:
-        if conn: release_db(conn)
 
-@app.route('/api/upcoming-exams', methods=['GET'])
-def get_upcoming_exams():
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        # Removed the LIMIT so all active exams show in the app
-        c.execute("SELECT name, status, display_date, exam_date, is_exact_date FROM upcoming_exams ORDER BY exam_date ASC")
-        exams = [{"name": r[0], "status": r[1], "display_date": r[2], "exam_date": r[3], "is_exact": bool(r[4])} for r in c.fetchall()]
-        return jsonify({"exams": exams}), 200
-    except Exception as e: 
-        return jsonify({"error": str(e)}), 500
-    finally:
-        if conn: release_db(conn)
 
-@app.route('/api/profile/update-target', methods=['POST'])
-def update_target():
-    data = request.get_json()
-    verified_user = get_verified_user()
-    if not verified_user:
-        return jsonify({"error": "Unauthorized"}), 401
-    user_id = int(verified_user.get('id'))
-    state = data.get('state')
-    exam = data.get('exam')
-    
-    if not user_id:
-        return jsonify({"error": "Missing user_id"}), 400
-        
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        c.execute("""
-            UPDATE users 
-            SET target_state = %s, target_exam = %s 
-            WHERE user_id = %s
-        """, (state, exam, user_id))
-        conn.commit()
-        return jsonify({"success": True}), 200
-    except Exception as e:
-        if conn: conn.rollback()
-        return jsonify({"error": str(e)}), 500
-    finally:
-        if conn: release_db(conn)
 
-@app.route('/api/profile/me', methods=['GET'])
-def get_profile():
-    verified_user = get_verified_user()
-    if not verified_user:
-        return jsonify({"error": "Unauthorized"}), 401
-    user_id = int(verified_user.get('id'))
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        c.execute("""
-            SELECT first_name, weekly_score, live_elo, league_tier, weekly_correct, weekly_attempts 
-            FROM users WHERE user_id = %s
-        """, (user_id,))
-        user_row = c.fetchone()
-        
-        if not user_row: return jsonify({"error": "User not found"}), 404
-        
-        name, score, elo, league, correct, attempts = user_row
-        accuracy = round((correct / attempts) * 100) if attempts and attempts > 0 else 0
-        
-        return jsonify({
-            "name": name, "score": score, "elo": elo, "league": league,
-            "performance": {"accuracy": accuracy, "quiz_history_count": attempts}
-        }), 200
-    except Exception as e: return jsonify({"error": str(e)}), 500
-    finally:
-        if conn: release_db(conn)
 
-@app.route('/api/quiz/start', methods=['POST'])
-def start_quiz():
-    blocked = maintenance_block()
-    if blocked: 
-        return blocked
-
-    data = request.get_json() or {}
-    verified_user = get_verified_user()
-    if not verified_user:
-        return jsonify({"error": "Unauthorized"}), 401
-    user_id = int(verified_user.get('id'))
-
-    quiz_set_id = data.get('quiz_set_id')
-    is_practice = data.get('is_practice', False)
-    
-    if not user_id or not quiz_set_id:
-        return jsonify({"error": "Missing user_id or quiz_set_id"}), 400
-        
-    current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
-    
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        
-        c.execute("SELECT drop_time, close_time, duration_seconds FROM quiz_sets WHERE id = %s", (quiz_set_id,))
-        quiz_meta = c.fetchone()
-        if not quiz_meta:
-            return jsonify({"error": "Quiz not found"}), 404
-            
-        drop_time, close_time, duration_seconds = quiz_meta
-        drop_time = drop_time.replace(tzinfo=None)
-        close_time = close_time.replace(tzinfo=None)
-        
-        if current_ist < drop_time or current_ist > close_time:
-            return jsonify({"error": "Quiz is currently locked or closed"}), 403
-
-        if is_practice:
-            c.execute("SELECT id, question_text, options, correct_index, explanation FROM quiz_questions WHERE quiz_set_id = %s ORDER BY id ASC", (quiz_set_id,))
-            questions = [{"question_id": q[0], "text": q[1], "options": q[2], "correct_index": q[3], "explanation": q[4]} for q in c.fetchall()]
-            return jsonify({
-                "attempt_id": "practice_mode",
-                "duration_seconds": duration_seconds,
-                "remaining_seconds": duration_seconds,
-                "started_at": current_ist.isoformat(),
-                "questions": questions
-            }), 200
-            
-        # Check for existing attempts
-        c.execute("SELECT id, submitted_at, started_at, score FROM quiz_attempts WHERE user_id = %s AND quiz_set_id = %s", (user_id, quiz_set_id))
-        attempt_row = c.fetchone()
-        
-        if attempt_row:
-            attempt_id, submitted_at, prev_started_at, prev_score = attempt_row
-            
-            # Case A: Already submitted
-            if submitted_at is not None:
-                return jsonify({
-                    "completed": True,
-                    "attempt_id": attempt_id,
-                    "message": "Quiz already completed"
-                }), 200
-                
-            # Case B: Incomplete attempt
-            prev_started_at = prev_started_at.replace(tzinfo=None)
-            time_elapsed = (current_ist - prev_started_at).total_seconds()
-            
-            # If expired while window was closed -> auto-finalize now
-            if time_elapsed > duration_seconds:
-                c.execute("""
-                    UPDATE quiz_attempts 
-                    SET submitted_at = %s, score = COALESCE(score, 0)
-                    WHERE id = %s
-                """, (current_ist, attempt_id))
-                conn.commit()
-                return jsonify({
-                    "completed": True,
-                    "attempt_id": attempt_id,
-                    "message": "Time expired while away. Results generated."
-                }), 200
-                
-            # Still within time limit -> resume with remaining seconds
-            remaining_seconds = max(5, int(duration_seconds - time_elapsed))
-        else:
-            # Brand new attempt
-            c.execute("""
-                INSERT INTO quiz_attempts (user_id, quiz_set_id, started_at) 
-                VALUES (%s, %s, %s) RETURNING id
-            """, (user_id, quiz_set_id, current_ist))
-            attempt_id = c.fetchone()[0]
-            remaining_seconds = duration_seconds
-            conn.commit()
-        
-        # Fetch Questions
-        c.execute("SELECT id, question_text, options FROM quiz_questions WHERE quiz_set_id = %s ORDER BY id ASC", (quiz_set_id,))
-        questions = [{"question_id": q[0], "text": q[1], "options": q[2]} for q in c.fetchall()]
-        
-        return jsonify({
-            "attempt_id": attempt_id,
-            "duration_seconds": duration_seconds,
-            "remaining_seconds": remaining_seconds,
-            "started_at": current_ist.isoformat(),
-            "questions": questions
-        }), 200
-        
-    except Exception as e:
-        if conn: conn.rollback()
-        return jsonify({"error": str(e)}), 500
-    finally:
-        if conn: release_db(conn)
 
 # ==========================================
 # PHASE 3: MINI APP API ENDPOINTS (Part 2)
 # ==========================================
 
-@app.route('/api/quiz/submit', methods=['POST'])
-def submit_quiz():
-    verified_user = get_verified_user()
-    if not verified_user:
-        return jsonify({"error": "Unauthorized"}), 401
-    verified_user_id = int(verified_user["id"])
-
-    data = request.get_json() or {}
-    attempt_id = data.get('attempt_id')
-    user_responses = data.get('responses', [])
-
-    if not attempt_id:
-        return jsonify({"error": "Missing attempt_id"}), 400
-
-    if not acquire_submission_lock(attempt_id):
-        return jsonify({"error": "Submission is already being processed."}), 409
-
-    current_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
-    current_day_str = current_ist.strftime('%a')
-    
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        
-        # 1. Fetch Attempt & Validate Ownership
-        c.execute("""
-            SELECT a.user_id, a.quiz_set_id, a.started_at, a.submitted_at, s.duration_seconds
-            FROM quiz_attempts a
-            JOIN quiz_sets s ON a.quiz_set_id = s.id
-            WHERE a.id = %s
-        """, (attempt_id,))
-        attempt_meta = c.fetchone()
-        
-        if not attempt_meta:
-            if redis_client: redis_client.delete(f"lock:submit:{attempt_id}")
-            return jsonify({"error": "Attempt not found"}), 404
-            
-        user_id, quiz_set_id, started_at, submitted_at, duration_seconds = attempt_meta
-        
-        if user_id != verified_user_id:
-            if redis_client: redis_client.delete(f"lock:submit:{attempt_id}")
-            return jsonify({"error": "Unauthorized"}), 403
-            
-        # Return success immediately if already submitted
-        if submitted_at is not None:
-            return jsonify({"success": True, "message": "Already submitted"}), 200
-            
-        # 2. Fetch All Correct Answers in One Query
-        c.execute("SELECT id, correct_index FROM quiz_questions WHERE quiz_set_id = %s", (quiz_set_id,))
-        correct_map = {row[0]: row[1] for row in c.fetchall()}
-        
-        total_score = 0.0
-        responses_to_insert = []
-        poll_inserts = []
-        user_answer_inserts = []
-        
-        for r in user_responses:
-            q_id = r.get('question_id')
-            s_idx = r.get('selected_index')
-            time_spent = int(r.get('time_spent', 0)) # 🟢 Extract question time
-            
-            if q_id not in correct_map:
-                continue
-                
-            is_correct = False
-            if s_idx is not None:
-                if s_idx == correct_map[q_id]:
-                    is_correct = True
-                    total_score += 1.0
-                else:
-                    total_score -= 0.25
-                    
-            # 🟢 Add time_spent as the 5th parameter
-            responses_to_insert.append((attempt_id, q_id, s_idx, is_correct, time_spent))
-            
-            if s_idx is not None:
-                poll_inserts.append((str(q_id), correct_map[q_id], current_day_str))
-                user_answer_inserts.append((user_id, str(q_id), int(is_correct), current_day_str, s_idx))
-            
-        # 3. Batch Inserts
-        if responses_to_insert:
-            c.executemany("""
-                INSERT INTO quiz_responses (attempt_id, question_id, selected_index, is_correct, time_spent)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT DO NOTHING
-            """, responses_to_insert)
-
-        if poll_inserts:
-            c.executemany("""
-                INSERT INTO polls (poll_id, correct_index, poll_day) 
-                VALUES (%s, %s, %s)
-                ON CONFLICT (poll_id) DO NOTHING
-            """, poll_inserts)
-
-        if user_answer_inserts:
-            c.executemany("""
-                INSERT INTO user_answers (user_id, poll_id, is_correct, poll_day, chosen_option)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (user_id, poll_id) DO UPDATE SET 
-                    is_correct = EXCLUDED.is_correct, 
-                    chosen_option = EXCLUDED.chosen_option
-            """, user_answer_inserts)
-        
-        # 4. Finalize Attempt
-        c.execute("""
-            UPDATE quiz_attempts 
-            SET submitted_at = %s, score = %s
-            WHERE id = %s
-        """, (current_ist, total_score, attempt_id))
-        
-        conn.commit()
-        return jsonify({"success": True, "score": total_score}), 200
-        
-    except Exception as e:
-        if conn: conn.rollback()
-        if redis_client: redis_client.delete(f"lock:submit:{attempt_id}")
-        return jsonify({"error": str(e)}), 500
-    finally:
-        if conn: release_db(conn)
 
 
-@app.route('/api/quiz/result/<int:attempt_id>', methods=['GET'])
-def get_quiz_result(attempt_id):
-    # ✨ FIX: Strict Auth Implementation
-    verified_user = get_verified_user()
-    if not verified_user:
-        return jsonify({"error": "Unauthorized"}), 401
-    verified_user_id = int(verified_user["id"])
-
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor()
-
-        # ✨ FIX: Verify attempt ownership first
-        c.execute("SELECT user_id FROM quiz_attempts WHERE id = %s", (attempt_id,))
-        attempt_owner = c.fetchone()
-        if not attempt_owner or attempt_owner[0] != verified_user_id:
-            return jsonify({"error": "Unauthorized"}), 403
-        
-        # 1. SQL-Side Aggregation: Rank & Percentile (Faster time breaks ties!)
-        c.execute("""
-            WITH ranks AS (
-                SELECT id, score,
-                       RANK() OVER (ORDER BY score DESC, (submitted_at - started_at) ASC) as rank_val,
-                       PERCENT_RANK() OVER (ORDER BY score DESC, (submitted_at - started_at) ASC) as pct_val,
-                       COUNT(*) OVER () as total_participants,
-                       EXTRACT(EPOCH FROM (submitted_at - started_at)) as time_taken,
-                       quiz_set_id
-                FROM quiz_attempts
-                WHERE quiz_set_id = (SELECT quiz_set_id FROM quiz_attempts WHERE id = %s)
-                  AND submitted_at IS NOT NULL
-            )
-            SELECT rank_val, pct_val, total_participants, score, time_taken, quiz_set_id 
-            FROM ranks WHERE id = %s
-        """, (attempt_id, attempt_id))
-        
-        rank_row = c.fetchone()
-        if not rank_row:
-            return jsonify({"error": "Result not found or not submitted yet"}), 404
-            
-        rank_val, pct_val, total_participants, score, time_taken, quiz_set_id = rank_row
-        
-        # 2. Get Community Stats & True Question Averages
-        c.execute("""
-            SELECT question_id, 
-                   COUNT(selected_index) as total_attempts, 
-                   SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) as total_correct,
-                   ROUND(AVG(time_spent) FILTER (WHERE time_spent > 0)) as avg_time
-            FROM quiz_responses
-            WHERE question_id IN (SELECT id FROM quiz_questions WHERE quiz_set_id = %s)
-            GROUP BY question_id
-        """, (quiz_set_id,))
-        q_stats = {
-            row[0]: {
-                "attempts": row[1], 
-                "correct": row[2], 
-                "avg_time": int(row[3]) if row[3] is not None else 15
-            } 
-            for row in c.fetchall()
-        }
-
-        # 3. Fetch Sectional Summary, Explanations, and User's Recorded Time
-        c.execute("""
-            SELECT q.id, q.question_text, q.options, q.correct_index, q.explanation, 
-                   r.selected_index, r.is_correct, COALESCE(r.time_spent, 0)
-            FROM quiz_questions q
-            LEFT JOIN quiz_responses r ON q.id = r.question_id AND r.attempt_id = %s
-            WHERE q.quiz_set_id = %s
-            ORDER BY q.id ASC
-        """, (attempt_id, quiz_set_id))
-        
-        correct_count = 0
-        wrong_count = 0
-        unattempted_count = 0
-        question_details = []
-        
-        for row in c.fetchall():
-            q_id, text, options, c_idx, exp, s_idx, is_corr, u_time_spent = row
-            
-            if s_idx is None:
-                unattempted_count += 1
-            elif is_corr:
-                correct_count += 1
-            else:
-                wrong_count += 1
-                
-            g_att = q_stats.get(q_id, {}).get("attempts", 0)
-            g_cor = q_stats.get(q_id, {}).get("correct", 0)
-            g_acc = round((g_cor / g_att) * 100) if g_att > 0 else 0
-            g_avg = q_stats.get(q_id, {}).get("avg_time", 15)
-                
-            question_details.append({
-                "question_id": q_id,
-                "text": text,
-                "options": options,
-                "correct_index": c_idx,
-                "explanation": exp,
-                "user_selected_index": s_idx,
-                "is_correct": is_corr,
-                "global_accuracy": g_acc,
-                "global_avg_time": g_avg,          # 🟢 Specific question average
-                "user_time_spent": u_time_spent     # 🟢 Student's actual time spent
-            })
-        
-       # Calculate Accuracy %
-        total_attempted = correct_count + wrong_count
-        accuracy = (correct_count / total_attempted * 100) if total_attempted > 0 else 0
-        
-        # 3. Fetch Top 10 Leaderboard for this specific quiz
-        c.execute("""
-            SELECT u.first_name, a.score, EXTRACT(EPOCH FROM (a.submitted_at - a.started_at)) as time_taken, a.user_id
-            FROM quiz_attempts a
-            JOIN users u ON a.user_id = u.user_id
-            WHERE a.quiz_set_id = %s AND a.submitted_at IS NOT NULL
-            ORDER BY a.score DESC, (a.submitted_at - a.started_at) ASC
-            LIMIT 10
-        """, (quiz_set_id,))
-        
-        top_10_list = []
-        for r_row in c.fetchall():
-            top_10_list.append({
-                "name": r_row[0],
-                "score": float(r_row[1]),
-                "time_taken": int(r_row[2]),
-                "user_id": r_row[3]
-            })
-        
-        return jsonify({
-            "quiz_set_id": quiz_set_id,  # 🟢 ADD THIS EXACT LINE HERE
-            "summary": {
-                "score": score,
-                "rank": rank_val,
-                "total_participants": total_participants,
-                # ✨ FIX: Invert the SQL rank so the topper gets 100% and lowest gets 0%
-                "percentile": round((1.0 - pct_val) * 100, 1),
-                "accuracy": round(accuracy, 1),
-                "time_spent_seconds": int(time_taken),
-                "correct": correct_count,
-                "wrong": wrong_count,
-                "unattempted": unattempted_count
-            },
-            "solutions": question_details,
-            "top_10": top_10_list
-        }), 200
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        if conn: release_db(conn)
 
 # ==========================================
 # PHASE 4: MINI APP API ENDPOINTS (Part 3)
 # ==========================================
 
 # --- MASTER SPEC: READ-ONLY CONTENT ENDPOINTS ---
-@app.route('/api/foreign-expressions', methods=['GET'])
-def get_foreign_expressions():
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        c.execute("SELECT word FROM foreign_expressions WHERE is_used = TRUE ORDER BY id DESC LIMIT 1")
-        row = c.fetchone()
-        return jsonify({"expression": row[0] if row else "N/A"}), 200
-    except Exception as e: return jsonify({"error": str(e)}), 500
-    finally:
-        if conn: release_db(conn)
 
-@app.route('/api/progress/me', methods=['GET'])
-def get_my_progress():
-    verified_user = get_verified_user()
-    if not verified_user:
-        return jsonify({"error": "Unauthorized"}), 401
-    user_id = int(verified_user.get('id'))
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        # Fetch real quiz attempts grouped by day for the Progress Tab
-        c.execute("""
-            SELECT s.topic, s.quiz_day, a.score, a.started_at 
-            FROM quiz_attempts a
-            JOIN quiz_sets s ON a.quiz_set_id = s.id
-            WHERE a.user_id = %s AND a.submitted_at IS NOT NULL
-            ORDER BY a.started_at DESC LIMIT 15
-        """, (user_id,))
-        
-        history = []
-        for row in c.fetchall():
-            history.append({
-                "topic": row[0],
-                "date": row[1].strftime('%A, %d %b'),
-                "score": row[2]
-            })
-            
-        return jsonify({"history": history}), 200
-    except Exception as e: return jsonify({"error": str(e)}), 500
-    finally:
-        if conn: release_db(conn)
 
-@app.route('/api/digest/today', methods=['GET'])
-def get_daily_digest():
-    verified_user = get_verified_user()
-    if not verified_user:
-        return jsonify({"error": "Unauthorized"}), 401
-    user_id = int(verified_user.get('id'))
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        
-        c.execute("SELECT value FROM bot_settings WHERE key = 'latest_wotd_text'")
-        wotd_row = c.fetchone()
-        wotd_content = wotd_row[0] if wotd_row else "Check back later for today's word!"
-        
-        c.execute("SELECT value FROM bot_settings WHERE key = 'latest_foreign_text'")
-        fe_row = c.fetchone()
-        fe_content = fe_row[0] if fe_row else "Check back later for today's expressions!"
-        
-        current_date = (datetime.utcnow() + timedelta(hours=5, minutes=30)).date()
-        
-        # Check Read Status
-        c.execute("""
-            SELECT content_type FROM content_read_status 
-            WHERE user_id = %s AND content_date = %s
-        """, (user_id, current_date))
-        read_types = [r[0] for r in c.fetchall()]
-        
-        digest_items = [
-            {
-                "id": "wotd",
-                "title": "📖 Word of the Day",
-                "content": wotd_content,
-                "is_read": "wotd" in read_types
-            },
-            {
-                "id": "foreign",
-                "title": "🌍 Foreign Expressions",
-                "content": fe_content,
-                "is_read": "foreign" in read_types
-            }
-        ]
-        
-        return jsonify({"items": digest_items}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        if conn: release_db(conn)
 
-@app.route('/api/digest/mark-read', methods=['POST'])
-def mark_digest_read():
-    data = request.get_json()
-    verified_user = get_verified_user()
-    if not verified_user:
-        return jsonify({"error": "Unauthorized"}), 401
-    user_id = int(verified_user.get('id'))
-    content_type = data.get('content_type')
-    
-    if not user_id or not content_type:
-        return jsonify({"error": "Missing data"}), 400
-        
-    current_date = (datetime.utcnow() + timedelta(hours=5, minutes=30)).date()
-    
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        c.execute("""
-            INSERT INTO content_read_status (user_id, content_type, content_date, read_at)
-            VALUES (%s, %s, %s, NOW())
-            ON CONFLICT (user_id, content_type, content_date) DO NOTHING
-        """, (user_id, content_type, current_date))
-        conn.commit()
-        return jsonify({"success": True}), 200
-    except Exception as e:
-        if conn: conn.rollback()
-        return jsonify({"error": str(e)}), 500
-    finally:
-        if conn: release_db(conn)
 
 # ==========================================
 # MULTI-PLATFORM AUTHENTICATION (WEB & ANDROID)
 # ==========================================
 
-@app.route('/api/auth/telegram-widget', methods=['POST'])
-def auth_telegram_widget():
-    """
-    Validates the official Telegram Web Login Widget data from ezeditorials.pages.dev
-    """
-    data = request.get_json() or {}
-    received_hash = data.get('hash')
-    if not received_hash:
-        return jsonify({"error": "Missing signature"}), 400
-
-    # Build verification string according to Telegram specs
-    check_dict = {k: v for k, v in data.items() if k != 'hash'}
-    data_check_string = "\n".join(f"{k}={check_dict[k]}" for k in sorted(check_dict.keys()))
-
-    # Secret key for widget is SHA256 of bot token (not HMAC like TMA)
-    secret_key = hashlib.sha256(TELEGRAM_TOKEN.encode()).digest()
-    calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
-
-    if not hmac.compare_digest(calculated_hash, received_hash):
-        return jsonify({"error": "Invalid Telegram signature"}), 403
-
-    # Check that the request was made within the last 24 hours
-    auth_date = int(data.get('auth_date', 0))
-    if time.time() - auth_date > 86400:
-        return jsonify({"error": "Session expired"}), 401
-
-    user_id = int(data['id'])
-    first_name = data.get('first_name', 'Student')
-
-    # Ensure student profile exists in PostgreSQL
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        c.execute("""
-            INSERT INTO users (user_id, first_name, last_updated)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (user_id) DO UPDATE SET 
-                first_name = EXCLUDED.first_name,
-                last_updated = EXCLUDED.last_updated
-        """, (user_id, first_name, time.time()))
-        conn.commit()
-    except Exception as e:
-        print(f"Error updating user on login: {e}")
-    finally:
-        if conn: release_db(conn)
-
-    # Generate 30-day session token in Upstash Redis
-    session_token = secrets.token_hex(32)
-    user_payload = {
-        "id": user_id,
-        "first_name": first_name,
-        "username": data.get("username", ""),
-        "photo_url": data.get("photo_url", "")
-    }
-
-    if redis_client:
-        redis_client.set(f"session:{session_token}", json.dumps(user_payload), ex=30 * 86400)
-
-    return jsonify({
-        "token": session_token,
-        "user": user_payload
-    }), 200
 
 
-@app.route('/api/auth/request-code', methods=['POST'])
-def request_login_code():
-    """
-    Generates a 5-minute deep-link token for the Android app and mobile web.
-    """
-    auth_code = secrets.token_hex(6)  # e.g., 'a3f81e7b9c12'
-    
-    if redis_client:
-        redis_client.set(f"auth_code:{auth_code}", "pending", ex=300)
-
-    return jsonify({
-        "code": auth_code,
-        "bot_username": "Ez_vocab_bot"  # Your bot username
-    }), 200
 
 
-@app.route('/api/auth/verify-code', methods=['POST'])
-def verify_login_code():
-    """
-    Android App / Mobile Web polls this endpoint while student taps 'Start' in Telegram.
-    """
-    data = request.get_json() or {}
-    code = data.get('code', '')
 
-    if not code or not redis_client:
-        return jsonify({"status": "pending"}), 200
+# 🟢 GOOGLE PLAY COMPLIANCE: Account Deletion Endpoint
 
-    stored_data = redis_client.get(f"auth_code:{code}")
-    if not stored_data:
-        return jsonify({"error": "Code expired or invalid"}), 400
-
-    stored_str = stored_data.decode('utf-8') if isinstance(stored_data, bytes) else str(stored_data)
-
-    if stored_str == "pending":
-        return jsonify({"status": "pending"}), 200
-
-    # If code was verified by the bot, stored_data contains student info
-    user_payload = json.loads(stored_str)
-
-    # Mint a long-lived 30-day session token
-    session_token = secrets.token_hex(32)
-    redis_client.set(f"session:{session_token}", json.dumps(user_payload), ex=30 * 86400)
-    
-    # Delete one-time code to prevent reuse
-    redis_client.delete(f"auth_code:{code}")
-
-    return jsonify({
-        "status": "authenticated",
-        "token": session_token,
-        "user": user_payload
-    }), 200
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
+
+
+# ==============================================================================
+# 🟢 FLASK BLUEPRINTS REGISTRATION (Sprint 0: Modularization)
+# ==============================================================================
+from routes.api_auth import auth_bp
+from routes.api_quiz import quiz_bp
+from routes.api_profile import profile_bp
+from routes.api_leaderboard import leaderboard_bp
+from routes.bot_cron import cron_bp
+
+app.register_blueprint(auth_bp)
+app.register_blueprint(quiz_bp)
+app.register_blueprint(profile_bp)
+app.register_blueprint(leaderboard_bp)
+app.register_blueprint(cron_bp)
+
+# Backward-compatibility re-exports for route handlers
+from routes.api_auth import (
+    auth_telegram_widget, request_login_code, delete_account,
+    verify_login_code, approve_captcha, system_status
+)
+from routes.api_quiz import (
+    get_todays_quizzes, start_quiz, submit_quiz, get_quiz_result, add_poll
+)
+from routes.api_profile import (
+    get_profile, update_target, get_my_progress, get_upcoming_exams,
+    get_daily_digest, mark_digest_read, get_wotd, get_foreign_expressions
+)
+from routes.api_leaderboard import (
+    get_mini_app_leaderboard, get_elo_ranking, get_weekly_results
+)
+from routes.bot_cron import (
+    trigger_daily_purge, trigger_daily_reset, trigger_weekly_reset,
+    cron_process_leaderboard, cron_heavy_math, cron_update_telegram_text,
+    trigger_dispatcher, trigger_sunday_announcement, trigger_daily_vocab,
+    trigger_countdown_update, trigger_quiz_announcement, cron_refresh_snapshot,
+    trigger_word_of_the_day, trigger_miniapp_ingestion
+)
