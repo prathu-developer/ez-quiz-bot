@@ -179,7 +179,7 @@ def add_cors_headers(response):
     response.headers['Access-Control-Allow-Origin'] = '*'
     
     # 🟢 FIX: We MUST explicitly allow our new custom security headers!
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Telegram-Init-Data, X-Cron-Secret'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Telegram-Init-Data, X-Cron-Secret, X-Magazine-Secret'
     
     response.headers['Access-Control-Allow-Methods'] = 'GET,PUT,POST,DELETE,OPTIONS'
     return response
@@ -854,9 +854,10 @@ def process_read_receipt(cb_id, user_id, first_name, message_id):
         # 1. Double-Tap Protection
         c.execute("SELECT 1 FROM read_receipts WHERE message_id=%s AND user_id=%s", (message_id, user_id))
         if c.fetchone():
-            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery", json={
-                "callback_query_id": cb_id, "text": "You've already marked this as read! 📖", "show_alert": False
-            })
+            if cb_id:
+                http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery", json={
+                    "callback_query_id": cb_id, "text": "You've already marked this as read! 📖", "show_alert": False
+                })
             return
             
         # 2. Record the tap
@@ -890,9 +891,10 @@ def process_read_receipt(cb_id, user_id, first_name, message_id):
         )
         
         # 6. Inform the user they are safe
-        http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery", json={
-            "callback_query_id": cb_id, "text": "Attendance marked! You are protected from the inactivity purge. 🛡️", "show_alert": False
-        })
+        if cb_id:
+            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery", json={
+                "callback_query_id": cb_id, "text": "Attendance marked! You are protected from the inactivity purge. 🛡️", "show_alert": False
+            })
     except Exception as e:
         print(f"Error processing read receipt: {e}")
     finally:
@@ -3427,12 +3429,14 @@ from routes.api_quiz import quiz_bp
 from routes.api_profile import profile_bp
 from routes.api_leaderboard import leaderboard_bp
 from routes.bot_cron import cron_bp
+from routes.api_magazine import magazine_bp
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(quiz_bp)
 app.register_blueprint(profile_bp)
 app.register_blueprint(leaderboard_bp)
 app.register_blueprint(cron_bp)
+app.register_blueprint(magazine_bp)
 
 # Backward-compatibility re-exports for route handlers
 from routes.api_auth import (
@@ -3455,4 +3459,8 @@ from routes.bot_cron import (
     trigger_dispatcher, trigger_sunday_announcement, trigger_daily_vocab,
     trigger_countdown_update, trigger_quiz_announcement, cron_refresh_snapshot,
     trigger_word_of_the_day, trigger_miniapp_ingestion
+)
+from routes.api_magazine import (
+    ingest_magazine_edition, get_magazine_week, get_magazine_day, get_magazine_read_status,
+    sync_read_receipt
 )
