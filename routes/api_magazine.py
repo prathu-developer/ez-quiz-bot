@@ -151,7 +151,10 @@ def get_magazine_week():
     }
 
     res = Response(json.dumps(response_payload), mimetype='application/json', status=200)
-    res.headers["Cache-Control"] = "public, max-age=1800"
+    if not clean_week_data:
+        res.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    else:
+        res.headers["Cache-Control"] = "public, max-age=60"
     return res
 
 
