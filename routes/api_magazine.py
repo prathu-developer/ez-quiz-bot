@@ -1,7 +1,7 @@
 import os
 import json
 import datetime
-from flask import Blueprint, request, jsonify, Response
+from flask import Blueprint, request, jsonify, Response, send_from_directory
 from flask_app import get_db, release_db, get_verified_user, redis_client
 
 magazine_bp = Blueprint('api_magazine', __name__)
@@ -101,6 +101,42 @@ def ingest_magazine_edition():
                 week_data["_meta"][date_str] = {}
             week_data["_meta"][date_str]["telegram_message_id"] = int(telegram_msg_id)
 
+        # Optional TOC Metadata Sync
+        toc = data.get("toc")
+        if toc:
+            if "_toc" not in week_data or not isinstance(week_data["_toc"], dict):
+                week_data["_toc"] = {}
+            week_data["_toc"][date_str] = toc
+
+        # Persist Full HTML Magazine Replicas to Redis with 9-day TTL
+        html_light = data.get("html_light")
+        html_dark = data.get("html_dark")
+        if html_light:
+            try:
+                redis_client.set(f"magazine:html:light:{date_str}", html_light, ex=9 * 86400)
+                redis_client.set(f"magazine:html:{date_str}", html_light, ex=9 * 86400)
+            except Exception as e:
+                print(f"⚠️ Redis write error for magazine light HTML: {e}")
+        if html_dark:
+            try:
+                redis_client.set(f"magazine:html:dark:{date_str}", html_dark, ex=9 * 86400)
+            except Exception as e:
+                print(f"⚠️ Redis write error for magazine dark HTML: {e}")
+
+        # Local filesystem cache fallback
+        try:
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            cache_dir = os.path.join(base_dir, "assets", "magazine")
+            os.makedirs(cache_dir, exist_ok=True)
+            if html_light:
+                with open(os.path.join(cache_dir, f"{date_str}_light.html"), "w", encoding="utf-8") as f:
+                    f.write(html_light)
+            if html_dark:
+                with open(os.path.join(cache_dir, f"{date_str}_dark.html"), "w", encoding="utf-8") as f:
+                    f.write(html_dark)
+        except Exception as e:
+            print(f"⚠️ Local magazine cache write error: {e}")
+
         try:
             # 9-day TTL (777,600 seconds) ensures the full week remains available through Sunday wrap-up
             redis_client.set(week_key, json.dumps(week_data), ex=9 * 86400)
@@ -114,7 +150,9 @@ def ingest_magazine_edition():
         "status": "ok",
         "date": date_str,
         "week_key": week_key,
-        "articles_count": len(articles)
+        "articles_count": len(articles),
+        "has_html_light": bool(data.get("html_light")),
+        "has_html_dark": bool(data.get("html_dark"))
     }), 200
 
 
@@ -191,6 +229,130 @@ def get_magazine_day(date_str):
     res = Response(json.dumps(response_payload), mimetype='application/json', status=200)
     res.headers["Cache-Control"] = "public, max-age=1800"
     return res
+
+
+# ==============================================================================
+# 3.1 MAGAZINE HTML ENDPOINT (EXACT PDF REPLICA DATA)
+# ==============================================================================
+@magazine_bp.route('/api/magazine/html/<date_str>', methods=['GET'])
+def get_magazine_html(date_str):
+    """
+    Returns the compiled HTML replica for the specified date.
+    Query param: ?mode=light (default) or ?mode=dark
+    """
+    mode = request.args.get("mode", "light").lower()
+    html_key = f"magazine:html:dark:{date_str}" if mode == "dark" else f"magazine:html:light:{date_str}"
+    
+    html_content = ""
+    if redis_client:
+        try:
+            raw = redis_client.get(html_key)
+            if not raw and mode == "light":
+                raw = redis_client.get(f"magazine:html:{date_str}")
+            if raw:
+                if isinstance(raw, bytes):
+                    raw = raw.decode('utf-8')
+                html_content = raw
+        except Exception as e:
+            print(f"⚠️ Redis read error in get_magazine_html: {e}")
+
+    # Fallback to local cache file if exists
+    if not html_content:
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cache_file = os.path.join(base_dir, "assets", "magazine", f"{date_str}_{mode}.html")
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    html_content = f.read()
+            except Exception:
+                pass
+
+    return jsonify({
+        "date": date_str,
+        "mode": mode,
+        "has_html": bool(html_content),
+        "html": html_content
+    }), 200
+
+
+# ==============================================================================
+# 3.2 MAGAZINE DIRECT RENDER (STANDALONE WEB PAGE FOR LAPTOP / IFRAME)
+# ==============================================================================
+@magazine_bp.route('/api/magazine/render/<date_str>', methods=['GET'])
+def render_magazine_page(date_str):
+    """
+    Renders the exact magazine publication as a complete HTML document for laptops/desktops.
+    Allows members to read the daily magazine in full-screen or browser tab with 1:1 PDF fidelity.
+    Query param: ?mode=light (default) or ?mode=dark
+    """
+    mode = request.args.get("mode", "light").lower()
+    html_key = f"magazine:html:dark:{date_str}" if mode == "dark" else f"magazine:html:light:{date_str}"
+    
+    html_content = ""
+    if redis_client:
+        try:
+            raw = redis_client.get(html_key)
+            if not raw and mode == "light":
+                raw = redis_client.get(f"magazine:html:{date_str}")
+            if raw:
+                if isinstance(raw, bytes):
+                    raw = raw.decode('utf-8')
+                html_content = raw
+        except Exception as e:
+            print(f"⚠️ Redis read error in render_magazine_page: {e}")
+
+    if not html_content:
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cache_file = os.path.join(base_dir, "assets", "magazine", f"{date_str}_{mode}.html")
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    html_content = f.read()
+            except Exception:
+                pass
+
+    if not html_content:
+        return f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Edition Not Found · {date_str}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0b1329; color: #fff; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }}
+        .card {{ background: rgba(255,255,255,0.08); padding: 40px; border-radius: 16px; text-align: center; max-width: 480px; border: 1px solid rgba(255,255,255,0.15); }}
+        h2 {{ margin-top: 0; color: #38bdf8; }}
+        p {{ color: #94a3b8; line-height: 1.6; }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>☕ Daily Magazine Edition</h2>
+        <p>The magazine publication for <strong>{date_str}</strong> is either currently compiling or has not been ingested yet.</p>
+    </div>
+</body>
+</html>""", 404
+
+    res = Response(html_content, mimetype='text/html', status=200)
+    res.headers["Content-Type"] = "text/html; charset=utf-8"
+    res.headers["Cache-Control"] = "public, max-age=1800"
+    return res
+
+
+# ==============================================================================
+# 3.3 STATIC MAGAZINE ASSETS (COVERS, WATERMARK, ARTWORK)
+# ==============================================================================
+@magazine_bp.route('/api/magazine/assets/<path:filename>', methods=['GET'])
+def get_magazine_asset(filename):
+    """
+    Serves static cover background images, watermarks, and icons for web magazine display.
+    Caches assets aggressively for 7 days.
+    """
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    assets_dir = os.path.join(base_dir, "assets", "magazine")
+    response = send_from_directory(assets_dir, filename)
+    response.headers["Cache-Control"] = "public, max-age=604800, immutable"
+    return response
 
 
 # ==============================================================================
