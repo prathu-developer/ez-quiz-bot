@@ -9,7 +9,7 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify
 from flask_app import (
     get_db, release_db, get_verified_user, redis_client,
-    TELEGRAM_TOKEN, background_approve_user
+    TELEGRAM_TOKEN, background_approve_user, CHAT_ID, http_session
 )
 
 auth_bp = Blueprint('api_auth', __name__)
@@ -35,6 +35,60 @@ def approve_captcha():
     threading.Thread(target=background_approve_user, args=(user_id,)).start()
 
     return jsonify({"status": "success"}), 200
+
+
+@auth_bp.route('/api/admin/approve_pending_joins', methods=['GET', 'POST'])
+def admin_approve_pending_joins():
+    """
+    Sweeps all currently pending join requests in bot_settings and approves them.
+    Instantly clears any backlog of students whose captcha had loading issues.
+    """
+    conn = None
+    approved_count = 0
+    failed_count = 0
+    approved_users = []
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT key, value FROM bot_settings WHERE key LIKE 'join_req_%'")
+        rows = c.fetchall()
+        for key, val in rows:
+            u_id = key.replace("join_req_", "").strip()
+            try:
+                user_int = int(u_id)
+                res = http_session.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/approveChatJoinRequest",
+                    json={"chat_id": CHAT_ID, "user_id": user_int},
+                    timeout=5
+                )
+                if res.status_code in [200, 400]:
+                    approved_count += 1
+                    approved_users.append(user_int)
+                    c.execute("DELETE FROM bot_settings WHERE key = %s", (key,))
+                    # Also register in users table
+                    c.execute("""
+                        INSERT INTO users (user_id, first_name, joined_at)
+                        VALUES (%s, 'New Student', NOW())
+                        ON CONFLICT (user_id) DO NOTHING
+                    """, (user_int,))
+                else:
+                    failed_count += 1
+            except Exception:
+                failed_count += 1
+        conn.commit()
+        c.close()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+    return jsonify({
+        "status": "success",
+        "approved_count": approved_count,
+        "failed_count": failed_count,
+        "approved_users": approved_users
+    }), 200
 
 
 @auth_bp.route("/api/system-status", methods=["GET"])

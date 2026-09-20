@@ -997,36 +997,48 @@ def webhook():
         # ✨ Use Telegram's secret join request bypass ID
         user_chat_id = join_req.get('user_chat_id', user_id)
         
-        # 🟢 UPDATED: Pointing to the new Cloudflare Pages deployment!
-        MINI_APP_URL = "https://ez-editorials-app.pages.dev/captcha.html"
-        markup = {"inline_keyboard": [[{"text": "⚡️ Complete Entrance Trial (10Q)", "web_app": {"url": MINI_APP_URL}}]]}
+        # 🟢 UPDATED: Pointing to Cloudflare Pages deployment with direct user ID tracking!
+        target_chat_id = join_req.get('chat', {}).get('id') or CHAT_ID
+        captcha_url = f"https://ez-editorials-app.pages.dev/captcha.html?uid={user_id}"
+        markup = {
+            "inline_keyboard": [
+                [{"text": "⚡️ Complete Entrance Trial (3Q)", "web_app": {"url": captcha_url}}],
+                [{"text": "🌐 Open in Browser (If Trial doesn't open)", "url": captcha_url}]
+            ]
+        }
         
-        if query_id:
-            # ✨ 1. NATIVE POP-UP
-            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendChatJoinRequestWebApp", json={
-                "chat_join_request_query_id": query_id,
-                "web_app_url": MINI_APP_URL
-            })
-            
-            # 🛡️ 2. BACKUP DM (Using user_chat_id to bypass the /start requirement)
+        # 1. Native Pop-up (Supported Telegram clients)
+        try:
+            native_payload = {
+                "chat_id": target_chat_id,
+                "user_id": user_id,
+                "web_app_url": captcha_url
+            }
+            if query_id:
+                native_payload["chat_join_request_query_id"] = query_id
+            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendChatJoinRequestWebApp", json=native_payload, timeout=5)
+        except Exception as e:
+            print(f"sendChatJoinRequestWebApp failed: {e}")
+
+        # 2. Direct DM with both Mini App and Browser fallback buttons
+        welcome_text = (
+            "👋 **Welcome to Ez Editorials!**\n\n"
+            "We have received your request to join the Great Hall.\n\n"
+            "To ensure our community remains a high-quality environment for serious learners, we ask all new members to complete a quick, 3-question English Entrance Trial.\n\n"
+            "Tap below to prove your skills and instantly gain access to the group! 🪄"
+        )
+        try:
             http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
                 "chat_id": user_chat_id,
-                "text": "👋 **Welcome to Ez Editorials!**\n\nWe have received your request to join the Great Hall.\n\nTo ensure our community remains a high-quality environment for serious learners, we ask all new members to complete a quick, 10-question English Entrance Trial.\n\nTap the button below to prove your skills and instantly gain access to the group! 🪄",
+                "text": welcome_text,
                 "reply_markup": markup,
                 "parse_mode": "Markdown"
-            })
-        else:
-            # 🔄 3. FALLBACK DM
-            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
-                "chat_id": user_chat_id,
-                "text": "👋 **Welcome to Ez Editorials!**\n\nWe have received your request to join the Great Hall.\n\nTo ensure our community remains a high-quality environment for serious learners, we ask all new members to complete a quick, 10-question English Entrance Trial.\n\nTap the button below to prove your skills and instantly gain access to the group! 🪄",
-                "reply_markup": markup,
-                "parse_mode": "Markdown"
-            })
+            }, timeout=8)
+        except Exception as e:
+            print(f"Backup DM sendMessage failed: {e}")
             
-        # ✨ THE TIME BOMB: Store in DB for the 1-minute cron job to sweep!
-        # 🟢 FIX: Decreased to 300 seconds (5 mins)
-        expire_time = int(time.time()) + 300 
+        # Store in DB with 24-hour grace period so students are never prematurely declined!
+        expire_time = int(time.time()) + 86400 
         try:
             conn = get_db()
             c = conn.cursor()
@@ -3512,7 +3524,7 @@ app.register_blueprint(magazine_bp)
 # Backward-compatibility re-exports for route handlers
 from routes.api_auth import (
     auth_telegram_widget, request_login_code, delete_account,
-    verify_login_code, approve_captcha, system_status
+    verify_login_code, approve_captcha, system_status, admin_approve_pending_joins
 )
 from routes.api_quiz import (
     get_todays_quizzes, start_quiz, submit_quiz, get_quiz_result, add_poll
