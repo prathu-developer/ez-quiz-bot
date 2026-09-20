@@ -196,6 +196,7 @@ CACHE_LOCK = threading.Lock() # ✨ NEW: Protects Render from Cache Stampedes
 POLL_CACHE = {} # ✨ NEW: Caches poll correct options in RAM
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+BOT_ID = int(TELEGRAM_TOKEN.split(':')[0]) if (TELEGRAM_TOKEN and ':' in TELEGRAM_TOKEN) else None
 CHAT_ID = "-1003875580290"
 LIVE_MESSAGE_ID = 2662 
 ADD_DB_KEY = os.environ.get("ADD_DB_KEY")
@@ -505,48 +506,93 @@ def update_live_leaderboard():
         except requests.exceptions.RequestException as e:
             time.sleep(3 + attempt)
 
-def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, replied_text=None):
-    text_lower = text.lower()
+def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, replied_text=None, is_reply_to_bot=False):
+    text_clean = (text or "").strip()
+    if not text_clean:
+        return
+
+    text_lower = text_clean.lower()
     ADMIN_IDS = [716496729, 5103843488, 6251430317]
     is_admin = user_id in ADMIN_IDS
-    is_explicitly_summoned = "lixie" in text_lower
-    is_asking_rank = "rank" in text_lower or "score" in text_lower
+
+    # 1. Check if explicitly summoned or continuing a direct conversation with the bot
+    is_explicitly_summoned = (
+        is_reply_to_bot or
+        "lixie" in text_lower or
+        "@ez_vocab_bot" in text_lower or
+        text_lower.startswith("bot") or
+        "hey bot" in text_lower or
+        "hi bot" in text_lower
+    )
+
+    # 2. Comprehensive Academic, Platform, Doubt & Orientation Detection
     doubt_keywords = [
-        "what", "how", "when", "why", "where", "can you", "explain", 
-        "meaning", "synonym", "antonym", "rank", "score", "cutoff", 
-        "exam", "quiz", "quizzes", "poll", "polls", "test", "tests", 
-        "today quiz", "link", "schedule", "pdf", "magazine"
+        "what", "how", "when", "why", "where", "which", "who", "whom", "whose",
+        "can you", "could you", "would you", "tell me", "please explain", "explain",
+        "meaning", "synonym", "antonym", "definition", "vocab", "vocabulary", "word", "words",
+        "idiom", "idioms", "phrase", "phrases", "grammar", "rule", "rules", "error", "correction",
+        "cloze", "para jumble", "sentence improvement", "filler", "fillers", "comprehension",
+        "editorial", "passage", "doubt", "doubts", "clarify", "clarification",
+        "help", "question", "difference between", "distinction", "nuance",
+        "is it", "does it", "should i", "correct", "wrong", "false", "solution",
+        "rank", "score", "cutoff", "cut-off", "cut off", "points", "marks", "elo",
+        "rating", "exam", "exams", "quiz", "quizzes", "poll", "polls", "test", "tests",
+        "mock", "schedule", "timetable", "drop", "pdf", "magazine", "attendance",
+        "mini app", "app", "login", "streak",
+        "utilize", "utilise", "use this group", "how to use", "how to start", "new student",
+        "new member", "new here", "guide", "guidance", "routine", "roadmap", "overview",
+        "what about", "how about", "why not", "why so", "and if", "any exception",
+        "give example", "another example", "what if", "can it be", "could it be",
+        "is that so", "agreed", "disagree", "elaborate", "trick", "shortcut", "mnemonic"
     ]
     is_asking_doubt = "?" in text_lower or any(word in text_lower for word in doubt_keywords)
 
-    if is_admin and not is_explicitly_summoned:
-        return
-    if replied_text and not is_explicitly_summoned:
-        return
-    if not is_admin and not is_explicitly_summoned and not is_asking_doubt:
+    # 3. Known query/support topics
+    is_query_thread = thread_id in [12082, 12103, 12105, 3, 2972, 10123]
+
+    # Filters:
+    # - Admins: don't interrupt admin announcements or instructions. Only respond if explicitly summoned or asking an actual question ('?' in text)
+    if is_admin and not is_explicitly_summoned and not ("?" in text_clean and is_asking_doubt):
         return
 
-    # --- ✨ LIXIE CATCH-ALL RANK & RANKING INTERCEPT ✨ ---
-    if "rank" in text_lower or "score" in text_lower or "points" in text_lower:
-        process_ranking_command(chat_id, user_id, message_id, thread_id)
+    # - If replying to another member's message: only respond if explicitly summoned or asking an academic/platform doubt
+    if replied_text and not is_explicitly_summoned and not is_asking_doubt:
         return
 
-    # ✨ SECURE REDIS RATE LIMITING (10s Cooldown)
+    # - General group chatter: must be explicitly summoned, asking a doubt, or posting in a query thread
+    if not is_explicitly_summoned and not is_asking_doubt and not is_query_thread:
+        return
+
+    # 4. Fair Per-User Rate Limiting (Prevents spam without freezing the whole thread/chat)
+    cooldown_seconds = 2 if is_explicitly_summoned else 4
     if redis_client:
-        if check_and_set_cooldown("rate:lixie:main", 10):
+        if check_and_set_cooldown(f"rate:lixie:user:{user_id}", cooldown_seconds):
             return
     else:
-        # Fallback to local RAM if Redis is offline
-        global LAST_AI_REPLY_TIME_MAIN
+        global LAST_AI_REPLY_TIME_THREADS
         current_time = time.time()
-        if current_time - LAST_AI_REPLY_TIME_MAIN < 10:
+        user_key = f"u_{user_id}"
+        if current_time - LAST_AI_REPLY_TIME_THREADS.get(user_key, 0) < cooldown_seconds:
             return
-        LAST_AI_REPLY_TIME_MAIN = current_time
+        LAST_AI_REPLY_TIME_THREADS[user_key] = current_time
+
+    # 5. Extract Live Thread History Memory
+    global THREAD_HISTORY
+    t_key = thread_id if thread_id is not None else "main"
+    if t_key not in THREAD_HISTORY:
+        THREAD_HISTORY[t_key] = deque(maxlen=12)
+
+    recent_history_list = list(THREAD_HISTORY[t_key])
+    conversation_history_str = ""
+    # Exclude the current message from history string if already appended in webhook
+    prior_turns = recent_history_list[:-1] if len(recent_history_list) > 1 else []
+    if prior_turns:
+        conversation_history_str = "\n[LIVE THREAD CONVERSATION HISTORY (RECENT TURNS)]\n" + "\n".join(prior_turns[-8:]) + "\n"
 
     current_ist_time = datetime.utcnow() + timedelta(hours=5, minutes=30)
     current_day = current_ist_time.strftime('%A')
     phase_of_week = "Active Competition"
-    if current_day == "Monday" and (current_ist_time.hour < 16 or (current_ist_time.hour == 16 and current_ist_time.minute < 30)):
+    if current_day == "Monday" and (current_ist_time.hour < 10 or (current_ist_time.hour == 10 and current_ist_time.minute < 30)):
         phase_of_week = "Monday Pre-Game (Scores are reset to 0. The first quiz drops at 10:30 AM today.)"
     elif current_day == "Sunday" and current_ist_time.hour >= 13:
         phase_of_week = "Sunday Post-Deadline (Quizzes are over, waiting for the official Monday morning reset.)"
@@ -557,7 +603,6 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
     db_key_index = 0
 
     try:
-        # 🟢 FIX: Define the database connection before executing!
         conn = get_db()
         c = conn.cursor()
         c.execute("SELECT COUNT(*) FROM polls")
@@ -580,12 +625,11 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
         
         c.close()
         release_db(conn)
-    except Exception as db_err:
+    except Exception:
         pass
 
-    reply_context = f"\n=== CONVERSATION HISTORY ===\nThe user is directly replying to this previous message:\n\"{replied_text}\"\nUse this to answer contextual questions.\n" if replied_text else ""
+    reply_context = f"\n=== DIRECT REPLY CONTEXT ===\nThe user is directly replying to this message in Telegram:\n\"{replied_text}\"\n" if replied_text else ""
 
-    # Dynamic 10:30 AM Topic Test Timetable Map
     DAILY_SCHEDULE_MAP = {
         "Monday": "• Set 1: Vocab Quiz (15Q • 10m)\n• Set 2: Error Detection (5Q • 5m)\n• Set 3: Fill in the Blanks (5Q • 5m)\n• Set 4: Sentence Improvement (5Q • 5m)\n• Set 5: Reading Comprehension (8Q • 10-12m)",
         "Tuesday": "• Set 1: Vocab Quiz (15Q • 10m)\n• Set 2: Word Usage (5Q • 5m)\n• Set 3: Error Detection (5Q • 5m)\n• Set 4: Fill in the Blanks (5Q • 5m)\n• Set 5: Para Jumbles (5 Sets • 10-12m)",
@@ -597,27 +641,101 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
     }
     today_schedule = DAILY_SCHEDULE_MAP.get(current_day, "Standard Daily Sets")
 
+    # Thread-specific instructions
+    thread_instruction = ""
+    if thread_id == 12082:
+        thread_instruction = """
+        [CURRENT THREAD: 🐞 BUG REPORTS]
+        Goal: Diagnose and log issues concisely (1-2 sentences).
+        - If crucial info is missing, politely ask (e.g., "Which day/set and question number did this happen on?").
+        - If clear report or follow-up details: Acknowledge and confirm it is logged for the developers.
+        - Never ignore follow-up details from a user.
+        """
+    elif thread_id == 12103:
+        thread_instruction = """
+        [CURRENT THREAD: 🛟 HELP & SUPPORT]
+        Goal: Resolve navigation, Mini App access, quiz timing (10:30 AM IST), score/rating, or attendance queries in 1-3 direct lines.
+        - Give exact button/tab name (e.g., "Open the Mini App via 🏆 Rankings & Quizzes thread and check the Progress tab.").
+        """
+    elif thread_id == 12105:
+        thread_instruction = """
+        [CURRENT THREAD: 💡 FEATURE REQUESTS]
+        Goal: Acknowledge community suggestions warmly in 1-2 lines.
+        - E.g.: "Noted! Thank you for the suggestion—we'll keep this in mind for future app updates."
+        """
+    elif thread_id == 3:
+        thread_instruction = """
+        [CURRENT THREAD: 📰 TODAY'S EDITORIALS]
+        Goal: Answer doubts related to "Today's Editorials" PDF magazine (expected every morning between 06:00 AM and 10:30 AM IST, Mon-Sat).
+        Help students analyze editorial vocabulary, idioms, tone, or comprehension questions.
+        """
+    elif thread_id == 2972:
+        thread_instruction = """
+        [CURRENT THREAD: 🏆 RANKINGS & QUIZZES]
+        Goal: Answer queries regarding the daily 10:30 AM IST quiz drops, Mini App trials, leaderboard rules, scoring, and Elo rating. Note: Quiz drop time is strictly 10:30 AM IST (morning), not evening or 4:30 PM.
+        """
+
     system_prompt = f"""
     You are Lixie, the official AI learning mentor and moderator of Ez Editorials — an exam-oriented English learning platform for Indian competitive exam aspirants (Banking, SSC, Regulatory, UPSC, State PSCs).
 
     =========================================
     PERSONA & MODERATOR RULES (STRICT BREVITY)
     =========================================
-    - Role: Sharp community moderator + expert English tutor.
-    - Tone: Friendly, grounded, intelligent, zero conversational fluff.
-    - Format: Never start with robotic preamble (e.g., "Certainly!", "I'd be happy to help", "Here is a breakdown"). Jump directly into the answer.
+    - Role: Sharp community moderator + clever, innovative English mentor.
+    - Tone: Witty, grounded, razor-sharp, zero conversational fluff.
+    - Format: Never start with robotic filler (e.g., "Certainly!", "I'd be happy to help", "Here is a breakdown"). Jump directly into the answer.
     - Length Limits:
-      * Quick query / single word meaning -> 1 to 3 concise lines max.
-      * Grammar or concept doubts -> Short, clear breakdown (Rule -> Context -> Why the common trap fails). Max 100-140 words.
-      * Platform or schedule questions -> 1 to 2 punchy lines.
+      * Quick query / single word meaning / greeting -> 1 to 2 concise lines max.
+      * Grammar, vocabulary, or concept doubts -> 3 to 5 punchy lines (max 40-70 words). Use the micro-format (⚡ Quick Trick -> 🎯 Exam Application -> 💡 Memory Anchor).
+      * Platform, group guide, or schedule questions -> Concise bullet points or 2 to 4 punchy lines.
+      * Never write long, bookish, comprehensive essays! Keep it fast, clever, and easy to digest on a mobile screen.
 
     =========================================
-    ENGLISH TEACHING PHILOSOPHY
+    HOW TO UTILISE THIS GROUP (NEW STUDENT GUIDE)
     =========================================
-    1. STRICT BRITISH ENGLISH: Always use British spelling and grammar conventions (e.g., analyse, colour, rigour, practise as verb).
-    2. EXAM RELEVANCE: Focus strictly on real exam patterns (subject-verb agreement, prepositions, parallelism, contextual vocabulary, idioms).
-    3. NO OPTION LABELS (A/B/C/D): Question options are randomized in the Mini App. Never say "Option A is correct." Always refer to the actual word or phrase.
-    4. TEACH BY CONTRAST: Show why the right answer works and why the tempting distractor is grammatically flawed.
+    When a student asks how to utilise/use this group, where to start, or what the routine is, explain this 4-step daily system clearly:
+    1. 📰 Read "Today's Editorials" (Thread 3): Drops every morning between 06:00 AM and 10:30 AM IST (Mon–Sat). Read the PDF magazine and tap "Mark as Read" to log attendance.
+    2. ⚡ 10:30 AM Daily Topic Trials (Thread 2972 / Mini App): Daily timed tests drop every morning at 10:30 AM IST (Vocab Quiz + changing grammar/RC sets). Attempt them inside the Mini App.
+    3. 🏆 Leaderboard & Elo Rating: Compete in the Weekly Cup, maintain your accuracy, and climb Elo tiers (Base 1000). Scoring above class average promotes you.
+    4. 💬 English Doubts & Discussion (Thread 11): Ask any vocabulary, grammar, or editorial doubt in this main chat.
+    * Retention Rules: Read ≥ 1 magazine or attempt ≥ 1 quiz in your first 7 days (7-day probation), and ≥ 4 magazines or 50 quizzes every 30 days to stay in the group. Sunday is a rest day (no magazine, no quizzes).
+
+    =========================================
+    CRITICAL TIMINGS & NOMENCLATURE
+    =========================================
+    - Editorial Magazine Name: Strictly called "Today's Editorials" (drops in Thread 3).
+    - Magazine Arrival Window: Expected every morning between 06:00 AM and 10:30 AM IST (Monday to Saturday exclusively. No Sunday issue).
+    - Quiz Drop Time: Strictly 10:30 AM IST (Morning, NOT 4:30 PM, NOT 10:30 PM, NOT evening).
+    - Sunday: Rest day — no editorial magazine and no quiz drops. Weekly leaderboard locks at Sunday midnight IST.
+
+    =========================================
+    CLEVER & INNOVATIVE ENGLISH MENTOR (ZERO BOOKISH JARGON)
+    =========================================
+    Aspirants preparing for competitive exams hate dry, heavy, textbook grammar rules. Any study or English doubt response MUST be clever, smart, quick, and innovative:
+    - ZERO BOOKISH JARGON: Never recite dry academic grammar definitions (e.g., avoid "transitive subjunctive clause", "nominative absolute"). Speak human, exam-smart English.
+    - SHORT TRICKS & MENTAL SHORTCUTS FIRST: Give students the instant hack they can use in an exam under 5 seconds:
+      * Who vs Whom: Substitute He/Him (He = Who, Him = Whom: "Who called?" -> He called. "To [whom/him] did you give it?").
+      * Affect vs Effect: RAVEN (Remember: Affect is Verb, Effect is Noun).
+      * Lay vs Lie: Lay = placing an object down (Lay the book; hens lay eggs); Lie = reclining/resting oneself (Lie down to sleep).
+      * Parallelism: Match the grammatical rhythm (-ing with -ing, to-verb with to-verb).
+      * Subject-Verb Agreement with 'Neither...nor' / 'Either...or': The verb hugs its closest subject ("Neither the teacher nor the students ARE...").
+      * Few vs A Few / Little vs A Little: 'Few/Little' = negative (almost none/barely any); 'A few / A little' = positive (at least some/helpful amount).
+      * Hard vs Hardly: 'Hard' = with intense effort; 'Hardly' = almost not at all.
+      * Each / Every / Either: Always treated as singular in exam questions!
+    - MICRO-ANSWER FORMAT (Max 3 to 5 lines total):
+      ⚡ Quick Trick / Mental Rule: The 1-line mental shortcut or mnemonic.
+      🎯 Exam Application: Right vs Wrong contrast showing why the tempting trap fails.
+      💡 Memory Anchor: A crisp takeaway that sticks forever.
+    - BRITISH ENGLISH: Always use British spelling and grammar conventions (analyse, colour, rigour, practise as verb, practice as noun).
+    - NO OPTION LABELS (A/B/C/D): Question options are randomized in the Mini App. Never say "Option A is correct." Always refer to the actual word or phrase.
+
+    =========================================
+    MULTI-PARTY CONVERSATION CONTINUITY & ADMIN FOLLOW-UP
+    =========================================
+    - Live Multi-Party Flow: This is an active Telegram study group. Students talk with each other, and Admins often step in to guide, correct, or provide hints.
+    - Seamless Contextual Follow-Up: ALWAYS inspect [LIVE THREAD CONVERSATION HISTORY (RECENT TURNS)] and [DIRECT REPLY CONTEXT]. When a student asks a follow-up ("what about this?", "why not the second one?", "and if it's plural?", "why is that wrong?"), resolve pronouns ("it", "this", "that rule") from the recent messages. NEVER say "Could you please provide the question or sentence?" if it was already mentioned in the recent turns!
+    - Admin Integration & Respect: Messages marked "Admin (Name)" come from community leaders. If an admin steps into the middle of a discussion or gives advice/hints, seamlessly acknowledge and build upon their point (e.g., "Building on what Admin mentioned..."). Never contradict an admin or act like their message didn't happen.
+    - Natural Conversational Dialogue: Jump into the thread like a sharp, witty co-mentor following the conversation in real-time, picking up right where the last message left off.
 
     =========================================
     ECOSYSTEM MAP & LIVE CONTEXT
@@ -626,7 +744,7 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
     - Weekly Phase: {phase_of_week}
     - Active Challengers: {total_active_participants}
 
-    [Today's 10:30 PM Test Schedule]
+    [Today's 10:30 AM Test Schedule]
     {today_schedule}
 
     [Weekly Timetable Overview]
@@ -637,53 +755,84 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
     • Sunday: No quiz drops. Leaderboard locks at midnight IST.
 
     [Community Rules & Threads]
-    • 📰 Today's Editorials (Thread 3): Mon-Sat morning PDFs with attendance buttons. No Sunday issues.
+    • 📰 Today's Editorials (Thread 3): Mon-Sat morning PDFs (06:00–10:30 AM IST) with attendance buttons. No Sunday issues.
     • 🏆 Rankings & Quizzes (Thread 2972): 10:30 AM drop notifications and Mini App links.
     • 📊 Cut-offs & Promotion: Scoring above the Class Average promotes a student; below causes demotion.
     • 🧠 Elo Rating: Lifetime rating (1000 base) tracking accuracy across difficulty tiers.
     • 🧹 Purge Rule: Students must read at least 4 Magazines OR complete 50 Quizzes every 30 days.
     • 📚 Grammar 101 / Word 101: Archived courses. Never promise new drops.
     • QUIZ & EDITORIAL ECOSYSTEM ROUTING:
-        - Morning (06:00–11:59 AM): Daily Editorial PDFs drop in Thread 3 ("Today's Editorials Magazine"). Students must tap "Mark as Read".
-        - Evening (10:30 AM IST): 5 Daily Topic Trial sets drop inside the Mini App (accessible via Thread 2972 or Bot Menu).
+        - Morning (06:00–10:30 AM IST): "Today's Editorials" PDFs drop in Thread 3. Students must tap "Mark as Read".
+        - Morning (10:30 AM IST): 5 Daily Topic Trial sets drop inside the Mini App (accessible via Thread 2972 or Bot Menu).
         - If a user asks where polls or quizzes are, reply concisely:
             "Daily quizzes have moved from Telegram polls to our interactive Mini App for timed test practice and solutions! Read your morning PDF in Thread 3, then tap below to attempt today's 10:30 AM trials."
 
     [Upcoming Exams]
     {exam_context}
 
+    {thread_instruction}
+
     [User Interacting]
-    - Name: {first_name} (Admin: {is_admin})
+    - Name: {first_name} (Admin: {is_admin}, Explicitly Addressed: {is_explicitly_summoned})
     {reply_context}
+    {conversation_history_str}
 
     =========================================
-    BEHAVIOURAL GUARDRAILS
+    RESPONSE VS SILENCE RULES
     =========================================
-    1. DEFAULT ACTION IS SILENCE: If members are casually chatting, greeting, or debating amongst themselves without an English or platform doubt, output ONLY the single word: IGNORE
-    2. THE ADMIN RULE: Ignore Admins completely unless they explicitly call your name ("Lixie").
-    3. ANTI-HALLUCINATION: Never invent platform features, exam dates, or user stats. If a student asks for their personal rank or score, direct them to open the Mini App dashboard.
+    1. DIRECT ENGAGEMENT (NEVER IGNORE):
+       If the user explicitly addresses you (summoned "Lixie", tagged the bot, or replied to your message), you MUST ALWAYS respond. Even for casual greetings ("Hi Lixie", "Good morning"), reply warmly and briefly (1 sentence). NEVER output IGNORE when directly addressed.
+    2. GENUINE DOUBTS & QUERIES:
+       If the message asks an English doubt, grammar rule, vocabulary question, platform query, or exam question, answer directly, accurately, and concisely.
+    3. SILENCE DIRECTIVE:
+       Output ONLY the single word: IGNORE
+       ONLY when human members are casually bantering with each other, exchanging personal greetings without addressing you, sharing random stickers/emojis, or when no question or assistance is requested.
     """
 
+    if not API_KEYS:
+        return
+
     ai_reply = None
-    # 2-Tier Fallback: gemini-3.5-flash-lite across 6 keys -> gemini-3.1-flash-lite across 6 keys
+    safety_settings = [
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+            threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+            threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+            threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+            threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+        ),
+    ]
+
     for model_name in AI_MODELS:
         if ai_reply:
             break
 
         for attempt in range(len(API_KEYS)):
             try:
-                active_key = API_KEYS[db_key_index]
+                active_key = API_KEYS[db_key_index % len(API_KEYS)]
                 temp_client = genai.Client(api_key=active_key)
                 response = temp_client.models.generate_content(
                     model=model_name,
-                    contents=text,
-                    config=types.GenerateContentConfig(system_instruction=system_prompt, temperature=0.4)
+                    contents=text_clean,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        temperature=0.3,
+                        safety_settings=safety_settings
+                    )
                 )
                 if response.text and response.text.strip():
                     ai_reply = response.text.strip()
                     break
-            except Exception as e:
-                error_str = str(e).lower()
+            except Exception:
                 db_key_index = (db_key_index + 1) % len(API_KEYS)
                 try:
                     conn = get_db()
@@ -697,14 +846,17 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
                     release_db(conn)
                 except Exception:
                     pass
+                continue
 
-                if "429" in error_str or "quota" in error_str or "exhausted" in error_str or "503" in error_str:
-                    continue
-                else:
-                    continue
-
-    if not ai_reply or ai_reply == "IGNORE" or ai_reply == '"IGNORE"':
+    if not ai_reply:
         return
+
+    clean_check = ai_reply.strip().strip('"\'`.*_').upper()
+    if clean_check == "IGNORE":
+        return
+
+    # Record bot answer in memory
+    THREAD_HISTORY[t_key].append(f"Lixie: {ai_reply}")
 
     send_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
@@ -716,134 +868,36 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
     if thread_id:
         payload["message_thread_id"] = thread_id
 
-    for attempt in range(10):
-        try:
-            res = http_session.post(send_url, json=payload, timeout=15)
-            if res.status_code == 200: break
-            elif res.status_code == 429: time.sleep(res.json().get("parameters", {}).get("retry_after", 3) + 1)
-            else: time.sleep(2)
-        except requests.exceptions.RequestException:
-            time.sleep(3 + attempt)
-
-def process_support_threads(chat_id, user_id, first_name, text, message_id, thread_id):
-    # 1. Bounded Thread Memory Buffer
-    global THREAD_HISTORY
-    if thread_id not in THREAD_HISTORY:
-        THREAD_HISTORY[thread_id] = deque(maxlen=8)
-        
-    THREAD_HISTORY[thread_id].append(f"User ({first_name}): {text}")
-    recent_conversation = "\n".join(THREAD_HISTORY[thread_id])
-
-    # 2. Redis Cooldown (10s lock)
-    if redis_client:
-        if check_and_set_cooldown(f"rate:lixie:thread:{thread_id}", 10):
-            return
-    else:
-        global LAST_AI_REPLY_TIME_THREADS
-        if thread_id not in LAST_AI_REPLY_TIME_THREADS: LAST_AI_REPLY_TIME_THREADS[thread_id] = 0
-        current_time = time.time()
-        if current_time - LAST_AI_REPLY_TIME_THREADS[thread_id] < 10:
-            return
-        LAST_AI_REPLY_TIME_THREADS[thread_id] = current_time
-
-    # 3. Core Identity & Ultra-Brevity Rules
-    LIXIE_CORE_BRAIN = """
-    You are Lixie, the AI moderator of Ez Editorials.
-    
-    STRICT BREVITY RULES (CRITICAL):
-    - Tone: Fast, grounded, diagnostic, smart community moderator.
-    - Max Length: Strictly 1 to 2 sentences (Under 35 words).
-    - No Corporate Preamble: Never say "Thank you for reaching out", "I understand your frustration", or "Certainly!".
-    - British English only.
-    - Anti-Hallucination: Never invent features, bug resolution times, or developer promises.
-    """
-
-    # 4. Thread-Specific Moderator Rules
-    if thread_id == 12082:
-        THREAD_MODE = """
-        [THREAD: 🐞 BUG REPORTS]
-        Goal: Diagnose and log issues in 1 sentence.
-        - If crucial info is missing, ask directly (e.g. "Which day/set and question number did this happen on?").
-        - If clear report: "Logged! The development team will investigate this."
-        - If user is providing follow-up details to an already acknowledged bug, output: IGNORE
-        """
-    elif thread_id == 12103:
-        THREAD_MODE = """
-        [THREAD: 🛟 HELP & SUPPORT]
-        Goal: Resolve user navigation or Mini App access issues in 1-2 direct lines.
-        - Give exact button/tab name (e.g. "Open the Mini App via 🏆 Rankings & Quizzes thread and check the Progress tab.").
-        - If user says "Thanks", "Got it", or solves it themselves: IGNORE
-        """
-    elif thread_id == 12105:
-        THREAD_MODE = """
-        [THREAD: 💡 FEATURE REQUESTS]
-        Goal: Acknowledge community suggestions in exactly 1 line.
-        - Output: "Noted! We'll keep this idea in mind for future app updates."
-        - Never promise timelines, roadmaps, or guarantee implementation.
-        """
-    else:
-        THREAD_MODE = ""
-
-    # 5. Silence Engine
-    CONVERSATION_AWARENESS = f"""
-    [IGNORE DIRECTIVE]
-    If this message is casual chatter, user-to-user conversation, a simple acknowledgement, or does not require moderation, your ONLY output MUST be the single word:
-    IGNORE
-
-    [RECENT CONVERSATION HISTORY]
-    {recent_conversation}
-    """
-
-    system_prompt = LIXIE_CORE_BRAIN + THREAD_MODE + CONVERSATION_AWARENESS
-
-    # 6. Execute Gemini Request with Model & Key Fallback
-    global current_key_index
-    ai_reply = None
-
-    for model_name in AI_MODELS:
-        if ai_reply:
-            break
-
-        for attempt in range(len(API_KEYS)):
-            try:
-                active_key = API_KEYS[current_key_index]
-                temp_client = genai.Client(api_key=active_key)
-                response = temp_client.models.generate_content(
-                    model=model_name,
-                    contents=text,
-                    config=types.GenerateContentConfig(system_instruction=system_prompt, temperature=0.2)
-                )
-                if response.text and response.text.strip():
-                    ai_reply = response.text.strip()
-                    break
-            except Exception:
-                current_key_index = (current_key_index + 1) % len(API_KEYS)
-                continue
-
-    # 7. Check for IGNORE
-    if not ai_reply or ai_reply.upper() == "IGNORE" or ai_reply == '"IGNORE"':
-        return
-
-    # 8. Record in Memory & Dispatch
-    THREAD_HISTORY[thread_id].append(f"Lixie: {ai_reply}")
-
-    send_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": ai_reply,
-        "parse_mode": "Markdown",
-        "reply_to_message_id": message_id,
-        "message_thread_id": thread_id
-    }
-
     for attempt in range(5):
         try:
-            res = http_session.post(send_url, json=payload, timeout=10)
-            if res.status_code == 200: break
-            elif res.status_code == 429: time.sleep(res.json().get("parameters", {}).get("retry_after", 3) + 1)
-            else: time.sleep(2)
+            res = http_session.post(send_url, json=payload, timeout=12)
+            if res.status_code == 200:
+                break
+            # Fallback to plain text if Telegram Markdown parsing fails
+            if res.status_code == 400 and ("parse" in res.text.lower() or "entity" in res.text.lower()):
+                payload.pop("parse_mode", None)
+                res = http_session.post(send_url, json=payload, timeout=12)
+                if res.status_code == 200:
+                    break
+            elif res.status_code == 429:
+                time.sleep(res.json().get("parameters", {}).get("retry_after", 3) + 1)
+            else:
+                time.sleep(2)
         except requests.exceptions.RequestException:
-            time.sleep(3 + attempt)
+            time.sleep(2)
+
+def process_support_threads(chat_id, user_id, first_name, text, message_id, thread_id, replied_text=None, is_reply_to_bot=False):
+    """Delegates support thread queries to the thread-aware process_ai_query engine."""
+    process_ai_query(
+        chat_id=chat_id,
+        user_id=user_id,
+        first_name=first_name,
+        text=text,
+        message_id=message_id,
+        thread_id=thread_id,
+        replied_text=replied_text,
+        is_reply_to_bot=is_reply_to_bot
+    )
 
 def process_read_receipt(cb_id, user_id, first_name, message_id):
     conn = None
@@ -1103,24 +1157,41 @@ def webhook():
             #     }).start()
             #     return 'OK', 200
 
-            # --- EXISTING LIXIE AI LOGIC ---
+            # --- LIXIE AI MULTI-THREAD INTELLIGENT ENGINE ---
             if chat_type in ['group', 'supergroup'] and not text.startswith('/'):
                 if str(chat_id) == CHAT_ID:
-                    
-                    # 🟢 ROUTE 1: Main Community Chat (Thread 11)
-                    if thread_id == 11:
-                        replied_text = msg['reply_to_message']['text'] if 'reply_to_message' in msg and 'text' in msg['reply_to_message'] else None
-                        threading.Thread(target=process_ai_query, kwargs={
-                            "chat_id": chat_id, "user_id": msg['from']['id'], "first_name": msg['from']['first_name'],
-                            "text": text, "message_id": msg['message_id'], "thread_id": thread_id, "replied_text": replied_text
-                        }).start()
-                        
-                    # 🟢 ROUTE 2: The New Multi-Thread Support Engine
-                    elif thread_id in [12082, 12103, 12105]:
-                        threading.Thread(target=process_support_threads, kwargs={
-                            "chat_id": chat_id, "user_id": msg['from']['id'], "first_name": msg['from']['first_name'],
-                            "text": text, "message_id": msg['message_id'], "thread_id": thread_id
-                        }).start()
+                    reply_msg = msg.get('reply_to_message')
+                    replied_text = None
+                    is_reply_to_bot = False
+                    if reply_msg:
+                        replied_text = reply_msg.get('text') or reply_msg.get('caption')
+                        replied_from = reply_msg.get('from', {})
+                        if (BOT_ID and replied_from.get('id') == BOT_ID) or (
+                            replied_from.get('is_bot') and str(replied_from.get('username', '')).lower() in ['ez_vocab_bot', 'lixie']
+                        ):
+                            is_reply_to_bot = True
+
+                    user_info = msg.get('from', {})
+                    user_id = user_info.get('id')
+                    first_name = user_info.get('first_name', 'Student')
+
+                    # Maintain live multi-party conversation thread memory
+                    t_key = thread_id if thread_id is not None else "main"
+                    if t_key not in THREAD_HISTORY:
+                        THREAD_HISTORY[t_key] = deque(maxlen=12)
+                    speaker_role = "Admin" if user_id in [716496729, 5103843488, 6251430317] else "Student"
+                    THREAD_HISTORY[t_key].append(f"{speaker_role} ({first_name}): {text.strip()}")
+
+                    threading.Thread(target=process_ai_query, kwargs={
+                        "chat_id": chat_id,
+                        "user_id": user_id,
+                        "first_name": first_name,
+                        "text": text,
+                        "message_id": msg['message_id'],
+                        "thread_id": thread_id,
+                        "replied_text": replied_text,
+                        "is_reply_to_bot": is_reply_to_bot
+                    }).start()
 
     return 'OK', 200
 
@@ -2826,7 +2897,7 @@ def run_quiz_unlock_announcement():
                 time.sleep(3)
                 
     except Exception as e:
-        notify_prathu(f"🚨 **ERROR (Quiz Announcement):** Failed to send 10:30 PM alert.\n`{e}`")
+        notify_prathu(f"🚨 **ERROR (Quiz Announcement):** Failed to send 10:30 AM alert.\n`{e}`")
     finally:
         if conn:
             try: c.close()
