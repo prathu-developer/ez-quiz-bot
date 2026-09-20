@@ -1007,35 +1007,40 @@ def webhook():
             ]
         }
         
-        # 1. Native Pop-up (Supported Telegram clients)
-        try:
-            native_payload = {
-                "chat_id": target_chat_id,
-                "user_id": user_id,
-                "web_app_url": captcha_url
-            }
-            if query_id:
-                native_payload["chat_join_request_query_id"] = query_id
-            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendChatJoinRequestWebApp", json=native_payload, timeout=5)
-        except Exception as e:
-            print(f"sendChatJoinRequestWebApp failed: {e}")
+        # 1. Native Pop-up (Supported Telegram clients when query_id is present)
+        if query_id:
+            try:
+                # Standard Bot API method: sendChatJoinRequestWebApp takes chat_join_request_query_id and web_app_url
+                res_native = http_session.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendChatJoinRequestWebApp",
+                    json={
+                        "chat_join_request_query_id": str(query_id),
+                        "web_app_url": captcha_url
+                    },
+                    timeout=5
+                )
+                print(f"[JoinRequest] sendChatJoinRequestWebApp status: {res_native.status_code}, body: {res_native.text}")
+            except Exception as e:
+                print(f"[JoinRequest] sendChatJoinRequestWebApp exception: {e}")
 
-        # 2. Direct DM with both Mini App and Browser fallback buttons
+        # 2. Direct DM with both Mini App and Browser fallback buttons (using reliable HTML formatting)
+        first_name = join_req.get('from', {}).get('first_name', 'Student')
         welcome_text = (
-            "👋 **Welcome to Ez Editorials!**\n\n"
+            f"👋 <b>Welcome to Ez Editorials, {first_name}!</b>\n\n"
             "We have received your request to join the Great Hall.\n\n"
             "To ensure our community remains a high-quality environment for serious learners, we ask all new members to complete a quick, 3-question English Entrance Trial.\n\n"
             "Tap below to prove your skills and instantly gain access to the group! 🪄"
         )
         try:
-            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
+            res_dm = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
                 "chat_id": user_chat_id,
                 "text": welcome_text,
                 "reply_markup": markup,
-                "parse_mode": "Markdown"
+                "parse_mode": "HTML"
             }, timeout=8)
+            print(f"[JoinRequest] Backup DM status: {res_dm.status_code}, body: {res_dm.text}")
         except Exception as e:
-            print(f"Backup DM sendMessage failed: {e}")
+            print(f"[JoinRequest] Backup DM sendMessage exception: {e}")
             
         # Store in DB with 24-hour grace period so students are never prematurely declined!
         expire_time = int(time.time()) + 86400 
@@ -3137,18 +3142,18 @@ def background_approve_user(user_id):
             
     # 2. Standard Welcome DM (if approval worked)
     welcome_text = (
-        "🎉 **Entrance Trial Complete!**\n\n"
-        "Congratulations, and welcome to the **Great Hall of Ez Editorials!** 🪄\n\n"
-        "🛡️ **7-Day Probation Rule:**\n"
-        "To stay in the group, complete at least **1 Quiz** OR read **1 Editorial Magazine** (tap 'Mark as Read') within your first 7 days.\n\n"
-        "📅 **Daily Routine:**\n"
-        "📰 **Morning:** Read the Daily Editorial PDFs in Thread 3.\n"
-        "⚡ **10:30 AM:** Attempt the Daily Vocab & Topic Trials.\n"
-        "🏆 **Sunday:** The Weekly Cup locks at midnight IST.\n\n"
+        "🎉 <b>Entrance Trial Complete!</b>\n\n"
+        "Congratulations, and welcome to the <b>Great Hall of Ez Editorials!</b> 🪄\n\n"
+        "🛡️ <b>7-Day Probation Rule:</b>\n"
+        "To stay in the group, complete at least <b>1 Quiz</b> OR read <b>1 Editorial Magazine</b> (tap 'Mark as Read') within your first 7 days.\n\n"
+        "📅 <b>Daily Routine:</b>\n"
+        "📰 <b>Morning:</b> Read the Daily Editorial PDFs in Thread 3.\n"
+        "⚡ <b>10:30 AM:</b> Attempt the Daily Vocab & Topic Trials.\n"
+        "🏆 <b>Sunday:</b> The Weekly Cup locks at midnight IST.\n\n"
         "Head over to the main group, say hello, and begin your journey! 🏛️"
     )
 
-    # 3. ✨ THE NON-EXPIRING DM FIX: If the pending request was deleted by the 5-min cron, generate a one-time use invite link!
+    # 3. ✨ THE NON-EXPIRING DM FIX: If the pending request was deleted by the cron, generate a one-time use invite link!
     if not approved:
         try:
             invite_res = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/createChatInviteLink", json={
@@ -3159,11 +3164,11 @@ def background_approve_user(user_id):
             if invite_res.status_code == 200:
                 invite_link = invite_res.json().get("result", {}).get("invite_link")
                 welcome_text = (
-                    "🎉 **Entrance Trial Complete!**\n\n"
+                    "🎉 <b>Entrance Trial Complete!</b>\n\n"
                     "You passed the test! However, your original join request expired.\n\n"
-                    f"👉 **Click here to join the group:** {invite_link}\n\n"
-                    "🛡️ **7-Day Probation Rule:**\n"
-                    "To stay in the group, complete at least **1 Quiz** OR read **1 Editorial Magazine** (tap 'Mark as Read') within your first 7 days."
+                    f"👉 <b><a href=\"{invite_link}\">Click here to join the group</a></b>\n\n"
+                    "🛡️ <b>7-Day Probation Rule:</b>\n"
+                    "To stay in the group, complete at least <b>1 Quiz</b> OR read <b>1 Editorial Magazine</b> (tap 'Mark as Read') within your first 7 days."
                 )
         except Exception as e:
             print(f"🚨 Error generating invite link: {e}")
@@ -3173,10 +3178,10 @@ def background_approve_user(user_id):
         http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
             "chat_id": user_id,
             "text": welcome_text,
-            "parse_mode": "Markdown"
+            "parse_mode": "HTML"
         }, timeout=5)
-    except:
-        pass
+    except Exception as e:
+        print(f"Failed to send final DM: {e}")
 
 
 def is_github_file_updated_today(file_name, target_date_ist):
