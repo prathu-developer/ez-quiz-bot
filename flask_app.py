@@ -999,7 +999,7 @@ def webhook():
         
         # 🟢 UPDATED: Pointing to Cloudflare Pages deployment with direct user ID tracking!
         target_chat_id = join_req.get('chat', {}).get('id') or CHAT_ID
-        captcha_url = f"https://ez-editorials-app.pages.dev/captcha.html?uid={user_id}"
+        captcha_url = f"https://ez-editorials-app.pages.dev/captcha?uid={user_id}"
         markup = {
             "inline_keyboard": [
                 [{"text": "⚡️ Complete Entrance Trial (3Q)", "web_app": {"url": captcha_url}}],
