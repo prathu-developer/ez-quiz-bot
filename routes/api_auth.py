@@ -5,7 +5,7 @@ import hmac
 import hashlib
 import secrets
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify
 from flask_app import (
     get_db, release_db, get_verified_user, redis_client,
@@ -104,6 +104,44 @@ def admin_sync_group_members():
         "status": "started",
         "message": "Group member reconciliation started in background. Admin will receive a report on Telegram once complete."
     }), 200
+
+
+@auth_bp.route('/api/admin/clean_old_quiz_sets', methods=['GET', 'POST'])
+def admin_clean_old_quiz_sets():
+    """
+    Cleans up quiz sets older than 14 days (Option A: rolling retention).
+    """
+    days = request.args.get('days', 14, type=int)
+    cutoff_date = (datetime.utcnow() + timedelta(hours=5, minutes=30) - timedelta(days=days)).strftime('%Y-%m-%d')
+    conn = None
+    deleted_sets = 0
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("""
+            DELETE FROM quiz_responses 
+            WHERE attempt_id IN (
+                SELECT id FROM quiz_attempts 
+                WHERE quiz_set_id IN (SELECT id FROM quiz_sets WHERE quiz_day < %s)
+            )
+        """, (cutoff_date,))
+        c.execute("DELETE FROM quiz_attempts WHERE quiz_set_id IN (SELECT id FROM quiz_sets WHERE quiz_day < %s)", (cutoff_date,))
+        c.execute("DELETE FROM quiz_questions WHERE quiz_set_id IN (SELECT id FROM quiz_sets WHERE quiz_day < %s)", (cutoff_date,))
+        c.execute("DELETE FROM quiz_sets WHERE quiz_day < %s", (cutoff_date,))
+        deleted_sets = c.rowcount
+        conn.commit()
+        c.close()
+        return jsonify({
+            "status": "success",
+            "cutoff_date": cutoff_date,
+            "deleted_quiz_sets": deleted_sets,
+            "message": f"Successfully cleaned quiz sets older than {days} days."
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
 
 
 @auth_bp.route("/api/system-status", methods=["GET"])

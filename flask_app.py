@@ -512,7 +512,7 @@ def process_ai_query(chat_id, user_id, first_name, text, message_id, thread_id, 
         return
 
     text_lower = text_clean.lower()
-    ADMIN_IDS = [716496729, 5103843488, 6251430317]
+    ADMIN_IDS = [716496729, 5103843488, 6251430317, 7332965937]
     is_admin = user_id in ADMIN_IDS
 
     # 1. Check if explicitly summoned or continuing a direct conversation with the bot
@@ -1196,7 +1196,7 @@ def webhook():
                     t_key = thread_id if thread_id is not None else "main"
                     if t_key not in THREAD_HISTORY:
                         THREAD_HISTORY[t_key] = deque(maxlen=12)
-                    speaker_role = "Admin" if user_id in [716496729, 5103843488, 6251430317] else "Student"
+                    speaker_role = "Admin" if user_id in [716496729, 5103843488, 6251430317, 7332965937] else "Student"
                     THREAD_HISTORY[t_key].append(f"{speaker_role} ({first_name}): {text.strip()}")
 
                     threading.Thread(target=process_ai_query, kwargs={
@@ -1225,7 +1225,7 @@ def run_midnight_purge_background():
         thirty_days_ago_ts = now_ts - (30 * 24 * 60 * 60)
         thirty_days_ago_date = (current_ist - timedelta(days=30)).strftime('%Y-%m-%d')
         
-        admin_ids = [716496729, 6251430317, 5103843488]
+        admin_ids = [716496729, 6251430317, 5103843488, 7332965937]
         
         # 2. Fetch all users older than 7 days with their 30-day activity counts
         c.execute("""
@@ -1335,7 +1335,7 @@ def run_sync_group_members_background():
     Removes departed ghost accounts so the database accurately matches group membership.
     """
     conn = None
-    admin_ids = [716496729, 6251430317, 5103843488]
+    admin_ids = [716496729, 6251430317, 5103843488, 7332965937]
     active_count = 0
     removed_count = 0
     total_checked = 0
@@ -1765,7 +1765,7 @@ def run_weekly_reset_background():
                 f"{wow_text}"
             )
 
-            admin_ids = [716496729, 6251430317, 5103843488]
+            admin_ids = [716496729, 6251430317, 5103843488, 7332965937]
             for a_id in admin_ids:
                 try: 
                     http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": a_id, "text": admin_msg, "parse_mode": "Markdown"}, timeout=5)
@@ -1870,6 +1870,19 @@ def run_weekly_reset_background():
         thirty_days_ago = (datetime.utcnow() + timedelta(hours=5, minutes=30) - timedelta(days=30)).strftime('%Y-%m-%d')
         c.execute("DELETE FROM daily_history WHERE date_str < %s", (thirty_days_ago,))
         if week_row: c.execute("DELETE FROM weekly_rank_history WHERE week_num < %s", (int(week_row[0]) - 10,))
+
+        # 🟢 Rolling 14-Day Retention for Mini App Quiz Sets (Option A)
+        fourteen_days_ago = (datetime.utcnow() + timedelta(hours=5, minutes=30) - timedelta(days=14)).strftime('%Y-%m-%d')
+        c.execute("""
+            DELETE FROM quiz_responses 
+            WHERE attempt_id IN (
+                SELECT id FROM quiz_attempts 
+                WHERE quiz_set_id IN (SELECT id FROM quiz_sets WHERE quiz_day < %s)
+            )
+        """, (fourteen_days_ago,))
+        c.execute("DELETE FROM quiz_attempts WHERE quiz_set_id IN (SELECT id FROM quiz_sets WHERE quiz_day < %s)", (fourteen_days_ago,))
+        c.execute("DELETE FROM quiz_questions WHERE quiz_set_id IN (SELECT id FROM quiz_sets WHERE quiz_day < %s)", (fourteen_days_ago,))
+        c.execute("DELETE FROM quiz_sets WHERE quiz_day < %s", (fourteen_days_ago,))
 
         conn.commit()
         reset_status["Database_Reset"] = "🟢 Success"
@@ -3626,7 +3639,7 @@ app.register_blueprint(magazine_bp)
 from routes.api_auth import (
     auth_telegram_widget, request_login_code, delete_account,
     verify_login_code, approve_captcha, system_status, admin_approve_pending_joins,
-    admin_sync_group_members
+    admin_sync_group_members, admin_clean_old_quiz_sets
 )
 from routes.api_quiz import (
     get_todays_quizzes, start_quiz, submit_quiz, get_quiz_result, add_poll
