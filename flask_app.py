@@ -1134,7 +1134,15 @@ def webhook():
         if chat_type == 'private':
             user_id = msg['from']['id']
             first_name = msg['from'].get('first_name', 'Student')
+            username = msg['from'].get('username', '')
             text = msg.get('text', '')
+
+            # Cache username -> user_id mapping for quick website OTP dispatch
+            if username and redis_client:
+                try:
+                    redis_client.set(f"tg_uname:{username.lower()}", user_id, ex=86400 * 30)
+                except Exception:
+                    pass
 
             # 🟢 Check if user tapped a Login Deep Link (e.g. /start login_a3f81e7b9c12)
             if text.startswith('/start login_'):
@@ -1143,7 +1151,7 @@ def webhook():
                     user_data = {
                         "id": user_id,
                         "first_name": first_name,
-                        "username": msg['from'].get('username', '')
+                        "username": username
                     }
                     # Save user info into code key for 60 seconds so polling catches it
                     redis_client.set(f"auth_code:{login_code}", json.dumps(user_data), ex=60)
@@ -1158,16 +1166,23 @@ def webhook():
 
             # 🟢 Check if user requested a 6-digit Website Login OTP
             clean_text = text.strip().lower()
-            if clean_text in ['/login', '/otp', '/code', 'login', 'otp', 'code'] or clean_text.startswith('/login') or clean_text.startswith('/otp'):
+            if (
+                clean_text.startswith('/start login') or
+                clean_text in ['/login', '/otp', '/code', 'login', 'otp', 'code'] or
+                clean_text.startswith('/login') or
+                clean_text.startswith('/otp')
+            ):
                 import random
                 otp_code = str(random.randint(100000, 999999))
                 user_data = {
                     "id": user_id,
                     "first_name": first_name,
-                    "username": msg['from'].get('username', '')
+                    "username": username
                 }
                 if redis_client:
                     redis_client.set(f"bot_otp:{otp_code}", json.dumps(user_data), ex=600)
+                    if username:
+                        redis_client.set(f"tg_uname:{username.lower()}", user_id, ex=86400 * 30)
                 http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
                     "chat_id": user_id,
                     "text": f"🔐 *Ez Editorials Login Code*\n\nYour 6-digit website login code is:\n\n`{otp_code}`\n\nEnter this code on the website to sign in immediately. Valid for 10 minutes.",
@@ -1210,6 +1225,12 @@ def webhook():
                     user_info = msg.get('from', {})
                     user_id = user_info.get('id')
                     first_name = user_info.get('first_name', 'Student')
+                    u_name = user_info.get('username')
+                    if user_id and u_name and redis_client:
+                        try:
+                            redis_client.set(f"tg_uname:{u_name.lower()}", user_id, ex=86400 * 30)
+                        except Exception:
+                            pass
 
                     # Maintain live multi-party conversation thread memory
                     t_key = thread_id if thread_id is not None else "main"

@@ -255,32 +255,106 @@ def send_login_otp():
     target_user_id = None
     target_first_name = "Student"
     target_username = identifier
+    clean_id = identifier.lower()
 
     # Case 1: Numeric user_id
     if identifier.isdigit():
         target_user_id = int(identifier)
     else:
-        # Case 2: Username - lookup in PostgreSQL database
-        conn = None
-        try:
-            conn = get_db()
-            c = conn.cursor()
-            c.execute("SELECT user_id, first_name, username FROM users WHERE LOWER(username) = LOWER(%s) LIMIT 1", (identifier,))
-            row = c.fetchone()
-            if row:
-                target_user_id = row[0]
-                target_first_name = row[1] or "Student"
-                target_username = row[2] or identifier
-            c.close()
-        except Exception as e:
-            print(f"Error looking up user by username: {e}")
-        finally:
-            if conn: release_db(conn)
+        # Case 2: Check Redis username cache
+        if redis_client:
+            try:
+                cached_uid = redis_client.get(f"tg_uname:{clean_id}")
+                if cached_uid:
+                    target_user_id = int(cached_uid.decode() if isinstance(cached_uid, bytes) else cached_uid)
+            except Exception as e:
+                print(f"Redis cache lookup error: {e}")
+
+        # Case 3: Look up in PostgreSQL users table (ensure username column exists)
+        if not target_user_id:
+            conn = None
+            try:
+                conn = get_db()
+                c = conn.cursor()
+                try:
+                    c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(255);")
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+
+                c.execute("SELECT user_id, first_name, username FROM users WHERE LOWER(username) = LOWER(%s) LIMIT 1", (identifier,))
+                row = c.fetchone()
+                if row:
+                    target_user_id = row[0]
+                    target_first_name = row[1] or "Student"
+                    target_username = row[2] or identifier
+                c.close()
+            except Exception as e:
+                print(f"Error looking up user by username in DB: {e}")
+            finally:
+                if conn: release_db(conn)
+
+        # Case 4: Group Administrator lookup via Telegram API (resolves bot creators/admins like @Prathuadhe)
+        if not target_user_id:
+            try:
+                admin_res = http_session.get(
+                    f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getChatAdministrators",
+                    params={"chat_id": CHAT_ID},
+                    timeout=5
+                )
+                if admin_res.status_code == 200:
+                    admins_data = admin_res.json().get('result', [])
+                    for admin in admins_data:
+                        u = admin.get('user', {})
+                        u_id = u.get('id')
+                        u_name = u.get('username', '')
+                        u_fname = u.get('first_name', 'Student')
+                        if u_name:
+                            # Cache in Redis for fast future lookups
+                            if redis_client:
+                                try:
+                                    redis_client.set(f"tg_uname:{u_name.lower()}", u_id, ex=86400 * 30)
+                                except Exception:
+                                    pass
+                            if u_name.lower() == clean_id:
+                                target_user_id = u_id
+                                target_first_name = u_fname
+                                target_username = u_name
+            except Exception as e:
+                print(f"Telegram getChatAdministrators error: {e}")
+
+        # Case 5: Known Admin list lookup via getChatMember
+        if not target_user_id:
+            known_admin_ids = [716496729, 6251430317, 5103843488, 7332965937]
+            for aid in known_admin_ids:
+                try:
+                    m_res = http_session.get(
+                        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getChatMember",
+                        params={"chat_id": CHAT_ID, "user_id": aid},
+                        timeout=4
+                    )
+                    if m_res.status_code == 200:
+                        u = m_res.json().get('result', {}).get('user', {})
+                        u_name = u.get('username', '')
+                        if u_name:
+                            if redis_client:
+                                try:
+                                    redis_client.set(f"tg_uname:{u_name.lower()}", aid, ex=86400 * 30)
+                                except Exception:
+                                    pass
+                            if u_name.lower() == clean_id:
+                                target_user_id = aid
+                                target_first_name = u.get('first_name', 'Student')
+                                target_username = u_name
+                                break
+                except Exception:
+                    pass
 
     if not target_user_id:
         return jsonify({
-            "error": f"Could not find @{identifier} in our database. Please open @Ez_vocab_bot in Telegram and send /login to receive your code instantly!",
-            "help_bot": "Ez_vocab_bot"
+            "error": f"Could not find @{identifier} in our database yet. Please open @Ez_vocab_bot in Telegram and send /login to receive your code instantly!",
+            "help_bot": "Ez_vocab_bot",
+            "bot_url": "https://t.me/Ez_vocab_bot?start=login"
         }), 404
 
     # Generate 6-digit numeric OTP
@@ -295,6 +369,22 @@ def send_login_otp():
 
     if redis_client:
         redis_client.set(f"bot_otp:{otp_code}", json.dumps(user_payload), ex=600)
+        if target_username:
+            redis_client.set(f"tg_uname:{target_username.lower()}", target_user_id, ex=86400 * 30)
+
+    # Persist username in PostgreSQL users table if possible
+    if target_username and target_user_id:
+        conn = None
+        try:
+            conn = get_db()
+            c = conn.cursor()
+            c.execute("UPDATE users SET username = %s WHERE user_id = %s", (target_username, target_user_id))
+            conn.commit()
+            c.close()
+        except Exception:
+            pass
+        finally:
+            if conn: release_db(conn)
 
     # Send message to student's Telegram chat via Bot API
     try:
@@ -306,8 +396,9 @@ def send_login_otp():
         
         if tg_res.status_code != 200:
             return jsonify({
-                "error": "The bot could not message your Telegram chat. Have you started @Ez_vocab_bot? Open the bot and send /login to get your code.",
-                "help_bot": "Ez_vocab_bot"
+                "error": "Telegram requires you to start the bot once. Please open @Ez_vocab_bot and tap Start or send /login, then enter your code here!",
+                "help_bot": "Ez_vocab_bot",
+                "bot_url": "https://t.me/Ez_vocab_bot?start=login"
             }), 400
             
     except Exception as e:
