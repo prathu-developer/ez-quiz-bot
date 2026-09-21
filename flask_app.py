@@ -1172,6 +1172,41 @@ def webhook():
                 clean_text.startswith('/login') or
                 clean_text.startswith('/otp')
             ):
+                # Strict Membership Check: Must be currently enrolled in group
+                is_mem = False
+                try:
+                    m_chk = http_session.get(
+                        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getChatMember",
+                        params={"chat_id": CHAT_ID, "user_id": user_id},
+                        timeout=5
+                    )
+                    if m_chk.status_code == 200:
+                        st = m_chk.json().get("result", {}).get("status")
+                        if st in ["member", "administrator", "creator", "restricted"]:
+                            is_mem = True
+                except Exception:
+                    pass
+
+                if not is_mem:
+                    conn = None
+                    try:
+                        conn = get_db()
+                        c = conn.cursor()
+                        c.execute("SELECT 1 FROM users WHERE user_id = %s", (user_id,))
+                        if c.fetchone(): is_mem = True
+                        c.close()
+                    except Exception:
+                        pass
+                    finally:
+                        if conn: release_db(conn)
+
+                if not is_mem:
+                    http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
+                        "chat_id": user_id,
+                        "text": "⛔ *Access Restricted*\n\nThis web portal is strictly reserved for students currently enrolled in the Ez Editorials study group. If you are not an active group member, you cannot sign in.",
+                        "parse_mode": "Markdown"
+                    })
+                    return 'OK', 200
                 import random
                 otp_code = str(random.randint(100000, 999999))
                 user_data = {

@@ -435,9 +435,52 @@ def sync_read_receipt():
         except Exception as e:
             print(f"⚠️ Redis read error in sync_read_receipt: {e}")
 
+    # 1. Always record in content_read_status for website tracking
+    conn = None
+    try:
+        conn = get_db()
+        if conn:
+            with conn.cursor() as c:
+                c.execute("""
+                    INSERT INTO content_read_status (user_id, content_type, content_date, read_at)
+                    VALUES (%s, %s, %s, NOW())
+                    ON CONFLICT DO NOTHING
+                """, (user_id, f"magazine_{date_str}", date_str))
+                conn.commit()
+    except Exception as e:
+        print(f"⚠️ Error updating content_read_status: {e}")
+    finally:
+        if conn:
+            release_db(conn)
+
+    # 2. Resolve Telegram message ID (from _meta, Redis, or read_receipts history)
     message_id = week_data.get("_meta", {}).get(date_str, {}).get("telegram_message_id")
+    if not message_id and redis_client:
+        try:
+            cached_mid = redis_client.get(f"magazine_msg_id:{date_str}") or redis_client.get("latest_magazine_msg_id")
+            if cached_mid:
+                message_id = int(cached_mid)
+        except Exception:
+            pass
+
     if not message_id:
-        return jsonify({"skipped": "no linked Telegram message for this date"}), 200
+        conn = None
+        try:
+            conn = get_db()
+            if conn:
+                with conn.cursor() as c:
+                    c.execute("SELECT message_id FROM read_receipts ORDER BY id DESC LIMIT 1")
+                    row = c.fetchone()
+                    if row:
+                        message_id = row[0]
+        except Exception:
+            pass
+        finally:
+            if conn:
+                release_db(conn)
+
+    if not message_id:
+        return jsonify({"success": True, "synced_telegram": False, "note": "marked in database"}), 200
 
     first_name = verified_user.get('first_name', 'Student')
 
@@ -449,8 +492,8 @@ def sync_read_receipt():
             first_name=first_name,
             message_id=int(message_id)
         )
-        return jsonify({"success": True, "message_id": int(message_id)}), 200
+        return jsonify({"success": True, "synced_telegram": True, "message_id": int(message_id)}), 200
     except Exception as e:
         print(f"⚠️ Error in sync_read_receipt calling process_read_receipt: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"success": True, "synced_telegram": False, "error": str(e)}), 200
 

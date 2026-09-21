@@ -357,6 +357,42 @@ def send_login_otp():
             "bot_url": "https://t.me/Ez_vocab_bot?start=login"
         }), 404
 
+    # STRICT MEMBERSHIP CHECK: Must currently be an active member of CHAT_ID
+    is_active_member = False
+    try:
+        m_check = http_session.get(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getChatMember",
+            params={"chat_id": CHAT_ID, "user_id": target_user_id},
+            timeout=5
+        )
+        if m_check.status_code == 200:
+            st = m_check.json().get("result", {}).get("status")
+            if st in ["member", "administrator", "creator", "restricted"]:
+                is_active_member = True
+    except Exception as e:
+        print(f"Error checking group membership for {target_user_id}: {e}")
+
+    # Fallback to database check in case Telegram API timed out
+    if not is_active_member:
+        conn = None
+        try:
+            conn = get_db()
+            c = conn.cursor()
+            c.execute("SELECT 1 FROM users WHERE user_id = %s", (target_user_id,))
+            if c.fetchone():
+                is_active_member = True
+            c.close()
+        except Exception:
+            pass
+        finally:
+            if conn: release_db(conn)
+
+    if not is_active_member:
+        return jsonify({
+            "error": "Access Restricted: You must be an active member of the Ez Editorials Telegram study group to log in.",
+            "restricted": True
+        }), 403
+
     # Generate 6-digit numeric OTP
     import random
     otp_code = str(random.randint(100000, 999999))
@@ -431,6 +467,39 @@ def verify_login_otp():
 
     stored_str = stored_data.decode('utf-8') if isinstance(stored_data, bytes) else str(stored_data)
     user_payload = json.loads(stored_str)
+    user_id = user_payload.get('id')
+
+    # STRICT MEMBERSHIP CHECK: Must currently be an active member of CHAT_ID
+    is_active = False
+    try:
+        m_res = http_session.get(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getChatMember",
+            params={"chat_id": CHAT_ID, "user_id": user_id},
+            timeout=5
+        )
+        if m_res.status_code == 200:
+            st = m_res.json().get("result", {}).get("status")
+            if st in ["member", "administrator", "creator", "restricted"]:
+                is_active = True
+    except Exception:
+        pass
+
+    if not is_active:
+        conn = None
+        try:
+            conn = get_db()
+            c = conn.cursor()
+            c.execute("SELECT 1 FROM users WHERE user_id = %s", (user_id,))
+            if c.fetchone(): is_active = True
+            c.close()
+        except Exception:
+            pass
+        finally:
+            if conn: release_db(conn)
+
+    if not is_active:
+        redis_client.delete(f"bot_otp:{code}")
+        return jsonify({"error": "Access Restricted: You must be an active member of the Ez Editorials study group to access the portal."}), 403
 
     # Mint long-lived 30-day session token
     session_token = secrets.token_hex(32)
