@@ -1327,6 +1327,12 @@ def run_midnight_purge_background():
     finally:
         if conn:
             release_db(conn)
+
+    # 🟢 Auto-Reconciliation: Immediately sync Supabase with Telegram group roster
+    try:
+        run_sync_group_members_background()
+    except Exception as sync_err:
+        print(f"Auto-reconciliation error following purge: {sync_err}")
             
 
 def run_sync_group_members_background():
