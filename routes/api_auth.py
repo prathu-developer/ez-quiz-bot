@@ -240,6 +240,121 @@ def request_login_code():
     }), 200
 
 
+@auth_bp.route('/api/auth/send-otp', methods=['POST'])
+def send_login_otp():
+    """
+    Sends a 6-digit login OTP directly to the student's Telegram chat via @Ez_vocab_bot.
+    Accepts: { "identifier": "@username" or "user_id" }
+    """
+    data = request.get_json() or {}
+    identifier = str(data.get('identifier', '')).strip().replace('@', '')
+
+    if not identifier:
+        return jsonify({"error": "Please provide your Telegram username or ID"}), 400
+
+    target_user_id = None
+    target_first_name = "Student"
+    target_username = identifier
+
+    # Case 1: Numeric user_id
+    if identifier.isdigit():
+        target_user_id = int(identifier)
+    else:
+        # Case 2: Username - lookup in PostgreSQL database
+        conn = None
+        try:
+            conn = get_db()
+            c = conn.cursor()
+            c.execute("SELECT user_id, first_name, username FROM users WHERE LOWER(username) = LOWER(%s) LIMIT 1", (identifier,))
+            row = c.fetchone()
+            if row:
+                target_user_id = row[0]
+                target_first_name = row[1] or "Student"
+                target_username = row[2] or identifier
+            c.close()
+        except Exception as e:
+            print(f"Error looking up user by username: {e}")
+        finally:
+            if conn: release_db(conn)
+
+    if not target_user_id:
+        return jsonify({
+            "error": f"Could not find @{identifier} in our database. Please open @Ez_vocab_bot in Telegram and send /login to receive your code instantly!",
+            "help_bot": "Ez_vocab_bot"
+        }), 404
+
+    # Generate 6-digit numeric OTP
+    import random
+    otp_code = str(random.randint(100000, 999999))
+
+    user_payload = {
+        "id": target_user_id,
+        "first_name": target_first_name,
+        "username": target_username
+    }
+
+    if redis_client:
+        redis_client.set(f"bot_otp:{otp_code}", json.dumps(user_payload), ex=600)
+
+    # Send message to student's Telegram chat via Bot API
+    try:
+        tg_res = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
+            "chat_id": target_user_id,
+            "text": f"🔐 *Ez Editorials Login Code*\n\nYour 6-digit verification code is:\n\n`{otp_code}`\n\nEnter this code on the website to sign in. This code is valid for 10 minutes.\n\n_If you did not request this code, you can safely ignore this message._",
+            "parse_mode": "Markdown"
+        }, timeout=6)
+        
+        if tg_res.status_code != 200:
+            return jsonify({
+                "error": "The bot could not message your Telegram chat. Have you started @Ez_vocab_bot? Open the bot and send /login to get your code.",
+                "help_bot": "Ez_vocab_bot"
+            }), 400
+            
+    except Exception as e:
+        return jsonify({"error": f"Failed to deliver message via Telegram: {str(e)}"}), 500
+
+    return jsonify({
+        "status": "sent",
+        "message": "6-digit code sent to your Telegram chat!",
+        "username": target_username
+    }), 200
+
+
+@auth_bp.route('/api/auth/verify-otp', methods=['POST'])
+def verify_login_otp():
+    """
+    Verifies the 6-digit OTP entered by the user on the website.
+    """
+    data = request.get_json() or {}
+    code = str(data.get('code', '')).strip()
+
+    if not code or len(code) != 6 or not code.isdigit():
+        return jsonify({"error": "Please enter a valid 6-digit code"}), 400
+
+    if not redis_client:
+        return jsonify({"error": "Authentication server unavailable"}), 500
+
+    stored_data = redis_client.get(f"bot_otp:{code}")
+    if not stored_data:
+        return jsonify({"error": "Invalid or expired code. Please request a new code."}), 400
+
+    stored_str = stored_data.decode('utf-8') if isinstance(stored_data, bytes) else str(stored_data)
+    user_payload = json.loads(stored_str)
+
+    # Mint long-lived 30-day session token
+    session_token = secrets.token_hex(32)
+    redis_client.set(f"session:{session_token}", json.dumps(user_payload), ex=30 * 86400)
+
+    # Delete OTP to prevent reuse
+    redis_client.delete(f"bot_otp:{code}")
+
+    return jsonify({
+        "status": "authenticated",
+        "token": session_token,
+        "user": user_payload
+    }), 200
+
+
 @auth_bp.route('/api/user/delete-account', methods=['POST'])
 def delete_account():
     user = get_verified_user()

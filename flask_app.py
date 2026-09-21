@@ -1156,6 +1156,25 @@ def webhook():
                     })
                     return 'OK', 200
 
+            # 🟢 Check if user requested a 6-digit Website Login OTP
+            clean_text = text.strip().lower()
+            if clean_text in ['/login', '/otp', '/code', 'login', 'otp', 'code'] or clean_text.startswith('/login') or clean_text.startswith('/otp'):
+                import random
+                otp_code = str(random.randint(100000, 999999))
+                user_data = {
+                    "id": user_id,
+                    "first_name": first_name,
+                    "username": msg['from'].get('username', '')
+                }
+                if redis_client:
+                    redis_client.set(f"bot_otp:{otp_code}", json.dumps(user_data), ex=600)
+                http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
+                    "chat_id": user_id,
+                    "text": f"🔐 *Ez Editorials Login Code*\n\nYour 6-digit website login code is:\n\n`{otp_code}`\n\nEnter this code on the website to sign in immediately. Valid for 10 minutes.",
+                    "parse_mode": "Markdown"
+                })
+                return 'OK', 200
+
             # Default private chat welcome flow
             threading.Thread(target=handle_private_bot_start, args=(user_id, first_name)).start()
             return 'OK', 200
