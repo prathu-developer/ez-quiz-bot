@@ -9,7 +9,8 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify
 from flask_app import (
     get_db, release_db, get_verified_user, redis_client,
-    TELEGRAM_TOKEN, background_approve_user, CHAT_ID, http_session
+    TELEGRAM_TOKEN, background_approve_user, CHAT_ID, http_session,
+    run_sync_group_members_background
 )
 
 auth_bp = Blueprint('api_auth', __name__)
@@ -32,7 +33,8 @@ def approve_captcha():
         return jsonify({"error": "Invalid user ID"}), 400
 
     # Run user approval in the background
-    threading.Thread(target=background_approve_user, args=(user_id,)).start()
+    worker_approved = bool(data.get("worker_approved", False))
+    threading.Thread(target=background_approve_user, args=(user_id, worker_approved)).start()
 
     return jsonify({"status": "success"}), 200
 
@@ -88,6 +90,19 @@ def admin_approve_pending_joins():
         "approved_count": approved_count,
         "failed_count": failed_count,
         "approved_users": approved_users
+    }), 200
+
+
+@auth_bp.route('/api/admin/sync_group_members', methods=['GET', 'POST'])
+def admin_sync_group_members():
+    """
+    Triggers a background reconciliation between the Supabase database and
+    actual active Telegram group members, removing departed ghost records.
+    """
+    threading.Thread(target=run_sync_group_members_background).start()
+    return jsonify({
+        "status": "started",
+        "message": "Group member reconciliation started in background. Admin will receive a report on Telegram once complete."
     }), 200
 
 

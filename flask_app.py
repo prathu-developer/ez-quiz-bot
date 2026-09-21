@@ -1042,8 +1042,8 @@ def webhook():
         except Exception as e:
             print(f"[JoinRequest] Backup DM sendMessage exception: {e}")
             
-        # Store in DB with 24-hour grace period so students are never prematurely declined!
-        expire_time = int(time.time()) + 86400 
+        # Store in DB with 5-minute time bomb (300 seconds)
+        expire_time = int(time.time()) + 300 
         try:
             conn = get_db()
             c = conn.cursor()
@@ -1286,15 +1286,20 @@ def run_midnight_purge_background():
                         "chat_id": CHAT_ID, "user_id": uid
                     }, timeout=5)
                     
-                    if res_ban.status_code == 200 and res_ban.json().get('ok'):
-                        # 2. Unban so they can rejoin later via trial if they wish
-                        for _ in range(5):
-                            res_unban = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/unbanChatMember", json={
-                                "chat_id": CHAT_ID, "user_id": uid, "only_if_banned": True
-                            }, timeout=5)
-                            if res_unban.status_code == 200:
-                                break
-                            time.sleep(1)
+                    ban_data = res_ban.json() if res_ban.status_code in [200, 400] else {}
+                    is_ban_ok = (res_ban.status_code == 200 and ban_data.get('ok'))
+                    already_left = (res_ban.status_code == 400 and ("PARTICIPANT" in res_ban.text.upper() or "NOT_FOUND" in res_ban.text.upper()))
+                    
+                    if is_ban_ok or already_left:
+                        # 2. If actually banned, unban so they can rejoin later via trial if they wish
+                        if is_ban_ok:
+                            for _ in range(5):
+                                res_unban = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/unbanChatMember", json={
+                                    "chat_id": CHAT_ID, "user_id": uid, "only_if_banned": True
+                                }, timeout=5)
+                                if res_unban.status_code == 200:
+                                    break
+                                time.sleep(1)
                         
                         # 3. Remove user record from DB
                         c.execute("DELETE FROM users WHERE user_id = %s", (uid,))
@@ -1323,6 +1328,92 @@ def run_midnight_purge_background():
         if conn:
             release_db(conn)
             
+
+def run_sync_group_members_background():
+    """
+    Scans all users in the Supabase database against Telegram's active group roster.
+    Removes departed ghost accounts so the database accurately matches group membership.
+    """
+    conn = None
+    admin_ids = [716496729, 6251430317, 5103843488]
+    active_count = 0
+    removed_count = 0
+    total_checked = 0
+    
+    notify_prathu("🔄 **Group Member Reconciliation Started!**\nScanning database against Telegram group roster...")
+    
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        
+        c.execute("SELECT user_id, first_name FROM users ORDER BY user_id ASC")
+        rows = c.fetchall()
+        total_checked = len(rows)
+        
+        for uid, name in rows:
+            if uid in admin_ids:
+                active_count += 1
+                continue
+                
+            is_active_member = False
+            for attempt in range(4):
+                try:
+                    res = http_session.get(
+                        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getChatMember",
+                        params={"chat_id": CHAT_ID, "user_id": uid},
+                        timeout=5
+                    )
+                    
+                    if res.status_code == 200 and res.json().get('ok'):
+                        member_status = res.json().get('result', {}).get('status')
+                        if member_status in ['member', 'administrator', 'creator', 'restricted']:
+                            is_active_member = True
+                        else:
+                            # 'left' or 'kicked'
+                            is_active_member = False
+                        break
+                    elif res.status_code == 429: # Telegram Rate Limit
+                        retry_after = res.json().get("parameters", {}).get("retry_after", 2)
+                        time.sleep(retry_after + 0.5)
+                    elif res.status_code == 400:
+                        # USER_NOT_PARTICIPANT / participant_id is invalid
+                        is_active_member = False
+                        break
+                    else:
+                        time.sleep(1)
+                except Exception:
+                    time.sleep(1)
+            
+            if is_active_member:
+                active_count += 1
+            else:
+                # Remove departed member from users
+                try:
+                    c.execute("DELETE FROM users WHERE user_id = %s", (uid,))
+                    conn.commit()
+                    removed_count += 1
+                except Exception as del_err:
+                    print(f"Error removing ghost user {uid}: {del_err}")
+            
+            # Gentle pacing to respect Telegram rate limits (~20 req/s)
+            time.sleep(0.06)
+            
+        c.close()
+        
+        notify_prathu(
+            f"✅ **Group Member Reconciliation Complete!**\n\n"
+            f"📊 **Total Scanned:** {total_checked}\n"
+            f"👥 **Active Group Members Retained:** {active_count}\n"
+            f"🧹 **Departed Ghost Records Removed:** {removed_count}\n\n"
+            f"Your Supabase database now perfectly reflects the actual Telegram group roster."
+        )
+    except Exception as e:
+        print(f"Sync error: {e}")
+        notify_prathu(f"🚨 **Member Sync Error:**\n`{e}`")
+    finally:
+        if conn:
+            release_db(conn)
+
 # 🟢 DAILY PURGE TRIGGER (Midnight IST)
 
 def run_daily_reset_background():
@@ -3099,8 +3190,8 @@ Output EXACTLY in this format:
         notify_prathu("🚨 **ALERT:** You are out of Foreign Expressions! The master list of 250 has been completed.")
         
 
-def background_approve_user(user_id):
-    # ✨ NEW: Clean up the time bomb from the DB so they aren't declined!
+def background_approve_user(user_id, already_approved=False):
+    # ✨ Clean up the time bomb from the DB so they aren't declined!
     try:
         conn = get_db()
         c = conn.cursor()
@@ -3124,21 +3215,26 @@ def background_approve_user(user_id):
         "user_id": user_id
     }
     
-    approved = False
-    # 1. Try to approve the pending request safely with anti-spam retry logic
-    for attempt in range(5):
-        try:
-            res = http_session.post(url, json=payload, timeout=10)
-            if res.status_code == 200:
-                approved = True
-                break
-            elif res.status_code == 429: # Telegram Rate Limit
-                time.sleep(res.json().get("parameters", {}).get("retry_after", 3) + 1)
-            else:
-                # If it's a 400 error, it means the request expired or was already deleted by our 5-min cron!
-                break
-        except:
-            time.sleep(2)
+    approved = already_approved
+    if not approved:
+        # 1. Try to approve the pending request safely with anti-spam retry logic
+        for attempt in range(5):
+            try:
+                res = http_session.post(url, json=payload, timeout=10)
+                if res.status_code == 200:
+                    approved = True
+                    break
+                elif res.status_code == 429: # Telegram Rate Limit
+                    time.sleep(res.json().get("parameters", {}).get("retry_after", 3) + 1)
+                elif res.status_code == 400 and ("USER_ALREADY_PARTICIPANT" in res.text or "HIDE_REQUESTER_MISSING" in res.text):
+                    # User was already approved (e.g. by worker or admin)
+                    approved = True
+                    break
+                else:
+                    # If it's another 400 error, it means the request expired or was already deleted by our 5-min cron!
+                    break
+            except:
+                time.sleep(2)
             
     # 2. Standard Welcome DM (if approval worked)
     welcome_text = (
@@ -3529,7 +3625,8 @@ app.register_blueprint(magazine_bp)
 # Backward-compatibility re-exports for route handlers
 from routes.api_auth import (
     auth_telegram_widget, request_login_code, delete_account,
-    verify_login_code, approve_captcha, system_status, admin_approve_pending_joins
+    verify_login_code, approve_captcha, system_status, admin_approve_pending_joins,
+    admin_sync_group_members
 )
 from routes.api_quiz import (
     get_todays_quizzes, start_quiz, submit_quiz, get_quiz_result, add_poll
