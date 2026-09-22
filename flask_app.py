@@ -287,6 +287,77 @@ def notify_prathu(message):
         print(f"⚠️ Could not send DM to Prathu: {e}")
 
 
+def ensure_telegram_webhook():
+    """
+    🛡️ AUTOMATED WEBHOOK GUARD & SELF-HEALING ENGINE
+    Continuously verifies that Telegram's Bot API webhook is pointed
+    to our Render backend and has all necessary allowed_updates.
+    Auto-repairs immediately if missing, modified, or hijacked.
+    """
+    if not TELEGRAM_TOKEN:
+        print("⚠️ [Webhook Guard] TELEGRAM_TOKEN not set, skipping check.")
+        return False
+
+    expected_base = os.environ.get("RENDER_EXTERNAL_URL", "https://ez-editorials-bot.onrender.com").rstrip('/')
+    expected_url = f"{expected_base}/{TELEGRAM_TOKEN}"
+    required_updates = ["message", "edited_message", "callback_query", "poll_answer", "chat_member", "chat_join_request"]
+
+    try:
+        res = http_session.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getWebhookInfo", timeout=8)
+        if res.status_code != 200:
+            print(f"⚠️ [Webhook Guard] Telegram getWebhookInfo returned HTTP {res.status_code}")
+            return False
+
+        info = res.json().get("result", {})
+        current_url = info.get("url", "")
+        current_allowed = set(info.get("allowed_updates", []))
+        last_error = info.get("last_error_message", "")
+
+        needs_repair = False
+        reason = ""
+
+        if current_url != expected_url:
+            needs_repair = True
+            reason = f"URL mismatch (was: {current_url or 'Empty'})"
+        elif not {"callback_query", "chat_join_request", "chat_member"}.issubset(current_allowed):
+            needs_repair = True
+            reason = f"Missing required updates (has: {list(current_allowed)})"
+        elif last_error and ("502" in last_error or "Wrong response" in last_error):
+            needs_repair = True
+            reason = f"Telegram delivery error: {last_error}"
+
+        if needs_repair:
+            print(f"⚠️ [Webhook Guard] Drift detected ({reason}). Restoring webhook to {expected_url}...")
+            repair_res = http_session.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook",
+                json={
+                    "url": expected_url,
+                    "allowed_updates": required_updates
+                },
+                timeout=10
+            )
+            if repair_res.status_code == 200 and repair_res.json().get("ok"):
+                print(f"✅ [Webhook Guard] Successfully restored webhook to {expected_url}")
+                notify_prathu(
+                    f"🛡️ **Automated Webhook Guard Triggered!**\n\n"
+                    f"⚠️ **Reason:** {reason}\n"
+                    f"✅ **Restored To:** `{expected_url}`\n"
+                    f"📋 **Allowed Updates:** {', '.join(required_updates)}"
+                )
+                return True
+            else:
+                print(f"❌ [Webhook Guard] Failed to restore webhook: {repair_res.text}")
+                return False
+        return True
+    except Exception as e:
+        print(f"⚠️ [Webhook Guard] Error checking webhook: {e}")
+        return False
+
+
+# 🛡️ Launch background webhook guard on boot
+threading.Thread(target=ensure_telegram_webhook, daemon=True).start()
+
+
 # ✨ FIX: Make queue_id optional for Redis compatibility
 def process_answer(c, queue_id, user_id, first_name, poll_id, chosen_option): 
     max_retries = 3
@@ -964,7 +1035,7 @@ def webhook():
         return 'OK', 200
 
     # ✨ FAST EXIT: Ignore junk updates instantly to save CPU
-    if not any(k in update for k in ['callback_query', 'chat_join_request', 'poll_answer', 'edited_message', 'message']):
+    if not any(k in update for k in ['callback_query', 'chat_join_request', 'poll_answer', 'edited_message', 'message', 'chat_member']):
         return 'OK', 200
 
     if 'callback_query' in update:
@@ -1057,6 +1128,45 @@ def webhook():
         except Exception as e:
             print(f"Failed to set join timer: {e}")
             
+        return 'OK', 200
+
+    # 👥 AUTO-REGISTER MANUALLY ACCEPTED / INVITED STUDENTS
+    if 'chat_member' in update:
+        try:
+            cm = update['chat_member']
+            chat = cm.get('chat', {})
+            # Only process membership updates for our group
+            if str(chat.get('id', '')) == str(CHAT_ID):
+                new_status = cm.get('new_chat_member', {}).get('status')
+                old_status = cm.get('old_chat_member', {}).get('status')
+                target_user = cm.get('new_chat_member', {}).get('user', {})
+                u_id = target_user.get('id')
+                f_name = target_user.get('first_name', 'Student').strip()
+
+                # Triggered when someone is added, manually accepted, or joins via invite link
+                if new_status in ['member', 'restricted'] and old_status not in ['member', 'restricted']:
+                    if u_id and not target_user.get('is_bot', False):
+                        conn = None
+                        try:
+                            conn = get_db()
+                            c = conn.cursor()
+                            c.execute("""
+                                INSERT INTO users (user_id, first_name, joined_at)
+                                VALUES (%s, %s, NOW())
+                                ON CONFLICT (user_id) DO UPDATE SET
+                                    first_name = EXCLUDED.first_name,
+                                    joined_at = COALESCE(users.joined_at, EXCLUDED.joined_at)
+                            """, (u_id, f_name))
+                            conn.commit()
+                            c.close()
+                            print(f"👥 [ChatMember] Registered approved/invited student {f_name} ({u_id}) into Supabase!")
+                        except Exception as reg_err:
+                            print(f"⚠️ [ChatMember] Error registering student {u_id}: {reg_err}")
+                        finally:
+                            if conn:
+                                release_db(conn)
+        except Exception as e:
+            print(f"⚠️ [ChatMember] Handler error: {e}")
         return 'OK', 200
 
     if 'poll_answer' in update:
@@ -3737,7 +3847,7 @@ from routes.bot_cron import (
     cron_process_leaderboard, cron_heavy_math, cron_update_telegram_text,
     trigger_dispatcher, trigger_sunday_announcement, trigger_daily_vocab,
     trigger_countdown_update, trigger_quiz_announcement, cron_refresh_snapshot,
-    trigger_word_of_the_day, trigger_miniapp_ingestion
+    trigger_word_of_the_day, trigger_miniapp_ingestion, cron_check_webhook
 )
 from routes.api_magazine import (
     ingest_magazine_edition, get_magazine_week, get_magazine_day, get_magazine_read_status,

@@ -5,6 +5,7 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify
 from flask_app import (
     get_db, release_db, CRON_SECRET, TELEGRAM_TOKEN, http_session,
+    ensure_telegram_webhook,
     bake_miniapp_cache, dispatch_practice_sets, update_live_leaderboard,
     run_all_sunday_announcements, run_countdown_and_commentary,
     run_daily_reset_background, run_daily_vocab_and_quizzes,
@@ -15,6 +16,16 @@ from flask_app import (
 )
 
 cron_bp = Blueprint('bot_cron', __name__)
+
+
+@cron_bp.route('/cron/check_webhook_0508', methods=['GET', 'POST'])
+def cron_check_webhook():
+    # 🔒 SECURITY GATE
+    if request.headers.get("X-Cron-Secret") != CRON_SECRET:
+        return "Unauthorized", 401
+
+    threading.Thread(target=ensure_telegram_webhook, daemon=True).start()
+    return "Webhook guard verification triggered in background!", 200
 
 
 @cron_bp.route('/cron/daily_purge_0508', methods=['GET', 'POST'])
@@ -41,6 +52,9 @@ def cron_process_leaderboard():
     if request.headers.get("X-Cron-Secret") != CRON_SECRET:
         return "Unauthorized", 401
     
+    # 🛡️ Periodic Webhook Healthcheck (Runs every 5 mins alongside leaderboard queue)
+    threading.Thread(target=ensure_telegram_webhook, daemon=True).start()
+
     # ✨ FIX 3: Instantly answer the cron request to prevent 30s timeouts
     threading.Thread(target=run_queue_processor_background).start()
     return "Queue Processor triggered in background!", 200
