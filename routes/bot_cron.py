@@ -28,6 +28,14 @@ def cron_check_webhook():
     return "Webhook guard verification triggered in background!", 200
 
 
+@cron_bp.route('/cron/debug_group', methods=['GET'])
+def debug_group():
+    from flask_app import CHAT_ID, BOT_ID
+    chat = http_session.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getChat?chat_id={CHAT_ID}", timeout=5).json()
+    member = http_session.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getChatMember?chat_id={CHAT_ID}&user_id={BOT_ID}", timeout=5).json()
+    return jsonify({"chat_id": CHAT_ID, "bot_id": BOT_ID, "chat": chat, "bot_member": member})
+
+
 @cron_bp.route('/cron/daily_purge_0508', methods=['GET', 'POST'])
 def trigger_daily_purge():
     threading.Thread(target=run_midnight_purge_background).start()

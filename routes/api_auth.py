@@ -32,11 +32,15 @@ def approve_captcha():
     except (ValueError, TypeError):
         return jsonify({"error": "Invalid user ID"}), 400
 
-    # Run user approval in the background
+    # Execute user approval directly so Telegram confirms admittance before user navigates to group
     worker_approved = bool(data.get("worker_approved", False))
-    threading.Thread(target=background_approve_user, args=(user_id, worker_approved)).start()
+    res = background_approve_user(user_id, already_approved=worker_approved)
 
-    return jsonify({"status": "success"}), 200
+    return jsonify({
+        "status": "success",
+        "approved": res.get("approved", False),
+        "invite_link": res.get("invite_link")
+    }), 200
 
 
 @auth_bp.route('/api/admin/approve_pending_joins', methods=['GET', 'POST'])

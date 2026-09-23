@@ -3425,28 +3425,29 @@ def background_approve_user(user_id, already_approved=False):
         "user_id": user_id
     }
     
-    approved = already_approved
-    if not approved:
-        # 1. Try to approve the pending request safely with anti-spam retry logic
-        for attempt in range(5):
-            try:
-                res = http_session.post(url, json=payload, timeout=10)
-                if res.status_code == 200:
-                    approved = True
-                    break
-                elif res.status_code == 429: # Telegram Rate Limit
-                    time.sleep(res.json().get("parameters", {}).get("retry_after", 3) + 1)
-                elif res.status_code == 400 and ("USER_ALREADY_PARTICIPANT" in res.text or "HIDE_REQUESTER_MISSING" in res.text):
-                    # User was already approved (e.g. by worker or admin)
-                    approved = True
-                    break
-                else:
-                    # If it's another 400 error, it means the request expired or was already deleted by our 5-min cron!
-                    break
-            except:
-                time.sleep(2)
+    approved = False
+    # 1. Always attempt approval in Telegram through Render's active bot token
+    for attempt in range(3):
+        try:
+            res = http_session.post(url, json=payload, timeout=8)
+            print(f"[JoinApproval] User {user_id} approveChatJoinRequest: status={res.status_code}, response={res.text}")
+            if res.status_code == 200 and res.json().get("ok"):
+                approved = True
+                break
+            elif res.status_code == 429: # Telegram Rate Limit
+                time.sleep(res.json().get("parameters", {}).get("retry_after", 3) + 1)
+            elif res.status_code == 400 and ("USER_ALREADY_PARTICIPANT" in res.text or "HIDE_REQUESTER_MISSING" in res.text):
+                # User was already approved
+                approved = True
+                break
+            else:
+                print(f"[JoinApproval] Telegram 400 error for user {user_id}: {res.text}")
+                break
+        except Exception as approve_err:
+            print(f"[JoinApproval] Exception approving user {user_id}: {approve_err}")
+            time.sleep(1)
             
-    # 2. Standard Welcome DM (if approval worked)
+    # 2. Standard Welcome DM text
     welcome_text = (
         "🎉 <b>Entrance Trial Complete!</b>\n\n"
         "Congratulations, and welcome to the <b>Great Hall of Ez Editorials!</b> 🪄\n\n"
@@ -3459,13 +3460,14 @@ def background_approve_user(user_id, already_approved=False):
         "Head over to the main group, say hello, and begin your journey! 🏛️"
     )
 
-    # 3. ✨ THE NON-EXPIRING DM FIX: If the pending request was deleted by the cron, generate a one-time use invite link!
+    # 3. ✨ If join request was not found (expired), generate a 1-person invite link!
+    invite_link = None
     if not approved:
         try:
             invite_res = http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/createChatInviteLink", json={
                 "chat_id": CHAT_ID,
                 "member_limit": 1 # Only allows 1 person to use this link (prevents sharing)
-            }, timeout=10)
+            }, timeout=8)
             
             if invite_res.status_code == 200:
                 invite_link = invite_res.json().get("result", {}).get("invite_link")
@@ -3479,15 +3481,19 @@ def background_approve_user(user_id, already_approved=False):
         except Exception as e:
             print(f"🚨 Error generating invite link: {e}")
     
-    # 4. Send the Final DM to the user
-    try:
-        http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
-            "chat_id": user_id,
-            "text": welcome_text,
-            "parse_mode": "HTML"
-        }, timeout=5)
-    except Exception as e:
-        print(f"Failed to send final DM: {e}")
+    # 4. Send the Final DM to the user in the background
+    def send_dm():
+        try:
+            http_session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
+                "chat_id": user_id,
+                "text": welcome_text,
+                "parse_mode": "HTML"
+            }, timeout=5)
+        except Exception as e:
+            print(f"Failed to send final DM: {e}")
+
+    threading.Thread(target=send_dm, daemon=True).start()
+    return {"approved": approved, "invite_link": invite_link}
 
 
 def is_github_file_updated_today(file_name, target_date_ist):
