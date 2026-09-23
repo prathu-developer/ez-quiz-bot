@@ -311,39 +311,45 @@ def ensure_telegram_webhook():
         info = res.json().get("result", {})
         current_url = info.get("url", "")
         current_allowed = set(info.get("allowed_updates", []))
-        last_error = info.get("last_error_message", "")
+        max_conn = info.get("max_connections", 40)
 
         needs_repair = False
         reason = ""
 
+        # 1. URL must point to our Render service
         if current_url != expected_url:
             needs_repair = True
             reason = f"URL mismatch (was: {current_url or 'Empty'})"
+        # 2. All required updates must be active
         elif not {"callback_query", "chat_join_request", "chat_member"}.issubset(current_allowed):
             needs_repair = True
             reason = f"Missing required updates (has: {list(current_allowed)})"
-        elif last_error and ("502" in last_error or "Wrong response" in last_error):
+        # 3. Cap max_connections to 8 so Telegram bursts match Render's 4-thread Gunicorn
+        elif max_conn > 10:
             needs_repair = True
-            reason = f"Telegram delivery error: {last_error}"
+            reason = f"Tuning max_connections from {max_conn} down to 8"
 
         if needs_repair:
-            print(f"⚠️ [Webhook Guard] Drift detected ({reason}). Restoring webhook to {expected_url}...")
+            print(f"⚠️ [Webhook Guard] Maintenance needed ({reason}). Updating webhook to {expected_url}...")
             repair_res = http_session.post(
                 f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook",
                 json={
                     "url": expected_url,
-                    "allowed_updates": required_updates
+                    "allowed_updates": required_updates,
+                    "max_connections": 8
                 },
                 timeout=10
             )
             if repair_res.status_code == 200 and repair_res.json().get("ok"):
-                print(f"✅ [Webhook Guard] Successfully restored webhook to {expected_url}")
-                notify_prathu(
-                    f"🛡️ **Automated Webhook Guard Triggered!**\n\n"
-                    f"⚠️ **Reason:** {reason}\n"
-                    f"✅ **Restored To:** `{expected_url}`\n"
-                    f"📋 **Allowed Updates:** {', '.join(required_updates)}"
-                )
+                print(f"✅ [Webhook Guard] Successfully configured webhook to {expected_url}")
+                # Only send a DM alert for actual URL or permission drift, avoiding routine tuning noise
+                if "max_connections" not in reason:
+                    notify_prathu(
+                        f"🛡️ **Automated Webhook Guard Triggered!**\n\n"
+                        f"⚠️ **Reason:** {reason}\n"
+                        f"✅ **Restored To:** `{expected_url}`\n"
+                        f"📋 **Allowed Updates:** {', '.join(required_updates)}"
+                    )
                 return True
             else:
                 print(f"❌ [Webhook Guard] Failed to restore webhook: {repair_res.text}")
